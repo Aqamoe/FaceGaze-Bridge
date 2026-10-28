@@ -37,6 +37,8 @@
 - UI 是原生 JS，无构建步骤；**不要**为了一个功能引入 npm 工具链。
 - 界面文案一律走 `ui/i18n.js` 的 `t()`：新增文案**三语齐全**（zh/en/ja），
   静态文案用 `data-i18n` 属性。引擎日志保持中文，不要翻译。
+- **新增输入源必须声明 `frame.channels`**（`channel::kExpression / kEyes / kHead`）。
+  合并层只认声明，不猜值——`FaceFrame::neutral()` 里眼睛是 valid 的，靠值猜会让源被误判成眼追来源。
 
 ## 3. 构建 / 测试 / 发布
 
@@ -53,7 +55,7 @@
 cmake -S . -B build/test -G "Visual Studio 16 2019" -A x64
 cmake --build build/test --config Debug --parallel
 
-# 单测（当前 87 个用例）
+# 单测（当前 97 个用例）
 ./build/test/bin/Debug/fgb-tests.exe
 # 或
 ctest --test-dir build/test -C Debug --output-on-failure
@@ -159,7 +161,7 @@ docs/          方案、ADR、路线图
 | →UI | `hello`（协议版本、版本号、端口） | 连接时 |
 | →UI | `catalog`（365 个参数名 + 是否已绑定） | 连接时 / 换头像后 |
 | →UI | `modules`（模块列表 + 当前选择 + 配置文件） | 连接时 / 扫描或改选择后 |
-| →UI | `status`（帧率、tick、OSC、头像、滤波、`module{state,error}`） | 10 Hz |
+| →UI | `status`（帧率、tick、OSC、头像、滤波、`module{state,error}`、`sources[]` 每源贡献） | 10 Hz |
 | →UI | `params`（数值数组，顺序同 `catalog`） | 10 Hz |
 | →UI | `log`（级别/tag/正文；连接时补发最近 120 行） | 有日志时 |
 | UI→ | `set_filter` / `set_module` / `scan_modules` / `reload_avatar` / `set_log_level` / `quit` | 按操作 |

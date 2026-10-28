@@ -14,13 +14,16 @@
 #include "sources/vrcft_source.hpp"
 #include "vrcft/module_registry.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -62,7 +65,11 @@ void print_usage() {
                  "  fgb-cli version        显示版本\n"
                  "\n"
                  "run 选项:\n"
-                 "  --source <类型>         vmc | vrcft | replay (默认 vmc)\n"
+                 "  --source <类型>         vmc | vrcft | replay，可重复；顺序即优先级 (默认 vmc)\n"
+                 "  --eye-source <名>       指定眼追来自哪个源（默认自动）\n"
+                 "  --expression-source <名> 指定表情来自哪个源（默认自动）\n"
+                 "  --head-source <名>      指定头姿来自哪个源（默认自动）\n"
+                 "  --stale-ms <毫秒>       某源多久没更新就不再参与合并 (默认 500)\n"
                  "  --record <文件>         把收到的 ReplyUpdate 原样录制（仅 vrcft）\n"
                  "  --replay <文件>         回放抓包（配合 --source replay）\n"
                  "  --replay-speed <倍率>   回放速度，0 = 不限 (默认 1.0)\n"
@@ -77,7 +84,7 @@ void print_usage() {
                  "  --vmc-port <端口>        VMC 监听端口 (默认 39539)\n"
                  "  --module-exe <路径>     VRCFaceTracking.ModuleProcess.exe 路径\n"
                  "  --module-dll <路径>     直接指定模块 DLL（跳过模块发现）\n"
-                 "  --module-id <id>        按 id 或名字选模块（见 fgb-cli modules）\n"
+                 "  --module-id <id>        按 id 或名字选模块，可重复（见 fgb-cli modules）\n"
                  "  --vrchat <host:port>    VRChat OSC 目标 (默认 127.0.0.1:9000)\n"
                  "  --eye-mode <模式>       parameters | native | both (默认 parameters)\n"
                  "  --params <参数集>       v2 | v1 | both (默认 v2)\n"
@@ -205,6 +212,17 @@ bool launch_ui(std::uint16_t port) {
 #endif
 }
 
+std::string join_names(const std::vector<std::string>& names) {
+    std::string out;
+    for (const auto& name : names) {
+        if (!out.empty()) {
+            out.push_back('+');
+        }
+        out.append(name);
+    }
+    return out;
+}
+
 int cmd_run(int argc, char** argv) {
     fgb::VmcSourceConfig vmc_cfg;
     fgb::ReplayConfig replay_cfg;
@@ -217,10 +235,16 @@ int cmd_run(int argc, char** argv) {
     float filter_min_cutoff = 1.0f;
     float filter_beta       = 0.5f;
     fgb::VrchatSinkConfig vrchat_cfg;
-    std::string source_kind;
+    // 可重复出现，顺序即合并优先级：排前面的通道优先
+    std::vector<std::string> source_kinds;
+    // --module-id 同样可重复，按 vrcft 出现的顺序配对（两个模块各喂一路时用）
+    std::vector<std::string> module_ids;
+    std::string merge_expression_source;
+    std::string merge_eye_source;
+    std::string merge_head_source;
+    int stale_ms = 500;
     std::filesystem::path module_exe;
     std::filesystem::path module_dll;
-    std::string module_id; // --module-id：按 id/名字选模块
     std::string active_module_id;
     std::unique_ptr<fgb::vrcft::ModuleRegistry> module_registry;
     const fgb::vrcft::VrcftSource* vrcft_raw = nullptr;
@@ -241,9 +265,22 @@ int cmd_run(int argc, char** argv) {
         if (arg == "--source") {
             const auto v = next_value(arg);
             if (v == "vmc" || v == "vrcft" || v == "replay") {
-                source_kind = std::string(v);
+                source_kinds.push_back(std::string(v));
             } else {
                 std::fprintf(stderr, "未知的 source 类型\n");
+                return 2;
+            }
+        } else if (arg == "--eye-source") {
+            merge_eye_source = std::string{next_value(arg)};
+        } else if (arg == "--expression-source") {
+            merge_expression_source = std::string{next_value(arg)};
+        } else if (arg == "--head-source") {
+            merge_head_source = std::string{next_value(arg)};
+        } else if (arg == "--stale-ms") {
+            const auto v = next_value(arg);
+            stale_ms       = std::atoi(std::string{v}.c_str());
+            if (stale_ms <= 0) {
+                std::fprintf(stderr, "--stale-ms 需要正数（毫秒）\n");
                 return 2;
             }
         } else if (arg == "--panel") {
@@ -292,7 +329,7 @@ int cmd_run(int argc, char** argv) {
         } else if (arg == "--module-id") {
             const auto v = next_value(arg);
             if (!v.empty()) {
-                module_id = std::string(v);
+                module_ids.emplace_back(v);
             }
         } else if (arg == "--vmc-port") {
             const auto v = next_value(arg);
@@ -366,74 +403,125 @@ int cmd_run(int argc, char** argv) {
     engine_cfg.tick_hz = tick_hz;
     fgb::Engine engine{engine_cfg};
 
-    if (source_kind == "vrcft") {
-        if (module_exe.empty()) {
-            const auto dir = default_vrcft_dir();
-            if (!dir.empty()) {
-                module_exe = dir / "VRCFaceTracking.ModuleProcess.exe";
-            }
-        }
-        // 模块选择交给 registry：命令行 > 配置文件 > 只有一个是它
-        module_registry = std::make_unique<fgb::vrcft::ModuleRegistry>();
-        add_default_module_roots(*module_registry);
-        module_registry->rescan();
+    if (source_kinds.empty()) {
+        source_kinds.emplace_back("vmc"); // 没写 --source 时的默认行为，与之前一致
+    }
 
-        if (module_dll.empty()) {
-            const fgb::vrcft::ModuleInfo* module = module_registry->pick_active(module_id);
-            if (module == nullptr) {
-                std::fprintf(stderr, "没有确定要加载哪个模块。\n");
-                if (module_registry->modules().empty()) {
-                    std::fprintf(stderr,
-                                 "  磁盘上没发现模块：把 VRCFT 的模块放进 %%APPDATA%%\\"
-                                 "VRCFaceTracking\\CustomLibs，或用 --module-dll 指定路径。\n");
-                } else {
-                    std::fprintf(stderr, "  已安装：\n");
-                    for (const auto& candidate : module_registry->modules()) {
-                        std::fprintf(stderr, "    %-36s %s\n", candidate.name.c_str(),
-                                     candidate.id.c_str());
-                    }
-                    std::fprintf(stderr, "  用 --module-id <id> 指定，或 fgb-cli modules use <id>\n");
+    std::vector<std::string> source_names;
+    source_names.reserve(source_kinds.size());
+    std::size_t vrcft_seen = 0;
+    const auto vrcft_total = static_cast<std::size_t>(
+        std::count(source_kinds.begin(), source_kinds.end(), std::string{"vrcft"}));
+
+    for (const std::string& kind : source_kinds) {
+        if (kind == "vrcft") {
+            const std::size_t index = vrcft_seen++;
+            // 多实例时给个能区分又不能有歧义的名字，--eye-source 就是拿它匹配的
+            const std::string display =
+                vrcft_total > 1 ? "vrcft[" + std::to_string(index + 1) + "]" : "vrcft";
+
+            if (module_exe.empty()) {
+                const auto dir = default_vrcft_dir();
+                if (!dir.empty()) {
+                    module_exe = dir / "VRCFaceTracking.ModuleProcess.exe";
                 }
-                return 2;
             }
-            if (module->broken) {
-                // 这里刻意用字符串拼接而不是 fprintf("%s")：MSVC 的 printf 格式检查遇到
-                // "多字节字符紧跟 %" 会把那个 % 当成 MBCS 尾字节吃掉，报 C4474「参数太多」，
-                // /WX 下直接编译失败。不跟编译器的这个 bug 较劲。
-                const std::string message = "模块「" + module->name + "」的目录里找不到 DLL\n  " +
-                                            module->directory.string() + "\n";
-                std::fputs(message.c_str(), stderr);
-                return 2;
+            // 模块选择交给 registry：命令行 > 配置文件 > 只有一个是它
+            if (!module_registry) {
+                module_registry = std::make_unique<fgb::vrcft::ModuleRegistry>();
+                add_default_module_roots(*module_registry);
+                module_registry->rescan();
             }
-            module_dll       = module->dll;
-            active_module_id = module->id;
-            FGB_INFO("vrcft", "加载模块：%s (%s)", module->name.c_str(), module->version.c_str());
-        } else {
-            active_module_id = module_dll.stem().string();
-            FGB_INFO("vrcft", "加载模块（--module-dll 指定）：%s", module_dll.string().c_str());
-        }
-        // 只是让界面知道"当前用的是哪个"，不写配置：
-        // 自动挑中一个不等于用户选了它，下次仍按原配置走。
-        module_registry->mark_active(active_module_id);
 
-        fgb::vrcft::VrcftSourceConfig cfg;
-        cfg.module_process_exe = module_exe;
-        cfg.module_dll         = module_dll;
-        cfg.tick_hz            = tick_hz;
-        if (!record_path.empty()) {
-            cfg.record_path = record_path;
+            std::filesystem::path instance_dll = module_dll;
+            std::string instance_module_id    = index < module_ids.size() ? module_ids[index] : std::string{};
+
+            if (instance_dll.empty()) {
+                const fgb::vrcft::ModuleInfo* module = module_registry->pick_active(instance_module_id);
+                if (module == nullptr) {
+                    std::fprintf(stderr, "没有确定要加载哪个模块（第 %zu 个 vrcft 输入）。\n", index + 1);
+                    if (module_registry->modules().empty()) {
+                        std::fprintf(stderr,
+                                     "  磁盘上没发现模块：把 VRCFT 的模块放进 %%APPDATA%%\\"
+                                     "VRCFaceTracking\\CustomLibs，或用 --module-dll 指定路径。\n");
+                    } else {
+                        std::fprintf(stderr, "  已安装：\n");
+                        for (const auto& candidate : module_registry->modules()) {
+                            std::fprintf(stderr, "    %-36s %s\n", candidate.name.c_str(),
+                                         candidate.id.c_str());
+                        }
+                        std::fprintf(stderr,
+                                     "  用 --module-id <id> 指定（可重复），或 fgb-cli modules use <id>\n");
+                    }
+                    return 2;
+                }
+                if (module->broken) {
+                    // 这里刻意用字符串拼接而不是 fprintf("%s")：MSVC 的 printf 格式检查遇到
+                    // "多字节字符紧跟 %" 会把那个 % 当成 MBCS 尾字节吃掉，报 C4474「参数太多」，
+                    // /WX 下直接编译失败。不跟编译器的这个 bug 较劲。
+                    const std::string message = "模块「" + module->name + "」的目录里找不到 DLL\n  " +
+                                                module->directory.string() + "\n";
+                    std::fputs(message.c_str(), stderr);
+                    return 2;
+                }
+                instance_dll       = module->dll;
+                instance_module_id = module->id;
+                FGB_INFO("vrcft", "%s 加载模块：%s (%s)", display.c_str(), module->name.c_str(),
+                         module->version.c_str());
+            } else {
+                FGB_INFO("vrcft", "%s 加载模块（--module-dll 指定）：%s", display.c_str(),
+                         instance_dll.string().c_str());
+            }
+
+            if (index == 0) {
+                active_module_id = instance_module_id;
+                // 只是让界面知道"当前用的是哪个"，不写配置：
+                // 自动挑中一个不等于用户选了它，下次仍按原配置走。
+                module_registry->mark_active(active_module_id);
+            }
+
+            fgb::vrcft::VrcftSourceConfig cfg;
+            cfg.module_process_exe = module_exe;
+            cfg.module_dll         = instance_dll;
+            cfg.tick_hz            = tick_hz;
+            cfg.display_name       = display;
+            if (!record_path.empty()) {
+                cfg.record_path = record_path;
+            }
+            auto vrcft_source = std::make_unique<fgb::vrcft::VrcftSource>(cfg);
+            if (vrcft_raw == nullptr) {
+                vrcft_raw = vrcft_source.get(); // 状态页只显示第一个模块的运行态
+            }
+            engine.add_source(std::move(vrcft_source));
+            source_names.push_back(display);
+        } else if (kind == "replay") {
+            if (replay_cfg.path.empty()) {
+                std::fprintf(stderr, "--source replay 需要 --replay <文件>\n");
+                return 2;
+            }
+            engine.add_source(std::make_unique<fgb::ReplaySource>(replay_cfg));
+            source_names.emplace_back("replay");
+        } else {
+            engine.add_source(std::make_unique<fgb::VmcSource>(vmc_cfg));
+            source_names.emplace_back("vmc");
         }
-        auto vrcft_source     = std::make_unique<fgb::vrcft::VrcftSource>(cfg);
-        vrcft_raw             = vrcft_source.get();
-        engine.add_source(std::move(vrcft_source));
-    } else if (source_kind == "replay") {
-        if (replay_cfg.path.empty()) {
-            std::fprintf(stderr, "--source replay 需要 --replay <文件>\n");
-            return 2;
-        }
-        engine.add_source(std::make_unique<fgb::ReplaySource>(replay_cfg));
-    } else {
-        engine.add_source(std::make_unique<fgb::VmcSource>(vmc_cfg));
+    }
+
+    {
+        fgb::MergePolicy merge_policy;
+        merge_policy.expression_source = merge_expression_source;
+        merge_policy.eye_source        = merge_eye_source;
+        merge_policy.head_source       = merge_head_source;
+        merge_policy.stale_ns = static_cast<std::uint64_t>(stale_ms) * 1'000'000ULL;
+        engine.set_merge_policy(merge_policy);
+
+        auto name_or_auto = [](const std::string& name) {
+            return name.empty() ? std::string{"auto"} : name;
+        };
+        FGB_INFO("cli", "输入源：%s（表情=%s 眼追=%s 头姿=%s，过期 %d ms）",
+                 join_names(source_names).c_str(), name_or_auto(merge_expression_source).c_str(),
+                 name_or_auto(merge_eye_source).c_str(), name_or_auto(merge_head_source).c_str(),
+                 stale_ms);
     }
     // 后端处理顺序：先校准（把原始值拉到 0..1），再滤波（平滑已经校准过的信号）
     if (!calibration_path.empty()) {
@@ -479,7 +567,7 @@ int cmd_run(int argc, char** argv) {
         ctx.engine      = &engine;
         ctx.sink        = sink_raw;
         ctx.filter      = filter_raw;
-        ctx.source_name = source_kind;
+        ctx.source_name = join_names(source_names);
         ctx.params_mode = fgb::to_string(vrchat_cfg.params_mode);
         ctx.eye_mode    = fgb::to_string(vrchat_cfg.eye_mode);
         ctx.ui_dir      = ui_dir;

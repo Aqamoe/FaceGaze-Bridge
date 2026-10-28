@@ -112,6 +112,7 @@ const state = {
   logs: [],
   modules: null,
   status: null,
+  source_rows: [],
   view: "status",
   retry: 0,
   timer: null,
@@ -271,6 +272,7 @@ function render_status(status) {
   if (status.module && state.view === "modules") {
     sync_active_module(status.module);
   }
+  render_sources(status.sources || []);
 
   const filter = status.filter || {};
   const enabled = $("f-enabled");
@@ -393,6 +395,65 @@ function apply_param_filter() {
 
   $("param-count").textContent = t("params.count", { visible, total: state.cells.length });
   $("param-empty").hidden = visible !== 0;
+}
+
+// ---------- 渲染：输入源 ----------
+
+// 10 Hz 更新，所以只在"源的数量变了"时重建 DOM，其它时候只改文字与 class
+function render_sources(sources) {
+  const list = $("source-list");
+  if (!list) {
+    return;
+  }
+  if (!sources.length) {
+    list.textContent = "";
+    list.dataset.count = "0";
+    state.source_rows = [];
+    list.append(el("div", "muted", t("status.sources.empty")));
+    return;
+  }
+
+  if (list.dataset.count !== String(sources.length)) {
+    list.textContent = "";
+    list.dataset.count = String(sources.length);
+    state.source_rows = sources.map((source) => {
+      const row = el("div", "source-row");
+      const name = el("b", "source-name", source.name);
+      const meta = el("span", "muted source-meta");
+      const chips = el("span", "source-chips");
+      const chip = (key) => {
+        const node = el("span", "source-chip", t(`channel.${key}`));
+        chips.append(node);
+        return node;
+      };
+      const made = {
+        row,
+        meta,
+        expression: chip("expression"),
+        eyes: chip("eyes"),
+        head: chip("head"),
+      };
+      row.append(name, meta, chips);
+      list.append(row);
+      return made;
+    });
+  }
+
+  sources.forEach((source, index) => {
+    const row = state.source_rows[index];
+    if (!row) {
+      return;
+    }
+    row.meta.textContent =
+      `${t("status.sources.frames", { count: fmt_int(source.frames) })} · ` +
+      t("status.sources.age", { ms: Math.round(source.age_ms) });
+    row.row.classList.toggle("stale", !source.fresh);
+    for (const key of ["expression", "eyes", "head"]) {
+      const chip = row[key];
+      chip.classList.toggle("on", !!source[key]);
+      chip.classList.toggle("has", !source[key] && !!source[`has_${key}`]);
+    }
+  });
 }
 
 // ---------- 渲染：模块 ----------

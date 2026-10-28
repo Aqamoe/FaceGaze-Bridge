@@ -222,6 +222,18 @@ void VrcftSource::dispatch(std::span<const std::byte> packet) noexcept {
 }
 
 void VrcftSource::publish() noexcept {
+    // 模块能给的就是表情 + 眼追（头姿不在 VRCFT 协议里），按内容声明一次
+    pending_.channels = 0;
+    for (std::size_t i = 0; i < kShapeCount; ++i) {
+        if (pending_.shapeValid[i] != 0) {
+            pending_.add_channel(channel::kExpression);
+            break;
+        }
+    }
+    if (pending_.eyes.any_valid()) {
+        pending_.add_channel(channel::kEyes);
+    }
+
     pending_.captureTsNs = clock::now_ns();
     pending_.sequence    = frames_.load(std::memory_order_relaxed) + 1;
     pending_.sanitize();

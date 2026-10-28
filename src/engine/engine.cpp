@@ -19,9 +19,12 @@ Engine::Engine(EngineConfig config) : config_(config) {
 Engine::~Engine() { stop(); }
 
 void Engine::add_source(std::unique_ptr<ISource> source) {
-    if (source) {
-        sources_.push_back(std::move(source));
+    if (!source) {
+        return;
     }
+    // 注册顺序即合并优先级：先加的先被选中
+    merger_.add(source.get());
+    sources_.push_back(std::move(source));
 }
 
 void Engine::add_sink(std::unique_ptr<ISink> sink) {
@@ -100,24 +103,19 @@ GazeState Engine::compute_gaze(const FaceFrame& frame) const noexcept {
 }
 
 void Engine::tick_once(std::uint64_t now_ns) {
-    bool got_new = false;
+    last_tick_ns_ = now_ns;
 
-    for (auto& source : sources_) {
-        FaceFrame frame;
-        if (source->poll(frame)) {
-            frame.sanitize();
-            for (auto& processor : processors_) {
-                processor->process(frame);
-            }
-            last_frame_ = frame;
-            got_new     = true;
-            ++stats_.frames_in;
+    // 先合并，再后处理，最后发布。
+    // 顺序不能反：两个源频率不同时，"每个源各处理一遍"等于把滤波跑了两遍，
+    // 参数会显得又慢又迟钝，而且很难看出是这里的锅。
+    FaceFrame merged;
+    if (merger_.poll(now_ns, merged)) {
+        for (auto& processor : processors_) {
+            processor->process(merged);
         }
-    }
-
-    if (got_new) {
-        last_frame_.publishTsNs = now_ns;
-        last_frame_.sequence    = ++sequence_;
+        merged.publishTsNs = now_ns;
+        merged.sequence    = ++sequence_;
+        last_frame_        = merged;
         snapshot_.publish(last_frame_);
         last_gaze_ = compute_gaze(last_frame_);
     }

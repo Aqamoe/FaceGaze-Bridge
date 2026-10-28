@@ -296,6 +296,38 @@ body {
   border-radius: var(--radius);
 }
 
+/* ---------- 输入源 ---------- */
+.source-list { display: grid; gap: 2px; margin-top: 6px; }
+
+.source-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px dashed #232833;
+}
+.source-row:last-child { border-bottom: 0; }
+.source-row.stale { opacity: .45; }
+
+.source-name { min-width: 96px; font-weight: 600; font-size: 12.5px; }
+.source-meta { flex: 1; font-variant-numeric: tabular-nums; }
+.source-chips { display: flex; gap: 6px; }
+
+.source-chip {
+  font-size: 10.5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: #4d5464;
+  white-space: nowrap;
+}
+.source-chip.has { color: var(--dim); }
+.source-chip.on {
+  color: var(--ok);
+  border-color: rgb(61 220 132 / .35);
+  background: rgb(61 220 132 / .08);
+}
+
 /* ---------- 模块 ---------- */
 .module-list { display: grid; gap: 10px; }
 

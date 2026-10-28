@@ -306,6 +306,27 @@ void IpcServer::build_metrics(std::string& out) {
     writer.key("alive").boolean(ctx_.vrcft != nullptr && ctx_.vrcft->module_alive());
     writer.obj_end();
 
+    // 每个输入源的贡献：多源合并后，"谁在喂哪一路"必须看得见，
+    // 否则用户只会看到"眼睛不动"，然后去怀疑滤波。
+    writer.key("sources").arr_begin();
+    if (ctx_.engine != nullptr) {
+        for (const SourceReport& report : ctx_.engine->source_report()) {
+            writer.obj_begin();
+            writer.key("name").str(report.name);
+            writer.key("frames").integer(static_cast<long long>(report.frames));
+            writer.key("age_ms").num(static_cast<double>(report.age_ns) / 1'000'000.0);
+            writer.key("fresh").boolean(report.fresh);
+            writer.key("expression").boolean(report.used_expression);
+            writer.key("eyes").boolean(report.used_eyes);
+            writer.key("head").boolean(report.used_head);
+            writer.key("has_expression").boolean(report.provides_expression);
+            writer.key("has_eyes").boolean(report.provides_eyes);
+            writer.key("has_head").boolean(report.provides_head);
+            writer.obj_end();
+        }
+    }
+    writer.arr_end();
+
     writer.key("filter");
     writer.obj_begin();
     if (ctx_.filter != nullptr) {

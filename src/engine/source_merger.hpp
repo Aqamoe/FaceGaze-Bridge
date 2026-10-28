@@ -1,0 +1,90 @@
+// 多输入源合并。
+//
+// 为什么需要它：M1 的合并策略是"谁最后 poll 到就用谁"，对单源没问题，但两个源同时喂
+// （硬件眼追模块 + 摄像头表情、或者模块 + VMC）时，后 poll 的那个会把前一个整帧盖掉——
+// 表现为"表情正常但眼睛不动"，或者反过来，取决于注册顺序。
+//
+// 这里把一帧拆成三个通道分别选提供者：
+//
+//   表情 Expression  88 个形状（含 shapeValid 位）
+//   眼追 Eyes        gaze / openness / pupil / vergence
+//   头姿 Head        hasHeadPose + 旋转 + 位置
+//
+// 选择规则（每一路独立）：
+//   1. 显式指定（--eye-source 之类）且该源新鲜且确实提供该通道 → 用它
+//   2. 否则按注册顺序取第一个"新鲜且提供该通道"的源
+//   3. 都没有 → 该通道清零（invalid / hasHeadPose=false），让下游看到"没数据"
+//      而不是继续用已经冻住的值
+//
+// "新鲜"= 距离上次拿到它的帧不超过 stale_ns（默认 500 ms）。取 500 而不是更小，
+// 是因为 VMC 常见 30–60 Hz、模块可能 30 Hz，太小会把正常源误判成掉线。
+#pragma once
+
+#include "sources/source.hpp"
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace fgb {
+
+struct MergePolicy {
+    // 空串 = 按注册顺序自动选
+    std::string expression_source;
+    std::string eye_source;
+    std::string head_source;
+    std::uint64_t stale_ns = 500'000'000ULL;
+};
+
+// 给界面/日志看的单源状态
+struct SourceReport {
+    std::string name;
+    std::uint64_t frames      = 0;
+    std::uint64_t age_ns      = 0;
+    bool fresh                = false;
+    bool provides_expression  = false;
+    bool provides_eyes        = false;
+    bool provides_head        = false;
+    bool used_expression      = false;
+    bool used_eyes            = false;
+    bool used_head            = false;
+};
+
+class SourceMerger {
+public:
+    void set_policy(const MergePolicy& policy) { policy_ = policy; }
+    const MergePolicy& policy() const noexcept { return policy_; }
+
+    // 注册顺序即优先级
+    void add(ISource* source);
+    std::size_t source_count() const noexcept { return slots_.size(); }
+
+    // 拉一遍所有源并合并。**本 tick 有任何新帧**才返回 true（合并结果写入 out）：
+    // 引擎据此决定是否发布新快照，避免同一个值被反复 publish。
+    bool poll(std::uint64_t now_ns, FaceFrame& out);
+
+    std::uint64_t frames_in() const noexcept { return frames_in_; }
+    std::vector<SourceReport> report(std::uint64_t now_ns) const;
+
+private:
+    struct Slot {
+        ISource* source          = nullptr;
+        FaceFrame last{};
+        std::uint64_t updated_ns = 0;
+        std::uint64_t frames     = 0;
+        bool has_frame           = false;
+    };
+
+    bool fresh(const Slot& slot, std::uint64_t now_ns) const noexcept;
+    bool provides_expression(const Slot& slot) const noexcept;
+    bool provides_eyes(const Slot& slot) const noexcept;
+    bool provides_head(const Slot& slot) const noexcept;
+    // 返回槽位下标，-1 表示没有可用来源
+    int pick(int channel, std::uint64_t now_ns) const noexcept;
+
+    MergePolicy policy_;
+    std::vector<Slot> slots_;
+    std::uint64_t frames_in_ = 0;
+};
+
+} // namespace fgb

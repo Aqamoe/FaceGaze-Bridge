@@ -61,6 +61,7 @@ add_library(fgb_process STATIC
 target_link_libraries(fgb_process PUBLIC fgb_core)
 
 add_library(fgb_engine STATIC
+    engine/source_merger.cpp
     sinks/vrchat_sink.cpp
     sources/vmc_source.cpp
     sources/vrcft_source.cpp

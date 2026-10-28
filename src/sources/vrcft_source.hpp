@@ -31,6 +31,9 @@ struct VrcftSourceConfig {
     std::filesystem::path module_process_exe;
     std::filesystem::path module_dll;
 
+    // 多实例时的显示名（"--eye-source vrcft[2]" 靠它匹配），单实例就是 "vrcft"
+    std::string display_name = "vrcft";
+
     int tick_hz              = 100;
     int no_data_threshold    = 30;   // 连续多少帧全无效判定"无数据"
     int max_restarts         = 3;
@@ -49,7 +52,7 @@ public:
     explicit VrcftSource(VrcftSourceConfig config);
     ~VrcftSource() override;
 
-    const char* name() const noexcept override { return "vrcft"; }
+    const char* name() const noexcept override { return config_.display_name.c_str(); }
     bool start() override;
     void stop() noexcept override;
     bool poll(FaceFrame& out) override;

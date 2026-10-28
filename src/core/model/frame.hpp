@@ -40,10 +40,24 @@ struct EyePair {
     bool any_valid() const noexcept { return left.valid || right.valid; }
 };
 
+// 一帧实际携带了哪些通道。
+//
+// 为什么不能"看值猜"：neutral() 里眼睛是 valid + 睁开正前（降级时也要发合法值），
+// 所以任何一个从 neutral 起手的源都会被误判成"提供眼追"。多源合并时这会导致
+// 硬件眼追被 VMC 的中性眼遮掉——表现为"眼睛永远不回正"，很难查。
+// 让源显式声明自己带了哪几路，合并层就只认声明。
+namespace channel {
+inline constexpr std::uint8_t kExpression = 1U << 0;
+inline constexpr std::uint8_t kEyes       = 1U << 1;
+inline constexpr std::uint8_t kHead       = 1U << 2;
+} // namespace channel
+
 struct FaceFrame {
     std::uint64_t captureTsNs = 0; // 数据在物理世界发生的时刻
     std::uint64_t publishTsNs = 0; // 引擎发布时刻
     std::uint64_t sequence    = 0;
+
+    std::uint8_t channels = 0; // channel::k* 的位或，由 source 填写
 
     EyePair eyes;
 
@@ -74,6 +88,12 @@ struct FaceFrame {
     bool shape_is_valid(Shape s) const noexcept {
         const auto i = index_of(s);
         return i < kShapeCount && shapeValid[i] != 0;
+    }
+
+    bool has_channel(std::uint8_t mask) const noexcept { return (channels & mask) != 0; }
+    void add_channel(std::uint8_t mask) noexcept { channels = static_cast<std::uint8_t>(channels | mask); }
+    void clear_channel(std::uint8_t mask) noexcept {
+        channels = static_cast<std::uint8_t>(channels & ~mask);
     }
 
     // 中性姿态：所有形状归零、眼睛睁开注视正前。

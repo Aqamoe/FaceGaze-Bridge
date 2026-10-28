@@ -1,0 +1,281 @@
+// 多源合并：通道拆分、优先级、显式指定、过期、以及"后处理只跑一次"。
+//
+// 这些用例存在的理由：合并逻辑错了不会崩，只会"眼睛不动"或者"表情变肉"，
+// 靠肉眼在 VR 里试非常贵。所以把每个选择分支都钉在单测里。
+#include "engine/engine.hpp"
+#include "engine/source_merger.hpp"
+
+#include "test_framework.hpp"
+
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <utility>
+
+using namespace fgb;
+
+namespace {
+
+// 可以手动喂帧的假源：poll 只吐一帧，吐完就空
+class FakeSource final : public ISource {
+public:
+    explicit FakeSource(std::string name) : name_(std::move(name)) {}
+
+    const char* name() const noexcept override { return name_.c_str(); }
+    bool start() override { return true; }
+    void stop() noexcept override {}
+    SourceStats stats() const noexcept override { return stats_; }
+
+    bool poll(FaceFrame& out) override {
+        if (!pending_) {
+            return false;
+        }
+        out      = next_;
+        pending_ = false;
+        ++stats_.frames;
+        return true;
+    }
+
+    void push(const FaceFrame& frame) {
+        next_    = frame;
+        pending_ = true;
+    }
+
+private:
+    std::string name_;
+    FaceFrame next_{};
+    bool pending_ = false;
+    SourceStats stats_{};
+};
+
+class CountingProcessor final : public IFaceProcessor {
+public:
+    const char* name() const noexcept override { return "count"; }
+    void process(FaceFrame&) noexcept override { ++calls; }
+    int calls = 0;
+};
+
+FaceFrame expression_frame(float jaw_open) {
+    FaceFrame frame = FaceFrame::neutral();
+    frame.set_shape(Shape::JawOpen, jaw_open);
+    frame.add_channel(channel::kExpression);
+    frame.captureTsNs = 1000;
+    return frame;
+}
+
+FaceFrame eyes_frame(float yaw_deg) {
+    FaceFrame frame = FaceFrame::neutral();
+    frame.eyes.left.valid           = true;
+    frame.eyes.left.gazeConf        = 1.0f;
+    frame.eyes.left.gazePitchYawDeg = Vec2{0.0f, yaw_deg};
+    frame.eyes.left.gazeDirLocal    = Vec3{0.0f, yaw_deg / 30.0f, -1.0f};
+    frame.add_channel(channel::kEyes);
+    frame.captureTsNs = 2000;
+    return frame;
+}
+
+FaceFrame head_frame() {
+    FaceFrame frame    = FaceFrame::neutral();
+    frame.hasHeadPose  = true;
+    frame.headPosLocal = Vec3{0.1f, 0.2f, 0.3f};
+    frame.add_channel(channel::kHead);
+    frame.captureTsNs = 3000;
+    return frame;
+}
+
+} // namespace
+
+FGB_TEST(merge_splits_channels_by_capability) {
+    FakeSource expression{"expr"};
+    FakeSource eyes{"eyes"};
+
+    SourceMerger merger;
+    merger.add(&expression);
+    merger.add(&eyes);
+
+    expression.push(expression_frame(0.5f));
+    eyes.push(eyes_frame(10.0f));
+
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(10'000'000ULL, merged));
+    // 表情来自第一个源
+    FGB_CHECK_NEAR(merged.shape(Shape::JawOpen), 0.5, 1e-6);
+    // 眼睛来自第二个源——这正是"谁最后 poll 谁赢"会丢掉的东西
+    FGB_CHECK(merged.eyes.left.valid);
+    FGB_CHECK_NEAR(merged.eyes.left.gazePitchYawDeg.y, 10.0, 1e-5);
+    // 两路都算贡献者
+    FGB_CHECK(merged.contributingSources == 0b11u);
+    // 时间戳取用到的通道里最新的那个
+    FGB_CHECK(merged.captureTsNs == 2000);
+}
+
+FGB_TEST(merge_priority_wins_when_both_provide) {
+    FakeSource first{"first"};
+    FakeSource second{"second"};
+
+    SourceMerger merger; // 默认策略 = 注册顺序
+    merger.add(&first);
+    merger.add(&second);
+
+    first.push(expression_frame(0.9f));
+    second.push(expression_frame(0.1f));
+
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(10'000'000ULL, merged));
+    FGB_CHECK_NEAR(merged.shape(Shape::JawOpen), 0.9, 1e-6);
+}
+
+FGB_TEST(merge_explicit_source_overrides_priority) {
+    FakeSource first{"first"};
+    FakeSource second{"second"};
+
+    SourceMerger merger;
+    MergePolicy policy;
+    policy.expression_source = "second"; // 名字匹配，不看顺序
+    merger.set_policy(policy);
+    merger.add(&first);
+    merger.add(&second);
+
+    first.push(expression_frame(0.9f));
+    second.push(expression_frame(0.1f));
+
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(10'000'000ULL, merged));
+    FGB_CHECK_NEAR(merged.shape(Shape::JawOpen), 0.1, 1e-6);
+}
+
+FGB_TEST(merge_unknown_explicit_name_falls_back) {
+    FakeSource only{"only"};
+
+    SourceMerger merger;
+    MergePolicy policy;
+    policy.eye_source = "typo"; // 拼错不该让整路数据消失
+    merger.set_policy(policy);
+    merger.add(&only);
+
+    only.push(eyes_frame(5.0f));
+
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(10'000'000ULL, merged));
+    FGB_CHECK(merged.eyes.left.valid);
+}
+
+FGB_TEST(merge_stale_source_is_skipped) {
+    FakeSource expression{"expr"};
+    FakeSource fallback{"fallback"};
+
+    SourceMerger merger;
+    MergePolicy policy;
+    policy.stale_ns = 100'000'000ULL; // 100 ms
+    merger.set_policy(policy);
+    merger.add(&expression);
+    merger.add(&fallback);
+
+    // t=0：两个源都新鲜 → 表情用第一个
+    expression.push(expression_frame(0.8f));
+    fallback.push(expression_frame(0.2f));
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(1'000'000'000ULL, merged));
+    FGB_CHECK_NEAR(merged.shape(Shape::JawOpen), 0.8, 1e-6);
+
+    // t=200ms：只有 fallback 还在更新，expr 已经过期 → 表情改用它
+    fallback.push(expression_frame(0.2f));
+    FGB_CHECK(merger.poll(1'200'000'000ULL, merged));
+    FGB_CHECK_NEAR(merged.shape(Shape::JawOpen), 0.2, 1e-6);
+}
+
+FGB_TEST(merge_missing_channel_is_cleared) {
+    FakeSource expression{"expr"};
+
+    SourceMerger merger;
+    merger.add(&expression);
+    expression.push(expression_frame(0.4f));
+
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(10'000'000ULL, merged));
+    FGB_CHECK_NEAR(merged.shape(Shape::JawOpen), 0.4, 1e-6);
+    // 没有眼追/头姿来源 → 明确清空，而不是留着上一帧的值
+    FGB_CHECK(!merged.eyes.any_valid());
+    FGB_CHECK(!merged.hasHeadPose);
+}
+
+FGB_TEST(merge_head_channel_can_come_from_third_source) {
+    FakeSource expression{"expr"};
+    FakeSource eyes{"eyes"};
+    FakeSource head{"head"};
+
+    SourceMerger merger;
+    merger.add(&expression);
+    merger.add(&eyes);
+    merger.add(&head);
+
+    expression.push(expression_frame(0.3f));
+    eyes.push(eyes_frame(-7.0f));
+    head.push(head_frame());
+
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(10'000'000ULL, merged));
+    FGB_CHECK(merged.hasHeadPose);
+    FGB_CHECK_NEAR(merged.headPosLocal.y, 0.2, 1e-6);
+    FGB_CHECK(merged.contributingSources == 0b111u);
+}
+
+FGB_TEST(merge_no_new_frame_does_not_publish) {
+    FakeSource only{"only"};
+    SourceMerger merger;
+    merger.add(&only);
+
+    FaceFrame merged;
+    FGB_CHECK(!merger.poll(10'000'000ULL, merged)); // 一帧都没来
+
+    only.push(expression_frame(0.5f));
+    FGB_CHECK(merger.poll(11'000'000ULL, merged));
+    // 这一帧已经用掉了，下一个 tick 不该再发布
+    FGB_CHECK(!merger.poll(12'000'000ULL, merged));
+}
+
+FGB_TEST(engine_processors_run_once_per_merged_frame) {
+    Engine engine;
+    auto a = std::make_unique<FakeSource>("a");
+    auto b = std::make_unique<FakeSource>("b");
+    FakeSource* a_raw = a.get();
+    FakeSource* b_raw = b.get();
+    engine.add_source(std::move(a));
+    engine.add_source(std::move(b));
+
+    auto counter = std::make_unique<CountingProcessor>();
+    CountingProcessor* counter_raw = counter.get();
+    engine.add_processor(std::move(counter));
+
+    for (int i = 0; i < 5; ++i) {
+        a_raw->push(expression_frame(0.5f));
+        b_raw->push(eyes_frame(1.0f));
+        engine.tick_once(static_cast<std::uint64_t>(i) * 8'000'000ULL + 1);
+    }
+
+    // 两个源各 5 帧，但后处理只能跑 5 次：跑 10 次等于把滤波做了两遍
+    FGB_CHECK(counter_raw->calls == 5);
+}
+
+FGB_TEST(engine_single_source_is_passthrough) {
+    Engine engine;
+    auto source = std::make_unique<FakeSource>("solo");
+    FakeSource* raw = source.get();
+    engine.add_source(std::move(source));
+
+    FaceFrame frame = expression_frame(0.42f);
+    frame.eyes      = eyes_frame(3.0f).eyes;
+    frame.hasHeadPose  = true;
+    frame.headPosLocal = Vec3{0.0f, 0.0f, 1.0f};
+    frame.add_channel(channel::kEyes);
+    frame.add_channel(channel::kHead);
+    raw->push(frame);
+
+    engine.tick_once(1'000'000ULL);
+    const FaceFrame latest = engine.latest();
+    FGB_CHECK_NEAR(latest.shape(Shape::JawOpen), 0.42, 1e-6);
+    FGB_CHECK(latest.eyes.left.valid);
+    FGB_CHECK(latest.hasHeadPose);
+    FGB_CHECK(latest.captureTsNs == 1000); // 单源时时间戳原样带过去（frame 里写的是 1000）
+    FGB_CHECK(engine.stats().frames_in == 1);
+}

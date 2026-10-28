@@ -220,6 +220,20 @@ def main():
         "})()"))
     print(f"模块页：{modules}")
 
+    # 输入源卡片：多源合并后，"谁在喂哪一路"必须能在界面上看见
+    sources = json.loads(cdp.evaluate(
+        "(() => {"
+        "  document.querySelector('.nav-item[data-page=\"status\"]').click();"
+        "  const rows = [...document.querySelectorAll('.source-row')];"
+        "  return JSON.stringify({"
+        "    rows: rows.length,"
+        "    expected: (state.status && state.status.sources ? state.status.sources.length : 0),"
+        "    names: rows.map(row => row.querySelector('.source-name').textContent),"
+        "    live: rows.map(row => [...row.querySelectorAll('.source-chip.on')].length)"
+        "  });"
+        "})()"))
+    print(f"输入源：{sources}")
+
     # 三语切换：文案表是三份，切换后必须整页重画（标题、pill、卡片都在 JS 里生成）
     langs = json.loads(cdp.evaluate(
         "(() => {"
@@ -263,6 +277,12 @@ def main():
         ok = False
     if modules.get("active") != "modules" or modules.get("cards") != modules.get("expected"):
         print("FAIL 模块页与 catalog 不一致（期望渲染的卡片数对不上）")
+        ok = False
+    if sources.get("rows") != sources.get("expected"):
+        print("FAIL 输入源卡片行数与 status.sources 不一致")
+        ok = False
+    if sources.get("rows", 0) > 0 and all(count == 0 for count in sources.get("live", [])):
+        print("FAIL 没有任何输入源被标记为在用")
         ok = False
     if langs["en"]["nav"][0] != "Status" or langs["ja"]["nav"][0] != "状態":
         print("FAIL 三语文案没生效（检查 ui/i18n.js 与 set_lang）")

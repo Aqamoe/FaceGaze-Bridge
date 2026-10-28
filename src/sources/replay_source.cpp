@@ -121,6 +121,18 @@ bool ReplaySource::poll(FaceFrame& out) {
     }
 
     if (produced) {
+        // 回放的包与实时模块同源，通道声明也照 vrcft 的规则来
+        pending_.channels = 0;
+        for (std::size_t i = 0; i < kShapeCount; ++i) {
+            if (pending_.shapeValid[i] != 0) {
+                pending_.add_channel(channel::kExpression);
+                break;
+            }
+        }
+        if (pending_.eyes.any_valid()) {
+            pending_.add_channel(channel::kEyes);
+        }
+
         pending_.captureTsNs = clock::now_ns();
         pending_.sequence    = ++stats_.frames;
         pending_.sanitize();

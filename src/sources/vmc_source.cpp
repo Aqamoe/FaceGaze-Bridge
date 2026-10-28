@@ -209,6 +209,19 @@ void VmcSource::handle_blend_value(std::string_view name, float value) noexcept 
 }
 
 void VmcSource::handle_apply() noexcept {
+    // 声明这一轮实际带了哪几路：VMC 没有眼追，头姿只在收到 /VMC/Ext/Head 时才有。
+    // 不声明的话合并层会把它当成"眼追来源"（neutral 的眼睛是 valid 的）。
+    pending_.channels = 0;
+    for (std::size_t i = 0; i < kShapeCount; ++i) {
+        if (pending_.shapeValid[i] != 0) {
+            pending_.add_channel(channel::kExpression);
+            break;
+        }
+    }
+    if (pending_.hasHeadPose) {
+        pending_.add_channel(channel::kHead);
+    }
+
     pending_.captureTsNs = clock::now_ns();
     pending_.sequence    = frames_.load(std::memory_order_relaxed) + 1;
     pending_.sanitize();
