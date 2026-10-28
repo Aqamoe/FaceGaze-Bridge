@@ -57,6 +57,8 @@ public:
 
     // 诊断信息，供 UI 显示"为什么没数据"
     const std::string& last_error() const noexcept { return last_error_; }
+    // 模块自己报的最后一条 error（已压平成一行的截断版），没有则为空
+    const std::string& module_error() const noexcept { return module_error_; }
     int restart_count() const noexcept { return restarts_; }
     bool module_alive() const noexcept { return host_.alive(); }
     std::size_t recorded_frames() const noexcept { return recorder_.frames(); }
@@ -88,6 +90,7 @@ private:
     std::atomic<std::uint64_t> packets_{0};
 
     std::string last_error_;
+    std::string module_error_;
     int restarts_ = 0;
 };
 

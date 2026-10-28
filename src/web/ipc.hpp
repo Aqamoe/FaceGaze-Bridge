@@ -18,6 +18,8 @@
 #include "engine/engine.hpp"
 #include "net/ws_server.hpp"
 #include "sinks/vrchat_sink.hpp"
+#include "sources/vrcft_source.hpp"
+#include "vrcft/module_registry.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -38,6 +40,11 @@ struct IpcContext {
     std::string params_mode;
     std::string eye_mode;
     std::filesystem::path ui_dir; // 静态页面根目录，空表示不发页面
+
+    // 模块管理：非 vrcft 输入时为空。列表是"磁盘上有什么"，运行态在 vrcft 那边。
+    vrcft::ModuleRegistry* modules    = nullptr;
+    const vrcft::VrcftSource* vrcft   = nullptr;
+    std::string active_module_id;
 
     std::atomic<bool>* quit = nullptr;
 };
@@ -70,7 +77,9 @@ private:
     void build_catalog(std::string& out);
     void build_status(std::string& out);
     void build_params(std::string& out);
+    void build_modules(std::string& out);
     void build_metrics(std::string& out); // status 的公共部分，HTTP 接口复用
+    const char* module_state() const noexcept;
 
     void send_backlog(std::intptr_t conn);
     void handle_text(std::intptr_t conn, std::string_view text);

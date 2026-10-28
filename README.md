@@ -35,7 +35,8 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 参数层（M3） | ✅ v2 + v1 legacy + 地址发现 + binary；**真机验收通过**（[ADR-0006](docs/adr/0006-hardware-acceptance.md)） |
 | 录制回放（M4 之一） | ✅ 录原始包 + 回放 + 参数导出 CSV（[ADR-0007](docs/adr/0007-capture-replay.md)） |
 | 校准与滤波（M3 剩余） | ✅ 逐形状校准（从两份抓包推导）+ One Euro 滤波（[ADR-0008](docs/adr/0008-calibration-and-filtering.md)） |
-| 界面（WebView2） | ✅ `fgb-ui` 原生窗口 + WebSocket IPC：状态 / 参数热力图 / 输出 / 日志 / 设置（[ADR-0010](docs/adr/0010-webview2-ui-and-websocket-ipc.md)） |
+| 界面（WebView2） | ✅ `fgb-ui` 原生窗口 + WebSocket IPC：状态 / 模块 / 参数热力图 / 输出 / 日志 / 设置（[ADR-0010](docs/adr/0010-webview2-ui-and-websocket-ipc.md)） |
+| 模块管理 | ✅ 扫描 VRCFT `CustomLibs` + FGB `vrcft-libs`、解析 `module.json`、选择启动模块并持久化（[ADR-0011](docs/adr/0011-module-management.md)） |
 
 **已经能跑的**（M1 + M2 核心）：
 
@@ -50,7 +51,9 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 - 眼追参数派生（`EyeLeftX/Y`、`EyeLidLeft/Right`），`parameters` / `native` / `both` 三模式
 - 界面：WebView2 窗口（`fgb-ui`）↔ 引擎走本机 WebSocket，10 Hz 推送状态与 365 个参数值，
   滤波滑杆/重新读取头像/日志实时回传
-- 85 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面探针
+- 模块管理：自动发现 VRCFT 的 `CustomLibs` 与 FGB 的 `vrcft-libs`，解析 `module.json`，
+  界面里选启动模块（写 `%APPDATA%\FaceGazeBridge\fgb.ini`），故障时显示模块自己报的原因
+- 87 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面探针
   （`tools/probe_ipc.py`、`tools/probe_ui.py`）
 
 ```bash
@@ -59,6 +62,10 @@ fgb-cli run --source vrcft --vrchat 127.0.0.1:9000 --verbose
 
 # 带界面：拉起 WebView2 窗口（隐含 --panel 8787）
 fgb-cli run --source vrcft --ui
+
+# 模块：看磁盘上有哪些模块、当前选的是哪个
+fgb-cli modules
+fgb-cli modules use VRCFTPicoModule   # 写进 fgb.ini，重启引擎后生效
 ```
 
 **还没做的**：

@@ -10,7 +10,8 @@ add_executable(fgb-tests
     test_capture.cpp
     test_calibration.cpp
     test_ws.cpp
-    test_web.cpp)
+    test_json.cpp
+    test_modules.cpp)
 
 target_include_directories(fgb-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(fgb-tests PRIVATE fgb_engine fgb_web)

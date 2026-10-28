@@ -1,9 +1,9 @@
 #include "web/ipc.hpp"
 
+#include "base/json.hpp"
 #include "base/log.hpp"
 #include "params/avatar_config.hpp"
 #include "params/catalog.hpp"
-#include "web/json.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -18,6 +18,9 @@
 #endif
 
 namespace fgb::web {
+
+using json::JsonWriter;
+
 namespace {
 
 constexpr char kTag[] = "ipc";
@@ -132,6 +135,9 @@ IpcServer::IpcServer(IpcContext context) : ctx_(std::move(context)) {
             refresh_catalog();
         }
         server_.send_text(conn, catalog_json_);
+
+        build_modules(message);
+        server_.send_text(conn, message);
 
         build_status(message);
         server_.send_text(conn, message);
@@ -284,6 +290,22 @@ void IpcServer::build_metrics(std::string& out) {
     writer.key("eye_mode").str(ctx_.eye_mode);
     writer.key("clients").integer(static_cast<long long>(server_.ready_count()));
 
+    writer.key("module");
+    writer.obj_begin();
+    writer.key("id").str(ctx_.active_module_id);
+    writer.key("state").str(module_state());
+    // 模块自己报的错优先：它比"等待初始化超时"这类描述具体
+    std::string module_error;
+    if (ctx_.vrcft != nullptr) {
+        module_error = !ctx_.vrcft->module_error().empty() ? ctx_.vrcft->module_error()
+                                                           : ctx_.vrcft->last_error();
+    }
+    writer.key("error").str(module_error);
+    writer.key("restarts").integer(
+        static_cast<long long>(ctx_.vrcft != nullptr ? ctx_.vrcft->restart_count() : 0));
+    writer.key("alive").boolean(ctx_.vrcft != nullptr && ctx_.vrcft->module_alive());
+    writer.obj_end();
+
     writer.key("filter");
     writer.obj_begin();
     if (ctx_.filter != nullptr) {
@@ -329,6 +351,81 @@ void IpcServer::build_params(std::string& out) {
     writer.obj_end();
 }
 
+// 当前模块的运行态。界面上的红点必须配一句人话，
+// 所以这里只给四种状态，其余细节靠 status.module.error。
+const char* IpcServer::module_state() const noexcept {
+    if (ctx_.active_module_id.empty()) {
+        return "none";
+    }
+    if (ctx_.vrcft == nullptr) {
+        return "external"; // 模块不归我们管（例如 --module-dll 手工指定）
+    }
+    // 模块自己报了错就是故障，哪怕进程还活着（它在重试）
+    if (!ctx_.vrcft->module_error().empty() && ctx_.vrcft->stats().frames == 0) {
+        return "error";
+    }
+    if (!ctx_.vrcft->last_error().empty()) {
+        return "error";
+    }
+    if (ctx_.vrcft->stats().frames > 0 && ctx_.vrcft->module_alive()) {
+        return "active";
+    }
+    return ctx_.vrcft->module_alive() ? "starting" : "stopped";
+}
+
+void IpcServer::build_modules(std::string& out) {
+    out.clear();
+    JsonWriter writer{out};
+    writer.obj_begin();
+    writer.key("type").str("modules");
+
+    const vrcft::ModuleRegistry* registry = ctx_.modules;
+    writer.key("active").str(ctx_.active_module_id);
+    writer.key("config").str(registry != nullptr ? registry->config_path().string() : std::string{});
+    writer.key("state").str(module_state());
+
+    writer.key("roots").arr_begin();
+    if (registry != nullptr) {
+        for (const vrcft::ModuleRoot& root : registry->roots()) {
+            writer.obj_begin();
+            writer.key("path").str(root.path.string());
+            writer.key("origin").str(root.origin);
+            writer.obj_end();
+        }
+    }
+    writer.arr_end();
+
+    writer.key("items").arr_begin();
+    if (registry != nullptr) {
+        for (const vrcft::ModuleInfo& module : registry->modules()) {
+            writer.obj_begin();
+            writer.key("id").str(module.id);
+            writer.key("name").str(module.name);
+            writer.key("author").str(module.author);
+            writer.key("version").str(module.version);
+            writer.key("description").str(module.description);
+            writer.key("page").str(module.page_url);
+            writer.key("dir").str(module.directory.string());
+            writer.key("dll").str(module.dll.string());
+            writer.key("metadata").boolean(module.metadata_ok);
+            writer.key("broken").boolean(module.broken);
+            writer.key("active").boolean(module.active);
+
+            const char* state = "installed";
+            if (module.broken) {
+                state = "broken";
+            } else if (module.active) {
+                state = module_state();
+            }
+            writer.key("state").str(state);
+            writer.obj_end();
+        }
+    }
+    writer.arr_end();
+
+    writer.obj_end();
+}
+
 void IpcServer::flush_logs() {
     std::deque<LogLine> pending;
     {
@@ -362,7 +459,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     bool ok          = false;
     std::string error;
 
-    const bool has_type = body_string(text, "type", type);
+    const bool has_type = json::field_string(text, "type", type);
     FGB_DEBUG(kTag, "命令：%.*s", static_cast<int>(text.size()), text.data());
     if (has_type && type == "set_filter") {
         if (ctx_.filter == nullptr) {
@@ -371,9 +468,9 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             bool enabled = ctx_.filter->enabled();
             double min_cutoff = ctx_.filter->min_cutoff();
             double beta       = ctx_.filter->beta();
-            body_bool(text, "enabled", enabled);
-            body_number(text, "min_cutoff", min_cutoff);
-            body_number(text, "beta", beta);
+            json::field_bool(text, "enabled", enabled);
+            json::field_number(text, "min_cutoff", min_cutoff);
+            json::field_number(text, "beta", beta);
             min_cutoff = std::clamp(min_cutoff, 0.01, 20.0);
             beta       = std::clamp(beta, 0.0, 5.0);
             ctx_.filter->set_enabled(enabled);
@@ -390,10 +487,29 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             server_.broadcast(catalog_json_);
             ok = true;
         }
+    } else if (has_type && type == "scan_modules") {
+        if (ctx_.modules == nullptr) {
+            error = "module registry not available";
+        } else {
+            ctx_.modules->rescan();
+            ctx_.active_module_id = ctx_.modules->active_id();
+            ok                    = true;
+        }
+    } else if (has_type && type == "set_module") {
+        std::string id;
+        json::field_string(text, "id", id); // 空串 = 不加载任何模块
+        if (ctx_.modules == nullptr) {
+            error = "module registry not available";
+        } else if (ctx_.modules->set_active(id)) {
+            ctx_.active_module_id = ctx_.modules->active_id();
+            ok                    = true;
+        } else {
+            error = "unknown module";
+        }
     } else if (has_type && type == "set_log_level") {
         std::string level_text;
         log::Level level = log::level();
-        if (body_string(text, "level", level_text) && parse_level(level_text, level)) {
+        if (json::field_string(text, "level", level_text) && parse_level(level_text, level)) {
             log::set_level(level);
             ok = true;
         } else {
@@ -425,11 +541,16 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     writer.obj_end();
     server_.send_text(conn, reply);
 
-    if (type == "set_filter" && ok) {
-        // 让滑杆松手后立刻看到权威值，而不是等下一次 10 Hz 推送
+    if (ok && (type == "set_filter" || type == "scan_modules" || type == "set_module")) {
+        // 让操作立刻看到权威值，而不是等下一次 10 Hz 推送
         std::string status;
         build_status(status);
         server_.broadcast(status);
+    }
+    if (ok && (type == "scan_modules" || type == "set_module")) {
+        std::string modules;
+        build_modules(modules);
+        server_.broadcast(modules);
     }
 }
 

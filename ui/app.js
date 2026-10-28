@@ -23,6 +23,8 @@ const state = {
   cells: [],
   mini: [],
   logs: [],
+  modules: null,
+  status: null,
   view: "status",
   retry: 0,
   timer: null,
@@ -31,6 +33,7 @@ const state = {
 
 const PAGE_META = {
   status: ["运行状态", "实时指标来自引擎主循环，10 Hz 推送"],
+  modules: ["模块", "扫描 VRCFT 的模块目录，选择启动时加载哪个"],
   params: ["参数热力图", "88 个形状 + 派生参数，颜色深浅即当前值"],
   output: ["输出与链路", "OSC 目标、眼追模式与当前头像绑定情况"],
   logs: ["日志", "引擎与模块日志经 IPC 实时回传"],
@@ -120,6 +123,12 @@ function handle(message) {
     case "status":
       render_status(message);
       break;
+    case "modules":
+      state.modules = message;
+      if (state.view === "modules") {
+        render_modules();
+      }
+      break;
     case "params":
       render_params(message.values || []);
       break;
@@ -139,6 +148,7 @@ function handle(message) {
 // ---------- 渲染：状态 ----------
 
 function render_status(status) {
+  state.status = status; // 留给调试与探针读最新一帧
   $("m-fps").textContent = (status.fps || 0).toFixed(1);
   $("m-frames").textContent = fmt_int(status.frames_in);
   $("m-ticks").textContent = fmt_int(status.ticks);
@@ -165,6 +175,10 @@ function render_status(status) {
   $("o-binary").textContent = status.binary_count || 0;
   $("c-source").textContent = `${status.source || "—"} · ${(status.fps || 0).toFixed(1)} fps`;
   $("s-clients").textContent = status.clients || 0;
+
+  if (status.module && state.view === "modules") {
+    sync_active_module(status.module);
+  }
 
   const filter = status.filter || {};
   const enabled = $("f-enabled");
@@ -289,6 +303,143 @@ function apply_param_filter() {
   $("param-empty").hidden = visible !== 0;
 }
 
+// ---------- 渲染：模块 ----------
+
+const MODULE_STATES = {
+  active: ["运行中", "ok"],
+  starting: ["初始化中", "warn"],
+  error: ["故障", "err"],
+  stopped: ["已停止", "err"],
+  broken: ["缺少 DLL", "err"],
+  installed: ["已安装", ""],
+  none: ["未加载", ""],
+  external: ["外部指定", ""],
+};
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) {
+    node.className = className;
+  }
+  if (text !== undefined) {
+    node.textContent = text;
+  }
+  return node;
+}
+
+function format_state(key) {
+  const [label, cls] = MODULE_STATES[key] || MODULE_STATES.installed;
+  return { label, cls };
+}
+
+function render_modules() {
+  const data = state.modules;
+  const items = (data && data.items) || [];
+  const list = $("module-list");
+  list.textContent = "";
+
+  $("mod-config").textContent = (data && data.config) || "未持久化";
+  $("mod-config").title = (data && data.config) || "";
+
+  if (!items.length) {
+    const empty = el("div", "empty");
+    empty.append(el("div", "", "没有发现模块"));
+    empty.append(el("div", "hint", "把 VRCFT 的模块放进 %APPDATA%\\VRCFaceTracking\\CustomLibs，或放一份到 exe 旁边的 vrcft-libs"));
+    if (data && data.roots) {
+      for (const root of data.roots) {
+        empty.append(el("div", "module-meta", `[${root.origin}] ${root.path}`));
+      }
+    }
+    list.append(empty);
+    return;
+  }
+
+  for (const item of items) {
+    list.append(module_card(item, data));
+  }
+}
+
+function module_card(item, data) {
+  const card = el("article", "module-card");
+  card.dataset.id = item.id;
+  if (item.active) {
+    card.classList.add("active");
+  }
+  if (item.broken) {
+    card.classList.add("broken");
+  }
+
+  const head = el("div", "module-head");
+  head.append(el("strong", "", item.name || item.id));
+  if (item.version) {
+    head.append(el("span", "module-ver", `v${item.version}`));
+  }
+  if (item.author) {
+    head.append(el("span", "module-author", item.author));
+  }
+  const chip_state = format_state(item.state);
+  const chip = el("span", `chip ${chip_state.cls}`.trim(), chip_state.label);
+  chip.dataset.role = "chip";
+  head.append(chip);
+  card.append(head);
+
+  if (item.description) {
+    card.append(el("p", "module-desc", item.description));
+  }
+
+  const meta = el("div", "module-meta");
+  meta.append(el("span", "", `id  ${item.id}`));
+  meta.append(el("span", "", `dll ${item.dll || "（未找到）"}`));
+  card.append(meta);
+
+  const error = el("div", "module-error");
+  error.dataset.role = "error";
+  error.hidden = true;
+  card.append(error);
+
+  const actions = el("div", "module-actions");
+  if (item.active) {
+    const note = el("span", "muted", "当前引擎加载的就是它；切换需重启引擎");
+    actions.append(note);
+  } else if (item.broken) {
+    actions.append(el("span", "muted", "目录里没有可加载的 DLL，先修好模块再选"));
+  } else {
+    const button = el("button", "btn", "设为启动模块");
+    button.addEventListener("click", () => send({ type: "set_module", id: item.id }));
+    actions.append(button);
+  }
+  card.append(actions);
+
+  return card;
+}
+
+// 运行态在 status 里（10 Hz），模块列表只在变化时推一次：
+// 这里只更新"当前那个"的 chip 与错误行，避免整页重建抢走按钮焦点。
+function sync_active_module(module) {
+  if (!module || !state.modules) {
+    return;
+  }
+  const card = document.querySelector(`.module-card[data-id="${CSS.escape(module.id || "")}"]`);
+  if (!card) {
+    return;
+  }
+  const chip = card.querySelector('[data-role="chip"]');
+  // 变量名不能叫 state：会遮蔽上面那个全局 state，而全局的那行 const 更晚执行，
+  // 于是最前面的 `!state.modules` 直接 TDZ 报错（"Cannot access 'state' before initialization"）。
+  const chip_state = format_state(module.state);
+  if (chip) {
+    chip.className = `chip ${chip_state.cls}`.trim();
+    chip.textContent = chip_state.label;
+  }
+  const error = card.querySelector('[data-role="error"]');
+  if (error) {
+    error.hidden = !module.error;
+    // 模块抛出来的经常是整段 .NET 栈：卡片里只放前几行，全文挂到 title 上
+    error.textContent = (module.error || "").slice(0, 400);
+    error.title = module.error || "";
+  }
+}
+
 // ---------- 日志 ----------
 
 const LEVEL_ORDER = { trace: 0, debug: 1, info: 2, warn: 3, error: 4 };
@@ -363,6 +514,9 @@ function switch_page(page) {
   if (page === "logs") {
     rerender_logs();
   }
+  if (page === "modules") {
+    render_modules();
+  }
   if (page === "params") {
     apply_param_filter();
     render_params(state.values);
@@ -401,6 +555,10 @@ function wire() {
 
   $("o-reload").addEventListener("click", () => {
     send({ type: "reload_avatar" });
+  });
+
+  $("mod-rescan").addEventListener("click", () => {
+    send({ type: "scan_modules" });
   });
 
   $("log-level").addEventListener("change", rerender_logs);

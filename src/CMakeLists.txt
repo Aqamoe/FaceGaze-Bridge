@@ -1,6 +1,7 @@
 add_library(fgb_base STATIC
     base/log.cpp
-    base/clock.cpp)
+    base/clock.cpp
+    base/json.cpp)
 target_include_directories(fgb_base PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(fgb_base PUBLIC fgb_options)
 if(WIN32)
@@ -27,13 +28,14 @@ if(WIN32)
     target_link_libraries(fgb_net PRIVATE ws2_32)
 endif()
 
-# VRCFT 模块兼容层：协议编解码 + 数据转换 + 沙箱服务 + 进程管理
+# VRCFT 模块兼容层：协议编解码 + 数据转换 + 沙箱服务 + 进程管理 + 模块发现
 add_library(fgb_vrcft STATIC
     vrcft/protocol.cpp
     vrcft/update_data.cpp
     vrcft/sandbox_server.cpp
-    vrcft/module_host.cpp)
-target_link_libraries(fgb_vrcft PUBLIC fgb_core fgb_net)
+    vrcft/module_host.cpp
+    vrcft/module_registry.cpp)
+target_link_libraries(fgb_vrcft PUBLIC fgb_core fgb_net fgb_config)
 
 # 抓包文件格式。engine 与 params（校准推导要读抓包）都要用
 add_library(fgb_capture STATIC
@@ -69,7 +71,6 @@ target_link_libraries(fgb_engine PUBLIC fgb_core fgb_osc fgb_net fgb_vrcft fgb_p
 
 # 控制面：WebSocket IPC + 本地静态页面
 add_library(fgb_web STATIC
-    web/json.cpp
     web/ipc.cpp)
 target_link_libraries(fgb_web PUBLIC fgb_engine fgb_net fgb_process)
 target_compile_definitions(fgb_web PRIVATE FGB_VERSION="${PROJECT_VERSION}")

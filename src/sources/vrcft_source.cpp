@@ -137,6 +137,35 @@ void VrcftSource::log_event(std::span<const std::byte> packet) noexcept {
     const auto level = entry.level;
     FGB_LOG(level >= 4 ? log::Level::error : (level == 3 ? log::Level::warn : log::Level::debug),
             kTag, "模块: %.*s", static_cast<int>(entry.text.size()), entry.text.data());
+
+    // 模块自己报的错往往比我们的"等待初始化超时"有用得多——
+    // 比如 PICO 模块的 SocketException 10048 就等于"端口被占用"。
+    // 存一份压平过的，供界面直接显示（不截栈就太长，界面上放不下）。
+    if (level >= 4) {
+        try {
+            std::string text;
+            text.reserve(entry.text.size());
+            bool last_space = false;
+            for (const char c : entry.text) {
+                const bool space = c == '\n' || c == '\r' || c == '\t';
+                if (space) {
+                    if (!last_space && !text.empty()) {
+                        text.push_back(' ');
+                    }
+                } else {
+                    text.push_back(c);
+                }
+                last_space = space;
+            }
+            if (text.size() > 600) {
+                text.resize(600);
+                text.append("…");
+            }
+            module_error_ = std::move(text);
+        } catch (...) {
+            // 内存不够时宁可不显示原因，也不能让模块线程挂掉
+        }
+    }
 }
 
 void VrcftSource::drain_incoming() noexcept {

@@ -19,6 +19,7 @@
 
     <nav class="nav">
       <button class="nav-item active" data-page="status"><span class="dot"></span>状态</button>
+      <button class="nav-item" data-page="modules"><span class="dot"></span>模块</button>
       <button class="nav-item" data-page="params"><span class="dot"></span>参数</button>
       <button class="nav-item" data-page="output"><span class="dot"></span>输出</button>
       <button class="nav-item" data-page="logs"><span class="dot"></span>日志</button>
@@ -88,6 +89,20 @@
             <div class="hint">最近一帧参数值，进入「参数」页看完整列表</div>
           </article>
         </div>
+      </section>
+
+      <!-- 模块 -->
+      <section class="page" data-page="modules">
+        <div class="toolbar">
+          <button class="btn" id="mod-rescan">重新扫描</button>
+          <span class="pill" id="mod-config-title">配置文件</span>
+          <span class="muted mono" id="mod-config">—</span>
+        </div>
+        <div class="module-list" id="module-list"></div>
+        <p class="hint">
+          引擎一次只加载一个模块：点「设为启动模块」写进配置文件，<b>重启引擎后生效</b>。
+          眼追与表情分属两个模块的并发加载还在 M4 计划里。
+        </p>
       </section>
 
       <!-- 参数 -->

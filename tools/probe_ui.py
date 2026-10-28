@@ -205,6 +205,21 @@ def main():
         "})()"))
     print(f"参数页：{params}")
 
+    modules = json.loads(cdp.evaluate(
+        "(() => {"
+        "  document.querySelector('.nav-item[data-page=\"modules\"]').click();"
+        "  const cards = [...document.querySelectorAll('.module-card')];"
+        "  return JSON.stringify({"
+        "    active: document.querySelector('.page.active').dataset.page,"
+        "    cards: cards.length,"
+        "    expected: state.modules ? state.modules.items.length : -1,"
+        "    names: cards.map(card => card.querySelector('strong').textContent),"
+        "    chips: cards.map(card => card.querySelector('[data-role=chip]').textContent),"
+        "    config: document.getElementById('mod-config').textContent"
+        "  });"
+        "})()"))
+    print(f"模块页：{modules}")
+
     logs = json.loads(cdp.evaluate(
         "(() => {"
         "  document.querySelector('.nav-item[data-page=\"logs\"]').click();"
@@ -227,6 +242,9 @@ def main():
         ok = False
     if params.get("nonzero", 0) == 0:
         print("FAIL 参数值全为 0，说明数据没有进到页面")
+        ok = False
+    if modules.get("active") != "modules" or modules.get("cards") != modules.get("expected"):
+        print("FAIL 模块页与 catalog 不一致（期望渲染的卡片数对不上）")
         ok = False
     if logs.get("active") != "logs" or logs.get("lines", 0) == 0:
         print("FAIL 日志页没有内容（新连接应补发最近日志）")

@@ -166,6 +166,11 @@ FaceGaze-Bridge/
 5. **坐标系转换只能出现在 `core/coord.hpp`**。CI 用 grep 卡 `-v.z` / `+v.z` 字面量。
 6. **公开头文件不用 `#include <windows.h>`**（用 PIMPL 或前置声明），否则宏污染会传染。
 7. **每个 `catch` 必须记录日志或转换错误码**，禁止空 catch。
+8. **`printf`/`fprintf` 的格式串里，不要紧跟在中文/全角标点后面写 `%s`**。
+   MSVC 的格式检查（在 `/W4 /WX` 下会变成错误 C4474）会把前面那个多字节字符的尾字节
+   当成 MBCS 前导字节，连 `%` 一起吃掉，于是"参数太多"。要么在 `%s` 前留一个 ASCII 字符，
+   要么用 `std::string` 拼好再 `fputs`。`FGB_INFO/FGB_ERROR` 没有格式检查，不受影响——
+   所以这个坑只在直接调 `printf` 的地方出现。
 
 ### 4.3 注释纪律
 
