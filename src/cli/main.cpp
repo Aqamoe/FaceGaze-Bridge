@@ -3,10 +3,12 @@
 #include "engine/engine.hpp"
 #include "sinks/vrchat_sink.hpp"
 #include "sources/vmc_source.hpp"
+#include "sources/vrcft_source.hpp"
 
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -43,7 +45,10 @@ void print_usage() {
                  "  fgb-cli version        显示版本\n"
                  "\n"
                  "run 选项:\n"
+                 "  --source <类型>         vmc | vrcft (默认 vmc)\n"
                  "  --vmc-port <端口>        VMC 监听端口 (默认 39539)\n"
+                 "  --module-exe <路径>     VRCFaceTracking.ModuleProcess.exe 路径\n"
+                 "  --module-dll <路径>     要加载的模块 DLL 路径\n"
                  "  --vrchat <host:port>    VRChat OSC 目标 (默认 127.0.0.1:9000)\n"
                  "  --eye-mode <模式>       parameters | native | both (默认 parameters)\n"
                  "  --tick-hz <hz>          引擎 tick 频率 (默认 120)\n"
@@ -69,8 +74,43 @@ bool parse_uint16(std::string_view text, std::uint16_t& out) {
     return true;
 }
 
-bool parse_host_port(std::string_view text, std::string& host, std::uint16_t& port) {
-    const auto colon = text.rfind(':');
+// VRCFT 的默认安装位置（Steam 版）。找不到就让用户用 --module-exe 指定。
+std::filesystem::path default_vrcft_dir() {
+    const std::filesystem::path candidates[] = {
+        "C:\\Program Files (x86)\\Steam\\steamapps\\common\\VRCFaceTracking",
+        "C:\\Program Files\\Steam\\steamapps\\common\\VRCFaceTracking",
+    };
+    std::error_code ec;
+    for (const auto& dir : candidates) {
+        if (std::filesystem::exists(dir, ec)) {
+            return dir;
+        }
+    }
+    return {};
+}
+
+// 在 %APPDATA%\VRCFaceTracking\CustomLibs 下找第一个模块 DLL
+std::filesystem::path find_module_dll() {
+    const char* appdata = std::getenv("APPDATA");
+    if (appdata == nullptr) {
+        return {};
+    }
+    const std::filesystem::path base =
+        std::filesystem::path(appdata) / "VRCFaceTracking" / "CustomLibs";
+    std::error_code ec;
+    if (!std::filesystem::exists(base, ec)) {
+        return {};
+    }
+    for (auto it = std::filesystem::recursive_directory_iterator(base, ec);
+         it != std::filesystem::recursive_directory_iterator(); ++it) {
+        if (it->path().extension() == ".dll") {
+            return it->path();
+        }
+    }
+    return {};
+}
+
+bool parse_host_port(std::string_view text, std::string& host, std::uint16_t& port) {    const auto colon = text.rfind(':');
     if (colon == std::string_view::npos) {
         host = std::string(text);
         return !host.empty();
@@ -82,6 +122,9 @@ bool parse_host_port(std::string_view text, std::string& host, std::uint16_t& po
 int cmd_run(int argc, char** argv) {
     fgb::VmcSourceConfig vmc_cfg;
     fgb::VrchatSinkConfig vrchat_cfg;
+    std::string source_kind;
+    std::filesystem::path module_exe;
+    std::filesystem::path module_dll;
     int tick_hz      = 120;
     int duration_sec = 0;
     bool verbose     = false;
@@ -96,7 +139,25 @@ int cmd_run(int argc, char** argv) {
             return argv[++i];
         };
 
-        if (arg == "--vmc-port") {
+        if (arg == "--source") {
+            const auto v = next_value(arg);
+            if (v == "vmc" || v == "vrcft") {
+                source_kind = std::string(v);
+            } else {
+                std::fprintf(stderr, "未知的 source 类型\n");
+                return 2;
+            }
+        } else if (arg == "--module-exe") {
+            const auto v = next_value(arg);
+            if (!v.empty()) {
+                module_exe = std::string(v);
+            }
+        } else if (arg == "--module-dll") {
+            const auto v = next_value(arg);
+            if (!v.empty()) {
+                module_dll = std::string(v);
+            }
+        } else if (arg == "--vmc-port") {
             const auto v = next_value(arg);
             if (v.empty() || !parse_uint16(v, vmc_cfg.port)) {
                 return 2;
@@ -143,9 +204,25 @@ int cmd_run(int argc, char** argv) {
     engine_cfg.tick_hz = tick_hz;
     fgb::Engine engine{engine_cfg};
 
-    engine.add_source(std::make_unique<fgb::VmcSource>(vmc_cfg));
+    if (source_kind == "vrcft") {
+        if (module_exe.empty()) {
+            const auto dir = default_vrcft_dir();
+            if (!dir.empty()) {
+                module_exe = dir / "VRCFaceTracking.ModuleProcess.exe";
+            }
+        }
+        if (module_dll.empty()) {
+            module_dll = find_module_dll();
+        }
+        fgb::vrcft::VrcftSourceConfig cfg;
+        cfg.module_process_exe = module_exe;
+        cfg.module_dll         = module_dll;
+        cfg.tick_hz            = tick_hz;
+        engine.add_source(std::make_unique<fgb::vrcft::VrcftSource>(cfg));
+    } else {
+        engine.add_source(std::make_unique<fgb::VmcSource>(vmc_cfg));
+    }
     engine.add_sink(std::make_unique<fgb::VrchatSink>(vrchat_cfg));
-
     fgb::clock::raise_timer_resolution();
 
     if (!engine.start()) {

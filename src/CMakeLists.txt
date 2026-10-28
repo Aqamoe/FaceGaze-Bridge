@@ -24,11 +24,20 @@ if(WIN32)
     target_link_libraries(fgb_net PRIVATE ws2_32)
 endif()
 
+# VRCFT 模块兼容层：协议编解码 + 数据转换 + 沙箱服务 + 进程管理
+add_library(fgb_vrcft STATIC
+    vrcft/protocol.cpp
+    vrcft/update_data.cpp
+    vrcft/sandbox_server.cpp
+    vrcft/module_host.cpp)
+target_link_libraries(fgb_vrcft PUBLIC fgb_core fgb_net)
+
 add_library(fgb_engine STATIC
     sinks/vrchat_sink.cpp
     sources/vmc_source.cpp
+    sources/vrcft_source.cpp
     engine/engine.cpp)
-target_link_libraries(fgb_engine PUBLIC fgb_core fgb_osc fgb_net)
+target_link_libraries(fgb_engine PUBLIC fgb_core fgb_osc fgb_net fgb_vrcft)
 
 if(FGB_BUILD_CLI)
     add_executable(fgb-cli cli/main.cpp)

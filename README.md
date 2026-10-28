@@ -30,16 +30,24 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 |---|---|
 | 方案设计 | ✅ 完成（本文档集） |
 | 技术预研（M0） | ✅ 协议已实测跑通（[ADR-0003](docs/adr/0003-vrcft-ipc-protocol.md)） |
-| 核心骨架（M1） | 🔄 进行中 |
+| 核心骨架（M1） | ✅ VMC → OSC 端到端 |
+| 模块兼容层（M2） | 🔄 **核心已跑通**：C++ 直接驱动官方 ModuleProcess，拿到真实 PICO 数据 |
 
-**已经能跑的**（M1 垂直切片）：
+**已经能跑的**（M1 + M2 核心）：
 
+- **VRCFT 模块兼容**：C++ 直接驱动官方 `ModuleProcess.exe`，握手 → Init → 状态同步 →
+  100 Hz 拉取 → 432 字节解码，实测从 PICO 模块拿到 1672 帧真实数据
 - VMC (UDP 39539) 输入 → 统一形状映射 → VRChat OSC 输出
 - OSC 编解码：bundle、分片、零分配写入器、容错解析
 - 无锁核心：SPSC ring、seqlock 快照
 - VRChat 输出端：死区过滤、bundle 聚合、1200 字节主动分包、1 Hz 心跳
 - 眼追参数派生（`EyeLeftX/Y`、`EyeLidLeft/Right`），`parameters` / `native` / `both` 三模式
-- 21 个单元测试 + 一个端到端冒烟测试（`tools/smoke_vmc.py`）
+- 29 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）
+
+```bash
+# 用 FGB 接管 VRCFT 的模块（需先关闭 VRCFT，模块端口是独占的）
+fgb-cli run --source vrcft --vrchat 127.0.0.1:9000 --verbose
+```
 
 **还没做的**：
 
