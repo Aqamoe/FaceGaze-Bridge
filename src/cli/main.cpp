@@ -2,7 +2,9 @@
 #include "base/log.hpp"
 #include "engine/engine.hpp"
 #include "capture/capture_file.hpp"
+#include "core/process/one_euro.hpp"
 #include "params/avatar_config.hpp"
+#include "params/calibration.hpp"
 #include "params/catalog.hpp"
 #include "sinks/vrchat_sink.hpp"
 #include "capture/capture_file.hpp"
@@ -48,6 +50,8 @@ void print_usage() {
                  "  fgb-cli run [选项]     启动桥接\n"
                  "  fgb-cli shapes         列出全部统一形状\n"
                  "  fgb-cli export <抓包> --out <csv>  把抓包跑过参数层导出 CSV（回归对比）\n"
+                 "  fgb-cli calibrate <放松抓包> --express <夸张抓包> --out <档案>\n"
+                 "                     从两份抓包推导逐形状校准\n"
                  "  fgb-cli params         查看参数地址解析结果（排查表情不动时先跑这个）\n"
                  "         --list          列出最近修改的头像配置\n"
                  "         --avatar-config <路径>\n"
@@ -59,6 +63,10 @@ void print_usage() {
                  "  --replay <文件>         回放抓包（配合 --source replay）\n"
                  "  --replay-speed <倍率>   回放速度，0 = 不限 (默认 1.0)\n"
                  "  --replay-loop           回放到末尾后重新开始\n"
+                 "  --calibration <文件>    应用校准档案（见 calibrate 命令）\n"
+                 "  --filter <on|off>       一欧元滤波（默认 off，与 VRCFT 一致）\n"
+                 "  --filter-cutoff <值>    滤波最小截止频率 (默认 1.0)\n"
+                 "  --filter-beta <值>      滤波速度系数 (默认 0.5)\n"
                  "  --vmc-port <端口>        VMC 监听端口 (默认 39539)\n"
                  "  --module-exe <路径>     VRCFaceTracking.ModuleProcess.exe 路径\n"
                  "  --module-dll <路径>     要加载的模块 DLL 路径\n"
@@ -140,6 +148,10 @@ int cmd_run(int argc, char** argv) {
     fgb::VmcSourceConfig vmc_cfg;
     fgb::ReplayConfig replay_cfg;
     std::string record_path;
+    std::string calibration_path;
+    bool filter_enabled   = false;
+    float filter_min_cutoff = 1.0f;
+    float filter_beta       = 0.5f;
     fgb::VrchatSinkConfig vrchat_cfg;
     std::string source_kind;
     std::filesystem::path module_exe;
@@ -166,6 +178,14 @@ int cmd_run(int argc, char** argv) {
                 std::fprintf(stderr, "未知的 source 类型\n");
                 return 2;
             }
+        } else if (arg == "--calibration") {
+            calibration_path = std::string{next_value(arg)};
+        } else if (arg == "--filter") {
+            filter_enabled = (next_value(arg) != "off");
+        } else if (arg == "--filter-cutoff") {
+            filter_min_cutoff = static_cast<float>(std::atof(std::string{next_value(arg)}.c_str()));
+        } else if (arg == "--filter-beta") {
+            filter_beta = static_cast<float>(std::atof(std::string{next_value(arg)}.c_str()));
         } else if (arg == "--record") {
             record_path = std::string{next_value(arg)};
         } else if (arg == "--replay") {
@@ -280,6 +300,27 @@ int cmd_run(int argc, char** argv) {
     } else {
         engine.add_source(std::make_unique<fgb::VmcSource>(vmc_cfg));
     }
+    // 后端处理顺序：先校准（把原始值拉到 0..1），再滤波（平滑已经校准过的信号）
+    if (!calibration_path.empty()) {
+        fgb::params::CalibrationProfile profile;
+        if (fgb::params::load_profile(calibration_path, profile)) {
+            FGB_INFO("cli", "校准档案：%s（%zu 个形状参与）", calibration_path.c_str(),
+                     profile.active_shape_count());
+            engine.add_processor(
+                std::make_unique<fgb::params::CalibrationApplier>(std::move(profile)));
+        } else {
+            std::fprintf(stderr, "%s%s\n", "校准档案读取失败，继续但不做校准：",
+                         calibration_path.c_str());
+        }
+    }
+    if (filter_enabled) {
+        fgb::OneEuroConfig filter_cfg;
+        filter_cfg.min_cutoff = filter_min_cutoff;
+        filter_cfg.beta       = filter_beta;
+        engine.add_processor(std::make_unique<fgb::FaceFilter>(filter_cfg));
+        FGB_INFO("cli", "滤波开启：minCutoff=%.2f beta=%.2f", filter_cfg.min_cutoff,
+                 filter_cfg.beta);
+    }
     engine.add_sink(std::make_unique<fgb::VrchatSink>(vrchat_cfg));
     fgb::clock::raise_timer_resolution();
 
@@ -363,6 +404,59 @@ bool bind_best_avatar(fgb::params::ParamRouter& router, const std::string& avata
     }
     router.use_fallback(prefix);
     return true;
+}
+
+// 从两份抓包推导校准档案：一份放松，一份尽量夸张。
+//
+// 之所以不让 calibrate 自己去录制，是不想在引擎循环里塞一个状态机 + 倒计时提示；
+// 抓包已经是现成的，推导过程还能离线重跑。用户多敲一条命令，换来确定的流程。
+int cmd_calibrate(int argc, char** argv) {
+    std::string neutral;
+    std::string express;
+    std::string out = "calibration.ini";
+    float gain_y    = 1.0f;
+
+    for (int i = 2; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        const auto next = [&]() -> std::string_view {
+            return (i + 1 < argc) ? std::string_view{argv[++i]} : std::string_view{};
+        };
+        if (arg == "--express") {
+            express = std::string{next()};
+        } else if (arg == "--out") {
+            out = std::string{next()};
+        } else if (arg == "--gain-y") {
+            gain_y = static_cast<float>(std::atof(std::string{next()}.c_str()));
+        } else if (arg == "--help" || arg == "-h") {
+            std::printf("用法: fgb-cli calibrate <放松抓包> --express <夸张抓包> --out <档案>\n");
+            return 0;
+        } else if (!arg.empty() && arg[0] != '-') {
+            neutral = std::string{arg};
+        }
+    }
+    if (neutral.empty() || express.empty()) {
+        std::fprintf(stderr, "%s\n",
+                     "用法: fgb-cli calibrate <放松抓包> --express <夸张抓包> --out <档案>");
+        return 2;
+    }
+
+    fgb::params::CalibrationProfile profile;
+    std::string error;
+    if (!fgb::params::derive_profile(neutral, express, profile, error)) {
+        std::fprintf(stderr, "%s%s\n", "推导失败：", error.c_str());
+        return 1;
+    }
+    profile.eye_gain_y = gain_y;
+    profile.eye_gain_x = 1.0f;
+
+    if (!fgb::params::save_profile(out, profile)) {
+        std::fprintf(stderr, "%s%s\n", "写档案失败：", out.c_str());
+        return 1;
+    }
+    std::printf("%s%zu%s%s\n", "校准档案已写入，", profile.active_shape_count(),
+                " 个形状参与：", out.c_str());
+    std::printf("%s\n", "用 --calibration 指定它来生效；觉得幅度太小可以改档案里的 gain。");
+    return 0;
 }
 
 // 把抓包逐帧跑过参数层，导出成 CSV。
@@ -638,6 +732,9 @@ int main(int argc, char** argv) {
     }
     if (cmd == "export") {
         return cmd_export(argc, argv);
+    }
+    if (cmd == "calibrate") {
+        return cmd_calibrate(argc, argv);
     }
     if (cmd == "version" || cmd == "--version") {
         std::printf("FaceGaze Bridge " FGB_VERSION "\n");

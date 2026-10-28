@@ -1,4 +1,4 @@
-#include "capture/capture_file.hpp"
+﻿#include "capture/capture_file.hpp"
 #include "sources/replay_source.hpp"
 #include "vrcft/update_data.hpp"
 

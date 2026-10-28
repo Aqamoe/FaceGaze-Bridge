@@ -7,7 +7,8 @@ add_executable(fgb-tests
     test_vrchat.cpp
     test_vrcft_protocol.cpp
     test_v1_params.cpp
-    test_capture.cpp)
+    test_capture.cpp
+    test_calibration.cpp)
 
 target_include_directories(fgb-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(fgb-tests PRIVATE fgb_engine)

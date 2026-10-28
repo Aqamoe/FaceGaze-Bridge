@@ -5,6 +5,7 @@
 #pragma once
 
 #include "core/cont/seqlock.hpp"
+#include "core/process/face_processor.hpp"
 #include "sinks/sink.hpp"
 #include "sources/source.hpp"
 
@@ -35,6 +36,8 @@ public:
 
     void add_source(std::unique_ptr<ISource> source);
     void add_sink(std::unique_ptr<ISink> sink);
+    // 后处理按添加顺序执行（先校准、再滤波是常规顺序）
+    void add_processor(std::unique_ptr<IFaceProcessor> processor);
 
     bool start();
     void stop() noexcept;
@@ -55,6 +58,7 @@ private:
     EngineConfig config_;
     std::vector<std::unique_ptr<ISource>> sources_;
     std::vector<std::unique_ptr<ISink>> sinks_;
+    std::vector<std::unique_ptr<IFaceProcessor>> processors_;
 
     SeqLock<FaceFrame> snapshot_;
     FaceFrame last_frame_{};

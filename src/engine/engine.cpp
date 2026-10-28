@@ -30,6 +30,12 @@ void Engine::add_sink(std::unique_ptr<ISink> sink) {
     }
 }
 
+void Engine::add_processor(std::unique_ptr<IFaceProcessor> processor) {
+    if (processor) {
+        processors_.push_back(std::move(processor));
+    }
+}
+
 bool Engine::start() {
     for (auto& source : sources_) {
         if (!source->start()) {
@@ -100,6 +106,9 @@ void Engine::tick_once(std::uint64_t now_ns) {
         FaceFrame frame;
         if (source->poll(frame)) {
             frame.sanitize();
+            for (auto& processor : processors_) {
+                processor->process(frame);
+            }
             last_frame_ = frame;
             got_new     = true;
             ++stats_.frames_in;

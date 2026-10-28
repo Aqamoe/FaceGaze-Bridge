@@ -32,22 +32,37 @@ add_library(fgb_vrcft STATIC
     vrcft/module_host.cpp)
 target_link_libraries(fgb_vrcft PUBLIC fgb_core fgb_net)
 
-# 参数派生层：把协议层的肌肉形状换算成 VRChat 认的 v2 参数，外加 v1 legacy 与地址发现
+# 抓包文件格式。engine 与 params（校准推导要读抓包）都要用
+add_library(fgb_capture STATIC
+    capture/capture_file.cpp)
+target_link_libraries(fgb_capture PUBLIC fgb_base)
+
+# 参数派生层：把协议层的肌肉形状换算成 VRChat 认的 v2 参数，外加 v1 legacy、地址发现与校准
 add_library(fgb_params STATIC
     params/catalog.cpp
     params/v2_params.cpp
     params/v1_params.cpp
-    params/avatar_config.cpp)
-target_link_libraries(fgb_params PUBLIC fgb_core fgb_base)
+    params/avatar_config.cpp
+    params/calibration.cpp)
+target_link_libraries(fgb_params PUBLIC fgb_core fgb_base fgb_capture fgb_vrcft)
+
+# 配置与后处理
+add_library(fgb_config STATIC
+    config/ini.cpp)
+target_link_libraries(fgb_config PUBLIC fgb_base)
+
+add_library(fgb_process STATIC
+    core/process/one_euro.cpp)
+target_link_libraries(fgb_process PUBLIC fgb_core)
 
 add_library(fgb_engine STATIC
     sinks/vrchat_sink.cpp
     sources/vmc_source.cpp
     sources/vrcft_source.cpp
     sources/replay_source.cpp
-    capture/capture_file.cpp
     engine/engine.cpp)
-target_link_libraries(fgb_engine PUBLIC fgb_core fgb_osc fgb_net fgb_vrcft fgb_params)
+target_link_libraries(fgb_engine PUBLIC fgb_core fgb_osc fgb_net fgb_vrcft fgb_params fgb_capture
+                                      fgb_config fgb_process)
 
 if(FGB_BUILD_CLI)
     add_executable(fgb-cli cli/main.cpp)
