@@ -99,3 +99,25 @@ if(WIN32 AND FGB_BUILD_UI)
         set_target_properties(fgb-ui PROPERTIES OUTPUT_NAME "fgb-ui")
     endif()
 endif()
+
+# ---- 发布包：用户双击就能跑 ----
+#
+#   cmake --install build/release --config Release --prefix dist
+#
+# 目录布局固定（见 AGENT.md §3.3）：exe 平铺在根，页面在 ui/，
+# 两个 .cmd 是入口——引擎需要参数，双击 exe 是起不来的。
+if(WIN32)
+    if(TARGET fgb-cli)
+        install(TARGETS fgb-cli RUNTIME DESTINATION .)
+    endif()
+    if(TARGET fgb-ui)
+        # 静态链接 WebView2Loader，所以 exe 旁边不需要任何 DLL
+        install(TARGETS fgb-ui RUNTIME DESTINATION .)
+    endif()
+    install(DIRECTORY "${CMAKE_SOURCE_DIR}/ui/" DESTINATION ui)
+    install(FILES
+        "${CMAKE_SOURCE_DIR}/packaging/README.txt"
+        "${CMAKE_SOURCE_DIR}/packaging/启动 (VRCFT 模块).cmd"
+        "${CMAKE_SOURCE_DIR}/packaging/启动 (VMC).cmd"
+        DESTINATION .)
+endif()
