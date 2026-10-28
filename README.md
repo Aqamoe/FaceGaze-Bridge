@@ -31,12 +31,15 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 方案设计 | ✅ 完成（本文档集） |
 | 技术预研（M0） | ✅ 协议已实测跑通（[ADR-0003](docs/adr/0003-vrcft-ipc-protocol.md)） |
 | 核心骨架（M1） | ✅ VMC → OSC 端到端 |
-| 模块兼容层（M2） | 🔄 **核心已跑通**：C++ 直接驱动官方 ModuleProcess，拿到真实 PICO 数据 |
+| 模块兼容层（M2） | ✅ **核心跑通**：C++ 直接驱动官方 ModuleProcess，拿到真实 PICO 数据 |
+| 参数层（M3） | 🔄 v2 派生完成（88 基础 + 71 合成），v1 legacy / binary 编码待做 |
 
 **已经能跑的**（M1 + M2 核心）：
 
 - **VRCFT 模块兼容**：C++ 直接驱动官方 `ModuleProcess.exe`，握手 → Init → 状态同步 →
   100 Hz 拉取 → 432 字节解码，实测从 PICO 模块拿到 1672 帧真实数据
+- **v2 参数派生**：协议层 88 个肌肉形状 → 88 个基础参数 + 71 个合成/简化/眼追参数，
+  规则逐条对齐 VRCFT（`JawX = JawRight - JawLeft`、`EyeLid = Openness*0.75 + EyeWide*0.25` 等）
 - VMC (UDP 39539) 输入 → 统一形状映射 → VRChat OSC 输出
 - OSC 编解码：bundle、分片、零分配写入器、容错解析
 - 无锁核心：SPSC ring、seqlock 快照

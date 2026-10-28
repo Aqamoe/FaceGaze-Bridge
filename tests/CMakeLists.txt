@@ -3,6 +3,7 @@ add_executable(fgb-tests
     test_osc.cpp
     test_ring.cpp
     test_shape.cpp
+    test_params.cpp
     test_vrchat.cpp
     test_vrcft_protocol.cpp)
 

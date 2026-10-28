@@ -32,12 +32,17 @@ add_library(fgb_vrcft STATIC
     vrcft/module_host.cpp)
 target_link_libraries(fgb_vrcft PUBLIC fgb_core fgb_net)
 
+# 参数派生层：把协议层的肌肉形状换算成 VRChat 认的 FT/v2/* 参数
+add_library(fgb_params STATIC
+    params/v2_params.cpp)
+target_link_libraries(fgb_params PUBLIC fgb_core)
+
 add_library(fgb_engine STATIC
     sinks/vrchat_sink.cpp
     sources/vmc_source.cpp
     sources/vrcft_source.cpp
     engine/engine.cpp)
-target_link_libraries(fgb_engine PUBLIC fgb_core fgb_osc fgb_net fgb_vrcft)
+target_link_libraries(fgb_engine PUBLIC fgb_core fgb_osc fgb_net fgb_vrcft fgb_params)
 
 if(FGB_BUILD_CLI)
     add_executable(fgb-cli cli/main.cpp)

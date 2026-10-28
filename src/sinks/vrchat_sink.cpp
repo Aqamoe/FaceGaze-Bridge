@@ -10,15 +10,8 @@ namespace {
 
 constexpr char kTag[] = "vrchat";
 
-constexpr char kParamPrefix[]    = "/avatar/parameters/FT/v2/";
+constexpr char kParamPrefix[]         = "/avatar/parameters/FT/v2/";
 constexpr std::size_t kParamPrefixLen = sizeof(kParamPrefix) - 1;
-
-constexpr char kAddrEyeLeftX[]  = "/avatar/parameters/FT/v2/EyeLeftX";
-constexpr char kAddrEyeLeftY[]  = "/avatar/parameters/FT/v2/EyeLeftY";
-constexpr char kAddrEyeRightX[] = "/avatar/parameters/FT/v2/EyeRightX";
-constexpr char kAddrEyeRightY[] = "/avatar/parameters/FT/v2/EyeRightY";
-constexpr char kAddrEyeLidL[]   = "/avatar/parameters/FT/v2/EyeLidLeft";
-constexpr char kAddrEyeLidR[]   = "/avatar/parameters/FT/v2/EyeLidRight";
 
 constexpr char kAddrNativePitchYaw[] = "/tracking/eye/LeftRightPitchYaw";
 constexpr char kAddrNativeClosed[]   = "/tracking/eye/EyesClosedAmount";
@@ -26,9 +19,8 @@ constexpr char kAddrNativeClosed[]   = "/tracking/eye/EyesClosedAmount";
 // 一条 float 参数消息的经验长度：地址 + 对齐 + 类型标签 + 参数 + bundle 长度前缀
 constexpr std::size_t kEstimatedMessageSize = 72;
 
-std::string_view make_shape_address(Shape s, char (&buf)[72]) noexcept {
-    const std::string_view name = shape_name(s);
-    const std::size_t total     = kParamPrefixLen + name.size();
+std::string_view make_address(std::string_view name, char (&buf)[96]) noexcept {
+    const std::size_t total = kParamPrefixLen + name.size();
     if (name.empty() || total >= sizeof(buf)) {
         return {};
     }
@@ -70,26 +62,21 @@ bool parse_eye_output_mode(std::string_view text, EyeOutputMode& out) noexcept {
 VrchatSink::VrchatSink(VrchatSinkConfig config) : config_(std::move(config)) { reset_dedup(); }
 
 void VrchatSink::reset_dedup() noexcept {
-    last_shapes_.fill(0.0f);
-    shape_sent_.fill(0);
-    last_eye_.fill(0.0f);
-    eye_sent_.fill(0);
+    last_values_.fill(0.0f);
+    sent_.fill(0);
     for (float& v : last_native_pitch_yaw_) {
         v = 0.0f;
     }
-    last_native_closed_   = 0.0f;
-    native_sent_          = false;
-    last_send_ns_         = 0;
-    last_heartbeat_ns_    = 0;
+    last_native_closed_ = 0.0f;
+    native_sent_        = false;
+    last_send_ns_       = 0;
+    last_heartbeat_ns_  = 0;
 }
 
 bool VrchatSink::start() {
     if (!socket_.open_sender()) {
         FGB_ERROR(kTag, "无法创建 UDP socket");
         return false;
-    }
-    if (!socket_.set_broadcast(false)) {
-        FGB_WARN(kTag, "关闭广播失败（通常无害）");
     }
     reset_dedup();
     started_ = true;
@@ -101,20 +88,6 @@ bool VrchatSink::start() {
 void VrchatSink::stop() noexcept {
     started_ = false;
     socket_.close();
-}
-
-void VrchatSink::compute_eye_params(const EyePair& eyes, float full_scale_deg,
-                                    float out[kEyeParamCount]) noexcept {
-    const float scale = full_scale_deg > 1e-3f ? full_scale_deg : 30.0f;
-    auto norm         = [scale](float deg) { return clamp_sym(deg / scale); };
-
-    out[0] = norm(eyes.left.gazePitchYawDeg.y);  // X ← yaw
-    out[1] = norm(eyes.left.gazePitchYawDeg.x);  // Y ← pitch
-    out[2] = norm(eyes.right.gazePitchYawDeg.y);
-    out[3] = norm(eyes.right.gazePitchYawDeg.x);
-    // v2 的 EyeLid 1.0 = 闭眼。注意 v1 是反的，别搞混。
-    out[4] = clamp01(1.0f - eyes.left.openness);
-    out[5] = clamp01(1.0f - eyes.right.openness);
 }
 
 void VrchatSink::flush(osc::BundleWriter& writer) noexcept {
@@ -132,33 +105,38 @@ void VrchatSink::flush(osc::BundleWriter& writer) noexcept {
     writer.begin_bundle();
 }
 
-void VrchatSink::emit_eye_parameters(osc::BundleWriter& writer, const FaceFrame& frame,
-                                     const GazeState& /*gaze*/, bool force) noexcept {
-    float values[kEyeParamCount];
-    compute_eye_params(frame.eyes, config_.eye_full_scale_deg, values);
+void VrchatSink::emit_one(osc::BundleWriter& writer, std::size_t slot, std::string_view name,
+                          float value, bool force) noexcept {
+    if (slot >= params::kMaxParamCount) {
+        return;
+    }
+    if (!std::isfinite(value)) {
+        return;
+    }
+    if (!force && sent_[slot] != 0 && std::fabs(value - last_values_[slot]) < config_.shape_epsilon) {
+        ++stats_.suppressed;
+        return;
+    }
 
-    constexpr const char* kAddresses[kEyeParamCount] = {
-        kAddrEyeLeftX, kAddrEyeLeftY, kAddrEyeRightX, kAddrEyeRightY, kAddrEyeLidL, kAddrEyeLidR,
-    };
+    char addr_buf[96];
+    const std::string_view address = make_address(name, addr_buf);
+    if (address.empty()) {
+        return;
+    }
 
-    for (std::size_t i = 0; i < kEyeParamCount; ++i) {
-        if (!force && eye_sent_[i] != 0 && std::fabs(values[i] - last_eye_[i]) < config_.gaze_epsilon) {
-            ++stats_.suppressed;
-            continue;
-        }
-        if (writer.size() + kEstimatedMessageSize > config_.max_datagram) {
-            flush(writer);
-        }
-        const float one[1] = {values[i]};
-        if (writer.write_floats(kAddresses[i], one)) {
-            last_eye_[i] = values[i];
-            eye_sent_[i] = 1;
-        }
+    if (writer.size() + kEstimatedMessageSize > config_.max_datagram) {
+        flush(writer);
+    }
+
+    const float one[1] = {value};
+    if (writer.write_floats(address, one)) {
+        last_values_[slot] = value;
+        sent_[slot]        = 1;
     }
 }
 
 void VrchatSink::emit_eye_native(osc::BundleWriter& writer, const FaceFrame& frame,
-                                 const GazeState& /*gaze*/, bool force) noexcept {
+                                 bool force) noexcept {
     // VRChat 约定：pitch 正值 = 向下。我们内部正值 = 向上，这里取负。
     const float vals[4] = {
         -frame.eyes.left.gazePitchYawDeg.x,
@@ -198,33 +176,7 @@ void VrchatSink::emit_eye_native(osc::BundleWriter& writer, const FaceFrame& fra
     }
 }
 
-void VrchatSink::emit_shapes(osc::BundleWriter& writer, const FaceFrame& frame, bool force) noexcept {
-    for (std::size_t i = 0; i < kShapeCount; ++i) {
-        const float v = frame.shapes[i];
-        if (!force && shape_sent_[i] != 0 && std::fabs(v - last_shapes_[i]) < config_.shape_epsilon) {
-            ++stats_.suppressed;
-            continue;
-        }
-
-        char addr_buf[72];
-        const std::string_view addr = make_shape_address(static_cast<Shape>(i), addr_buf);
-        if (addr.empty()) {
-            continue;
-        }
-
-        if (writer.size() + kEstimatedMessageSize > config_.max_datagram) {
-            flush(writer);
-        }
-
-        const float one[1] = {v};
-        if (writer.write_floats(addr, one)) {
-            last_shapes_[i] = v;
-            shape_sent_[i]  = 1;
-        }
-    }
-}
-
-void VrchatSink::submit(const FaceFrame& frame, const GazeState& gaze, std::uint64_t now_ns) {
+void VrchatSink::submit(const FaceFrame& frame, const GazeState& /*gaze*/, std::uint64_t now_ns) {
     if (!started_) {
         return;
     }
@@ -248,12 +200,23 @@ void VrchatSink::submit(const FaceFrame& frame, const GazeState& gaze, std::uint
         config_.eye_mode == EyeOutputMode::native || config_.eye_mode == EyeOutputMode::both;
 
     if (want_params) {
-        emit_eye_parameters(writer, frame, gaze, heartbeat);
+        std::size_t slot = 0;
+
+        // 1. 88 个基础肌肉形状，值直接来自协议层
+        for (std::size_t i = 0; i < kShapeCount; ++i, ++slot) {
+            emit_one(writer, slot, shape_name(static_cast<Shape>(i)), frame.shapes[i], heartbeat);
+        }
+
+        // 2. 眼追 / 简化 / 合成参数，按 VRCFT 的公式派生
+        params::EvalContext ctx{frame, config_.eye_full_scale_deg};
+        for (const auto& def : params::composite_params()) {
+            emit_one(writer, slot++, def.name, def.eval(ctx), heartbeat);
+        }
     }
+
     if (want_native) {
-        emit_eye_native(writer, frame, gaze, heartbeat);
+        emit_eye_native(writer, frame, heartbeat);
     }
-    emit_shapes(writer, frame, heartbeat);
 
     flush(writer);
 
