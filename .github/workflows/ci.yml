@@ -28,4 +28,7 @@ jobs:
 
       - name: Smoke test (VMC to OSC)
         if: matrix.config == 'Release'
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: "1"
         run: python tools/smoke_vmc.py --cli build/bin/${{ matrix.config }}/fgb-cli.exe

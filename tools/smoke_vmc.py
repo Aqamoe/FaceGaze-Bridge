@@ -76,7 +76,17 @@ def parse_addresses(packet: bytes) -> list[str]:
     return addresses
 
 
+def force_utf8_io() -> None:
+    """CI runner 的控制台编码可能是 cp1252，输出中文会抛 UnicodeEncodeError。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main() -> int:
+    force_utf8_io()
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--cli", default="build/test/bin/Debug/fgb-cli.exe")
     parser.add_argument("--vmc-port", type=int, default=39539)
