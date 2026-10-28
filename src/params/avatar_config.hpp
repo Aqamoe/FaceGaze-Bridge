@@ -55,6 +55,19 @@ bool load_avatar_file(const std::string& path, AvatarConfig& out);
 // limit 限制的是"成功解析出的配置数量"，不是读取的文件数。
 std::vector<AvatarConfig> scan_avatars(const std::string& osc_root, std::size_t limit = 0);
 
+// 从 VRChat 日志里读出"当前穿着的头像 ID"。
+//
+// 为什么不能靠文件时间：加载头像**不会更新** config.json 的 mtime（实测那份配置停在
+// 10 月 15 日，而人天天在换头像）。而 VRChat 会周期性写 `Saving Avatar Data:avtr_xxx`，
+// 只针对本地玩家自己的头像——这才是可靠信号。
+bool parse_avatar_id_from_log(std::string_view text, std::string& id);
+
+// 读最新的 output_log_*.txt 的尾部，取最后一个 Saving Avatar Data 的 ID
+std::string current_avatar_id();
+
+// 按头像 ID 精确定位配置文件，找不到返回 false
+bool load_avatar_by_id(const std::string& osc_root, const std::string& id, AvatarConfig& out);
+
 // 在最近修改的若干配置里挑一个最像"面捕头像"的。
 //
 // 为什么不能简单取最新：VRChat 会在你每次换头像时写一份配置，最新那份很可能是个

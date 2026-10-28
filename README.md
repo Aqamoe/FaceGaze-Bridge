@@ -32,7 +32,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 技术预研（M0） | ✅ 协议已实测跑通（[ADR-0003](docs/adr/0003-vrcft-ipc-protocol.md)） |
 | 核心骨架（M1） | ✅ VMC → OSC 端到端 |
 | 模块兼容层（M2） | ✅ **核心跑通**：C++ 直接驱动官方 ModuleProcess，拿到真实 PICO 数据 |
-| 参数层（M3） | ✅ v2 派生 + v1 legacy + 头像地址发现 + binary 编码 |
+| 参数层（M3） | ✅ v2 + v1 legacy + 地址发现 + binary；**真机验收通过**（[ADR-0006](docs/adr/0006-hardware-acceptance.md)） |
 
 **已经能跑的**（M1 + M2 核心）：
 

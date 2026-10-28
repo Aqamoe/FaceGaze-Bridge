@@ -133,8 +133,26 @@ void VrchatSink::resolve_addresses() {
         FGB_WARN(kTag, "无法解析指定的头像配置 %s，改用自动发现", config_.avatar_config.c_str());
     }
 
-    // 2. 自动发现：在最近改动的若干配置里挑最像面捕头像的那份
+    // 2. 从 VRChat 日志读出当前穿着的头像 ID，精确定位
+    //
+    // 这里不能靠"最近修改的文件"：加载头像不更新 config.json 的 mtime，
+    // 实测那份配置停在半个月前。日志里的 `Saving Avatar Data:` 才是当下的事实。
     const std::string root = params::default_osc_root();
+    const std::string current_id = params::current_avatar_id();
+    params::AvatarConfig current;
+    if (!current_id.empty() && params::load_avatar_by_id(root, current_id, current)) {
+        router_.bind(current);
+        if (router_.matched() == 0) {
+            FGB_WARN(kTag, "当前头像「%s」没有任何面捕参数——表情不会动是正常的，"
+                           "需要给这个模型加 FT 参数（或用支持面捕的模型）",
+                     current.name.c_str());
+        }
+        return;
+    }
+    FGB_INFO(kTag, "未能从 VRChat 日志确认当前头像（%s），改用启发式挑选",
+             current_id.empty() ? "日志里没有 Saving Avatar Data" : current_id.c_str());
+
+    // 3. 兜底：在最近改动的若干配置里挑最像面捕头像的那份
     const params::AvatarPick pick = params::pick_avatar(root);
 
     if (pick.valid && pick.v2_param_count >= 8) {

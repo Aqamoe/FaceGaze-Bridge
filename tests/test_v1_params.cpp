@@ -380,3 +380,27 @@ FGB_TEST(router_builds_binary_targets) {
     // 主地址仍为空（头像没声明 float 版本）
     FGB_CHECK(router.address(jaw).empty());
 }
+
+// ---------------------------------------------------------------------------
+// 当前头像识别
+// ---------------------------------------------------------------------------
+
+FGB_TEST(parse_avatar_id_from_log_takes_the_last) {
+    const char* log =
+        "2026.10.29 01:00:00 Debug - [Behaviour] Loading avatar for someone\r\n"
+        "2026.10.29 01:00:05 Debug -  Saving Avatar Data:avtr_11111111-1111-1111-1111-111111111111\r\n"
+        "2026.10.29 01:05:00 Debug -  Saving Avatar Data:avtr_6ce1b451-cc77-43db-ac3e-eec2f3258ec6\r\n";
+
+    std::string id;
+    FGB_CHECK(parse_avatar_id_from_log(log, id));
+    // 头像换过之后，只有最后一条代表当下
+    FGB_CHECK(id == "avtr_6ce1b451-cc77-43db-ac3e-eec2f3258ec6");
+}
+
+FGB_TEST(parse_avatar_id_from_log_rejects_junk) {
+    std::string id;
+    FGB_CHECK(!parse_avatar_id_from_log("nothing here", id));
+    // 标记后面不是合法 ID（长度不够 / 字符非法）
+    FGB_CHECK(!parse_avatar_id_from_log("Saving Avatar Data:avtr_xyz", id));
+    FGB_CHECK(!parse_avatar_id_from_log("Saving Avatar Data:local:alice", id));
+}

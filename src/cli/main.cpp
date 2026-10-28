@@ -345,17 +345,29 @@ int cmd_params(int argc, char** argv) {
 
     fgb::params::ParamRouter router;
     if (avatar_path.empty()) {
-        const auto pick = fgb::params::pick_avatar(fgb::params::default_osc_root());
-        if (!pick.valid) {
-            std::printf("没找到头像参数表，使用兜底前缀 %s\n", prefix.c_str());
-            router.use_fallback(prefix);
-        } else {
-            std::printf("%s\n", ("自动选中「" + pick.config.name + "」(" + pick.config.id +
-                                 ")，" + std::to_string(pick.config.params.size()) +
-                                 " 个声明参数，其中 " + std::to_string(pick.v2_param_count) +
-                                 " 个 v2 参数")
+        const std::string root = fgb::params::default_osc_root();
+
+        // 优先用 VRChat 日志确认"当前穿着"，而不是猜文件时间
+        const std::string current_id = fgb::params::current_avatar_id();
+        fgb::params::AvatarConfig current;
+        if (!current_id.empty() && fgb::params::load_avatar_by_id(root, current_id, current)) {
+            std::printf("%s\n", ("当前穿着「" + current.name + "」(" + current.id + ")，" +
+                                 std::to_string(current.params.size()) + " 个声明参数（来源：日志）")
                                     .c_str());
-            router.bind(pick.config);
+            router.bind(current);
+        } else {
+            const auto pick = fgb::params::pick_avatar(root);
+            if (!pick.valid) {
+                std::printf("没找到头像参数表，使用兜底前缀 %s\n", prefix.c_str());
+                router.use_fallback(prefix);
+            } else {
+                std::printf("%s\n", ("启发式选中「" + pick.config.name + "」(" +
+                                     pick.config.id + ")，" +
+                                     std::to_string(pick.config.params.size()) + " 个声明参数，" +
+                                     std::to_string(pick.v2_param_count) + " 个 v2")
+                                        .c_str());
+                router.bind(pick.config);
+            }
         }
     } else {
         fgb::params::AvatarConfig cfg;

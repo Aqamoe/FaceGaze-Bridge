@@ -205,6 +205,96 @@ std::vector<AvatarConfig> scan_avatars(const std::string& osc_root, std::size_t 
     return result;
 }
 
+bool parse_avatar_id_from_log(std::string_view text, std::string& id) {
+    constexpr std::string_view kMarker = "Saving Avatar Data:";
+    constexpr std::size_t kIdLen       = 41; // avtr_ + 36 位 GUID
+    std::size_t best = std::string_view::npos;
+    for (std::size_t pos = text.find(kMarker); pos != std::string_view::npos;
+         pos = text.find(kMarker, pos + 1)) {
+        best = pos;
+    }
+    if (best == std::string_view::npos) {
+        return false;
+    }
+    const std::size_t begin = best + kMarker.size();
+    if (begin + kIdLen > text.size()) {
+        return false;
+    }
+    const std::string_view candidate = text.substr(begin, kIdLen);
+    if (candidate.substr(0, 5) != "avtr_") {
+        return false;
+    }
+    for (char c : candidate.substr(5)) {
+        const bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || c == '-';
+        if (!ok) {
+            return false;
+        }
+    }
+    id.assign(candidate);
+    return true;
+}
+
+std::string current_avatar_id() {
+    std::error_code ec;
+    const fs::path log_dir = fs::path{default_osc_root()}.parent_path();
+    if (!fs::is_directory(log_dir, ec)) {
+        return {};
+    }
+
+    fs::path newest;
+    fs::file_time_type newest_time{};
+    for (const auto& entry : fs::directory_iterator(log_dir, ec)) {
+        if (!entry.is_regular_file(ec)) {
+            continue;
+        }
+        const std::string name = entry.path().filename().string();
+        if (name.rfind("output_log_", 0) != 0 || entry.path().extension() != ".txt") {
+            continue;
+        }
+        const auto mtime = fs::last_write_time(entry.path(), ec);
+        if (newest.empty() || mtime > newest_time) {
+            newest      = entry.path();
+            newest_time = mtime;
+        }
+    }
+    if (newest.empty()) {
+        return {};
+    }
+
+    // 只读尾部：日志动辄几 MB，而信号永远在最后
+    std::ifstream in(newest, std::ios::binary);
+    if (!in) {
+        return {};
+    }
+    in.seekg(0, std::ios::end);
+    const auto size = static_cast<std::size_t>(in.tellg());
+    constexpr std::size_t kTail = 256 * 1024;
+    const std::size_t begin     = size > kTail ? size - kTail : 0;
+    std::string tail(size - begin, '\0');
+    in.seekg(static_cast<std::streamoff>(begin), std::ios::beg);
+    in.read(tail.data(), static_cast<std::streamsize>(tail.size()));
+
+    std::string id;
+    return parse_avatar_id_from_log(tail, id) ? id : std::string{};
+}
+
+bool load_avatar_by_id(const std::string& osc_root, const std::string& id, AvatarConfig& out) {
+    if (osc_root.empty() || id.empty()) {
+        return false;
+    }
+    std::error_code ec;
+    for (const auto& user_dir : fs::directory_iterator(fs::path{osc_root}, ec)) {
+        if (!user_dir.is_directory(ec)) {
+            continue;
+        }
+        const fs::path candidate = user_dir.path() / "Avatars" / (id + ".json");
+        if (fs::is_regular_file(candidate, ec)) {
+            return load_avatar_file(candidate.string(), out);
+        }
+    }
+    return false;
+}
+
 AvatarPick pick_avatar(const std::string& osc_root, std::size_t candidates) {
     AvatarPick best;
     for (AvatarConfig& cfg : scan_avatars(osc_root, candidates)) {
