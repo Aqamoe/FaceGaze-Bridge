@@ -3,6 +3,7 @@
 #include "engine/engine.hpp"
 #include "capture/capture_file.hpp"
 #include "core/process/one_euro.hpp"
+#include "web/panel.hpp"
 #include "params/avatar_config.hpp"
 #include "params/calibration.hpp"
 #include "params/catalog.hpp"
@@ -63,6 +64,7 @@ void print_usage() {
                  "  --replay <文件>         回放抓包（配合 --source replay）\n"
                  "  --replay-speed <倍率>   回放速度，0 = 不限 (默认 1.0)\n"
                  "  --replay-loop           回放到末尾后重新开始\n"
+                 "  --panel <端口>          启动本地控制面板（http://127.0.0.1:<端口>/）\n"
                  "  --calibration <文件>    应用校准档案（见 calibrate 命令）\n"
                  "  --filter <on|off>       一欧元滤波（默认 off，与 VRCFT 一致）\n"
                  "  --filter-cutoff <值>    滤波最小截止频率 (默认 1.0)\n"
@@ -150,6 +152,7 @@ int cmd_run(int argc, char** argv) {
     std::string record_path;
     std::string calibration_path;
     bool filter_enabled   = false;
+    std::uint16_t panel_port = 0;
     float filter_min_cutoff = 1.0f;
     float filter_beta       = 0.5f;
     fgb::VrchatSinkConfig vrchat_cfg;
@@ -178,6 +181,14 @@ int cmd_run(int argc, char** argv) {
                 std::fprintf(stderr, "未知的 source 类型\n");
                 return 2;
             }
+        } else if (arg == "--panel") {
+            const auto v = next_value(arg);
+            std::uint16_t port = 0;
+            if (v.empty() || !parse_uint16(v, port)) {
+                std::fprintf(stderr, "%s\n", "--panel 需要一个端口号");
+                return 2;
+            }
+            panel_port = port;
         } else if (arg == "--calibration") {
             calibration_path = std::string{next_value(arg)};
         } else if (arg == "--filter") {
@@ -313,15 +324,22 @@ int cmd_run(int argc, char** argv) {
                          calibration_path.c_str());
         }
     }
+    // 滤波器总是挂上，用 enabled 开关：这样面板能在运行时开关，不用重启
+    fgb::OneEuroConfig filter_cfg;
+    filter_cfg.min_cutoff = filter_min_cutoff;
+    filter_cfg.beta       = filter_beta;
+    auto filter           = std::make_unique<fgb::FaceFilter>(filter_cfg);
+    filter->set_enabled(filter_enabled);
+    fgb::FaceFilter* filter_raw = filter.get();
+    engine.add_processor(std::move(filter));
     if (filter_enabled) {
-        fgb::OneEuroConfig filter_cfg;
-        filter_cfg.min_cutoff = filter_min_cutoff;
-        filter_cfg.beta       = filter_beta;
-        engine.add_processor(std::make_unique<fgb::FaceFilter>(filter_cfg));
         FGB_INFO("cli", "滤波开启：minCutoff=%.2f beta=%.2f", filter_cfg.min_cutoff,
                  filter_cfg.beta);
     }
-    engine.add_sink(std::make_unique<fgb::VrchatSink>(vrchat_cfg));
+
+    auto sink        = std::make_unique<fgb::VrchatSink>(vrchat_cfg);
+    fgb::VrchatSink* sink_raw = sink.get();
+    engine.add_sink(std::move(sink));
     fgb::clock::raise_timer_resolution();
 
     if (!engine.start()) {
@@ -333,13 +351,43 @@ int cmd_run(int argc, char** argv) {
     SetConsoleCtrlHandler(console_handler, TRUE);
 #endif
 
+    std::unique_ptr<fgb::web::Panel> panel;
+    if (panel_port != 0) {
+        fgb::web::PanelContext ctx;
+        ctx.engine       = &engine;
+        ctx.sink         = sink_raw;
+        ctx.filter       = filter_raw;
+        ctx.source_name  = source_kind;
+        ctx.avatar_name  = sink_raw->avatar_name();
+        ctx.avatar_id    = sink_raw->avatar_id();
+        ctx.param_count  = sink_raw->router().param_count();
+        ctx.target_count = sink_raw->router().targets().size();
+        ctx.binary_count = sink_raw->router().binary_param_count();
+        ctx.params_mode  = fgb::to_string(vrchat_cfg.params_mode);
+        ctx.eye_mode     = fgb::to_string(vrchat_cfg.eye_mode);
+        ctx.quit         = &g_stop;
+
+        panel = std::make_unique<fgb::web::Panel>(std::move(ctx));
+        std::string panel_error;
+        if (!panel->start(panel_port, panel_error)) {
+            std::fprintf(stderr, "%s%s\n", "面板启动失败：", panel_error.c_str());
+            panel.reset();
+        }
+    }
+
     const std::uint64_t period    = 1'000'000'000ULL / static_cast<std::uint64_t>(tick_hz);
     const std::uint64_t started   = fgb::clock::now_ns();
     std::uint64_t next_tick       = started + period;
     std::uint64_t last_report     = started;
 
+    std::uint32_t panel_counter = 0;
     while (!g_stop.load(std::memory_order_acquire)) {
         engine.tick_once(fgb::clock::now_ns());
+
+        // 每 4 个 tick 收一次面板请求（30 Hz 足够跟手，又不至于拖慢主循环）
+        if (panel && (++panel_counter % 4U) == 0U) {
+            panel->serve_once(0);
+        }
 
         fgb::clock::sleep_until_ns(next_tick);
         next_tick += period;

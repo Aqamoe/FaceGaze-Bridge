@@ -35,6 +35,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 参数层（M3） | ✅ v2 + v1 legacy + 地址发现 + binary；**真机验收通过**（[ADR-0006](docs/adr/0006-hardware-acceptance.md)） |
 | 录制回放（M4 之一） | ✅ 录原始包 + 回放 + 参数导出 CSV（[ADR-0007](docs/adr/0007-capture-replay.md)） |
 | 校准与滤波（M3 剩余） | ✅ 逐形状校准（从两份抓包推导）+ One Euro 滤波（[ADR-0008](docs/adr/0008-calibration-and-filtering.md)） |
+| 控制面板（UI 第一步） | ✅ 本地 HTTP 面板：实时状态 / 参数表 / 滤波滑杆（[ADR-0009](docs/adr/0009-local-control-panel.md)） |
 
 **已经能跑的**（M1 + M2 核心）：
 
@@ -57,7 +58,8 @@ fgb-cli run --source vrcft --vrchat 127.0.0.1:9000 --verbose
 **还没做的**：
 
 - 头像切换的实时感知（目前启动时读 VRChat 日志确认，换头像需重跑）
-- 图形界面（托盘 + 配置面板）。目前所有设置仍是命令行参数
+- 托盘常驻壳（面板已经有了，缺的是"开机自启 + 右键菜单"这一层）
+- 面板里还不能改输出目标 / 参数集 / 校准档案，仍需重启
 - 多 Sink（VMC / 共享内存 / OpenXR）
 - 与 VRCFT 输出的逐参数对齐（量化"替代"的最后一道关口）
 

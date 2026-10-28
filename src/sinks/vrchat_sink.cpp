@@ -128,6 +128,8 @@ void VrchatSink::resolve_addresses() {
         params::AvatarConfig cfg;
         if (params::load_avatar_file(config_.avatar_config, cfg)) {
             router_.bind(cfg);
+            avatar_name_ = cfg.name;
+            avatar_id_   = cfg.id;
             return;
         }
         FGB_WARN(kTag, "无法解析指定的头像配置 %s，改用自动发现", config_.avatar_config.c_str());
@@ -142,6 +144,8 @@ void VrchatSink::resolve_addresses() {
     params::AvatarConfig current;
     if (!current_id.empty() && params::load_avatar_by_id(root, current_id, current)) {
         router_.bind(current);
+        avatar_name_ = current.name;
+        avatar_id_   = current.id;
         if (router_.matched() == 0) {
             FGB_WARN(kTag, "当前头像「%s」没有任何面捕参数——表情不会动是正常的，"
                            "需要给这个模型加 FT 参数（或用支持面捕的模型）",
@@ -157,6 +161,8 @@ void VrchatSink::resolve_addresses() {
 
     if (pick.valid && pick.v2_param_count >= 8) {
         router_.bind(pick.config);
+        avatar_name_ = pick.config.name;
+        avatar_id_   = pick.config.id;
         return;
     }
 

@@ -16,6 +16,7 @@
 #include "core/process/face_processor.hpp"
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -55,6 +56,13 @@ public:
     // 改参数时不清状态：线上调参不该让画面跳一下
     void set_config(const OneEuroConfig& config) noexcept;
 
+    // 以下三个可被其他线程调用（面板滑杆）。process() 在引擎线程里读，单写单读。
+    void set_enabled(bool enabled) noexcept;
+    bool enabled() const noexcept { return enabled_.load(std::memory_order_relaxed); }
+    void set_live_params(float min_cutoff, float beta) noexcept;
+    float min_cutoff() const noexcept { return live_min_cutoff_.load(std::memory_order_relaxed); }
+    float beta() const noexcept { return live_beta_.load(std::memory_order_relaxed); }
+
 private:
     OneEuroConfig config_{};
     std::array<OneEuroFilter, kShapeCount> shapes_{};
@@ -62,6 +70,10 @@ private:
     OneEuroFilter gaze_right_x_, gaze_right_y_;
     OneEuroFilter openness_left_, openness_right_;
     OneEuroFilter pupil_left_, pupil_right_;
+
+    std::atomic<bool> enabled_{true};
+    std::atomic<float> live_min_cutoff_{1.0f};
+    std::atomic<float> live_beta_{0.5f};
 };
 
 } // namespace fgb

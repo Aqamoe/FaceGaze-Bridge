@@ -8,10 +8,11 @@ add_executable(fgb-tests
     test_vrcft_protocol.cpp
     test_v1_params.cpp
     test_capture.cpp
-    test_calibration.cpp)
+    test_calibration.cpp
+    test_web.cpp)
 
 target_include_directories(fgb-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(fgb-tests PRIVATE fgb_engine)
+target_link_libraries(fgb-tests PRIVATE fgb_engine fgb_web)
 
 # C4127: 测试里比较编译期常量（如 kShapeCount == 86）是有意为之——
 #        这些断言的作用就是在编译期常量被误改时炸掉。

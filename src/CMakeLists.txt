@@ -18,7 +18,8 @@ add_library(fgb_osc STATIC
 target_link_libraries(fgb_osc PUBLIC fgb_base)
 
 add_library(fgb_net STATIC
-    net/udp_socket.cpp)
+    net/udp_socket.cpp
+    net/tcp_listener.cpp)
 target_link_libraries(fgb_net PUBLIC fgb_base)
 if(WIN32)
     target_link_libraries(fgb_net PRIVATE ws2_32)
@@ -55,6 +56,12 @@ add_library(fgb_process STATIC
     core/process/one_euro.cpp)
 target_link_libraries(fgb_process PUBLIC fgb_core)
 
+# 本地控制面板：HTTP + 内嵌页面
+add_library(fgb_web STATIC
+    web/json.cpp
+    web/panel.cpp)
+target_link_libraries(fgb_web PUBLIC fgb_engine fgb_net fgb_process)
+
 add_library(fgb_engine STATIC
     sinks/vrchat_sink.cpp
     sources/vmc_source.cpp
@@ -66,7 +73,7 @@ target_link_libraries(fgb_engine PUBLIC fgb_core fgb_osc fgb_net fgb_vrcft fgb_p
 
 if(FGB_BUILD_CLI)
     add_executable(fgb-cli cli/main.cpp)
-    target_link_libraries(fgb-cli PRIVATE fgb_engine)
+    target_link_libraries(fgb-cli PRIVATE fgb_engine fgb_web)
     target_compile_definitions(fgb-cli PRIVATE FGB_VERSION="${PROJECT_VERSION}")
     set_target_properties(fgb-cli PROPERTIES OUTPUT_NAME "fgb-cli")
 endif()

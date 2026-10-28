@@ -78,6 +78,10 @@ public:
     void reload_avatar();
     const params::ParamRouter& router() const noexcept { return router_; }
 
+    // 供面板显示"现在绑的是哪个头像"
+    const std::string& avatar_name() const noexcept { return avatar_name_; }
+    const std::string& avatar_id() const noexcept { return avatar_id_; }
+
 private:
     void resolve_addresses();
     void map_target_groups();
@@ -95,6 +99,8 @@ private:
     net::UdpSocket socket_;
     SinkStats stats_{};
     params::ParamRouter router_;
+    std::string avatar_name_;
+    std::string avatar_id_;
 
     // 槽位索引 = router 目标列表下标（一个参数可能对应多条目标：float + 若干二进制位）
     std::vector<float> last_values_;

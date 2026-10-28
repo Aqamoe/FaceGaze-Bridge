@@ -70,7 +70,32 @@ void FaceFilter::set_config(const OneEuroConfig& config) noexcept {
     pupil_right_.set_config(config);
 }
 
+void FaceFilter::set_enabled(bool enabled) noexcept {
+    const bool was = enabled_.exchange(enabled, std::memory_order_relaxed);
+    if (!was && enabled) {
+        // 重新开启时清空历史，否则会朝着很久以前的状态收敛，画面会"甩"一下
+        reset();
+    }
+}
+
+void FaceFilter::set_live_params(float min_cutoff, float beta) noexcept {
+    live_min_cutoff_.store(min_cutoff, std::memory_order_relaxed);
+    live_beta_.store(beta, std::memory_order_relaxed);
+}
+
 void FaceFilter::process(FaceFrame& frame) noexcept {
+    if (!enabled_.load(std::memory_order_relaxed)) {
+        return;
+    }
+    // 面板改了滑杆才重建参数，避免每帧写 9 个滤波器
+    const float mc = live_min_cutoff_.load(std::memory_order_relaxed);
+    const float b  = live_beta_.load(std::memory_order_relaxed);
+    if (mc != config_.min_cutoff || b != config_.beta) {
+        config_.min_cutoff = mc;
+        config_.beta       = b;
+        set_config(config_);
+    }
+
     for (std::size_t i = 0; i < kShapeCount; ++i) {
         frame.shapes[i] = shapes_[i].filter(frame.shapes[i]);
     }
