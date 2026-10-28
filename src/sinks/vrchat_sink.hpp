@@ -1,4 +1,4 @@
-// VRChat OSC 输出。
+﻿// VRChat OSC 输出。
 //
 // 默认走 avatar 参数（含眼追），与 VRCFT 行为一致——这是绝大多数模型唯一认的方式。
 // 原生 /tracking/eye/* 是显式可切换的模式，不是默认。

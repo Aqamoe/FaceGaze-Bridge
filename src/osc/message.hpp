@@ -1,4 +1,4 @@
-// OSC 1.0 公共定义。
+﻿// OSC 1.0 公共定义。
 #pragma once
 
 #include <cstddef>

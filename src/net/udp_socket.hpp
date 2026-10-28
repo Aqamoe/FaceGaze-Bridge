@@ -1,4 +1,4 @@
-// UDP socket 封装。头文件不引入 winsock2.h，避免宏污染扩散到调用方。
+﻿// UDP socket 封装。头文件不引入 winsock2.h，避免宏污染扩散到调用方。
 #pragma once
 
 #include <cstddef>

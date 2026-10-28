@@ -1,4 +1,4 @@
-#include "core/model/shape.hpp"
+﻿#include "core/model/shape.hpp"
 
 #include "test_framework.hpp"
 

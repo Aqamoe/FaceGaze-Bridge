@@ -1,4 +1,4 @@
-#include "core/cont/seqlock.hpp"
+﻿#include "core/cont/seqlock.hpp"
 #include "core/cont/spsc_ring.hpp"
 
 #include "test_framework.hpp"

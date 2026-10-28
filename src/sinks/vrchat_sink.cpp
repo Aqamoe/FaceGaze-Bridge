@@ -1,4 +1,4 @@
-#include "sinks/vrchat_sink.hpp"
+﻿#include "sinks/vrchat_sink.hpp"
 
 #include "base/log.hpp"
 

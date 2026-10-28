@@ -1,4 +1,4 @@
-// OSC 编码器。单遍写入，零分配，溢出即失败（不做静默截断）。
+﻿// OSC 编码器。单遍写入，零分配，溢出即失败（不做静默截断）。
 #pragma once
 
 #include "osc/message.hpp"

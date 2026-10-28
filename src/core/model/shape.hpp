@@ -1,4 +1,4 @@
-// Unified Expressions v2 形状集。
+﻿// Unified Expressions v2 形状集。
 //
 // 顺序即线上协议顺序，**只能在末尾追加，永不可重排或插入**。
 // 枚举与名称表由同一份 X-macro 列表生成，从机制上杜绝两者错位。

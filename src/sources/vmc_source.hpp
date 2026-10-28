@@ -1,4 +1,4 @@
-// VMC (VirtualMotionCapture) 协议输入。
+﻿// VMC (VirtualMotionCapture) 协议输入。
 //
 // 最省事的通用入口：VSeeFace / Warudo / 自制 Unity 都能直接吐这个，不需要装模块。
 // 协议：UDP 39539，/VMC/Ext/Blend/Val (name, value) 逐条更新，/VMC/Ext/Blend/Apply 提交一帧。

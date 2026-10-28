@@ -1,4 +1,4 @@
-#include "sources/vmc_source.hpp"
+﻿#include "sources/vmc_source.hpp"
 
 #include "base/clock.hpp"
 #include "base/log.hpp"

@@ -1,4 +1,4 @@
-#include "core/model/frame.hpp"
+﻿#include "core/model/frame.hpp"
 
 #include <cmath>
 

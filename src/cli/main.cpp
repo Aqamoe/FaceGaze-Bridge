@@ -1,4 +1,4 @@
-#include "base/clock.hpp"
+﻿#include "base/clock.hpp"
 #include "base/log.hpp"
 #include "engine/engine.hpp"
 #include "sinks/vrchat_sink.hpp"

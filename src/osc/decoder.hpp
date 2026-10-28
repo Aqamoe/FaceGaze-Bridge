@@ -1,4 +1,4 @@
-// OSC 解码器。只读视图 + 按需取值，不解包到堆上。
+﻿// OSC 解码器。只读视图 + 按需取值，不解包到堆上。
 #pragma once
 
 #include "osc/message.hpp"

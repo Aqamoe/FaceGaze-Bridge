@@ -1,4 +1,4 @@
-#include "base/log.hpp"
+﻿#include "base/log.hpp"
 
 #include <atomic>
 #include <chrono>

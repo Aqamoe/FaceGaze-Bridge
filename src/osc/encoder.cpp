@@ -1,4 +1,4 @@
-#include "osc/encoder.hpp"
+﻿#include "osc/encoder.hpp"
 
 #include <cstring>
 

@@ -25,6 +25,11 @@ target_compile_features(fgb_options INTERFACE cxx_std_20)
 
 if(MSVC)
     target_compile_options(fgb_options INTERFACE /W4 /permissive- /utf-8 /Zc:__cplusplus /EHsc)
+    # C4324: 结构体因 alignas 被填充。这是 SpscRing/SeqLock 刻意的 cache line 对齐，
+    #        目的是消除伪共享，不是缺陷。
+    # C4819: 源文件包含当前代码页无法表示的字符。源文件统一为 UTF-8 with BOM 且已指定
+    #        /utf-8，此警告在系统代码页为 0 的环境（如 GitHub Actions runner）下仍会误报。
+    target_compile_options(fgb_options INTERFACE /wd4324 /wd4819)
     target_compile_definitions(fgb_options INTERFACE
         _CRT_SECURE_NO_WARNINGS
         NOMINMAX

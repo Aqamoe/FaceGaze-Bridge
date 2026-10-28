@@ -8,4 +8,10 @@ add_executable(fgb-tests
 target_include_directories(fgb-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(fgb-tests PRIVATE fgb_engine)
 
-add_test(NAME fgb-tests COMMAND fgb-tests)
+# C4127: 测试里比较编译期常量（如 kShapeCount == 86）是有意为之——
+#        这些断言的作用就是在编译期常量被误改时炸掉。
+if(MSVC)
+    target_compile_options(fgb-tests PRIVATE /wd4127)
+endif()
+
+add_test(NAME fgb-tests COMMAND $<TARGET_FILE:fgb-tests>)
