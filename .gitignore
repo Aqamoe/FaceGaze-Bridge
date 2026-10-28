@@ -39,6 +39,8 @@ obj/
 node_modules/
 ui/dist/
 .vite/
+__pycache__/
+*.pyc
 
 # ---- runtime artifacts ----
 *.fgbcap
