@@ -107,6 +107,16 @@ python tools/probe_ui.py 9222 8787
 
 `.workbuddy/tmp/golden.fgbrec` 是 25 秒真实 PICO 抓包（不进仓库），金样测试与回放都靠它。
 
+多源合并的本地验证（**不需要硬件**）：
+
+```powershell
+./build/test/bin/Debug/fgb-cli.exe run --source vmc --source replay `
+    --replay .workbuddy/tmp/golden.fgbrec --replay-loop --panel 8787
+python tools/send_vmc.py            # 30 Hz 灌 jawOpen，造第二路输入
+# then: GET /api/status 的 sources 里，vmc 应只喂表情、replay 只喂眼追；
+# 加 --expression-source replay 后两路互换。界面的「输入源」卡片同理。
+```
+
 ## 4. 推送流程
 
 ```powershell
