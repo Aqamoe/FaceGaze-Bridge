@@ -1,4 +1,4 @@
-#include "sources/vrcft_source.hpp"
+﻿#include "sources/vrcft_source.hpp"
 
 #include "base/clock.hpp"
 #include "base/log.hpp"
@@ -44,6 +44,15 @@ bool VrcftSource::start() {
         FGB_ERROR(kTag, "%s", last_error_.c_str());
         return false;
     }
+    if (!config_.record_path.empty()) {
+        capture_t0_ = 0;
+        if (!recorder_.open(config_.record_path.string())) {
+            // 录制失败不该阻断面捕本身，只告警
+            FGB_WARN(kTag, "无法创建录制文件 %s，本次不录制", config_.record_path.string().c_str());
+        } else {
+            FGB_INFO(kTag, "录制到 %s", config_.record_path.string().c_str());
+        }
+    }
 
     FGB_INFO(kTag, "沙箱监听 127.0.0.1:%u，模块 %s", static_cast<unsigned>(server_.port()),
              config_.module_dll.filename().string().c_str());
@@ -60,6 +69,10 @@ void VrcftSource::stop() noexcept {
     }
     host_.kill();
     server_.close();
+    if (recorder_.is_open()) {
+        FGB_INFO(kTag, "录制结束：%zu 帧 → %s", recorder_.frames(), recorder_.path().c_str());
+        recorder_.close();
+    }
     dirty_.store(false, std::memory_order_release);
 }
 
@@ -153,6 +166,15 @@ void VrcftSource::dispatch(std::span<const std::byte> packet) noexcept {
     }
     if (header.type != PacketType::ReplyUpdate) {
         return;
+    }
+
+    // 录制放在解码之前：存原样字节，回放时才能复现"解码"这一段行为本身
+    if (recorder_.is_open() && header.body.size() == capture::kPayloadSize) {
+        const std::uint64_t now = clock::now_ns();
+        if (capture_t0_ == 0) {
+            capture_t0_ = now;
+        }
+        recorder_.write(now - capture_t0_, header.body.data(), header.body.size());
     }
 
     UpdateData data{};

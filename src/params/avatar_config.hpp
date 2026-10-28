@@ -121,7 +121,10 @@ public:
     const std::string& address(std::size_t flat_index) const noexcept;
 
     std::size_t total() const noexcept { return addresses_.size(); }
+    // 绑定条数（一个参数的 float 与符号位各算一条）
     std::size_t matched() const noexcept { return matched_; }
+    // 绑定到的不同参数个数——给人看的数字用这个
+    std::size_t param_count() const noexcept { return param_count_; }
     bool bound_to_avatar() const noexcept { return bound_; }
 
     // 真正要发出去的 OSC 目标列表（按参数索引升序，同参数的多个目标相邻）
@@ -141,6 +144,7 @@ private:
     std::vector<std::string> addresses_;
     std::vector<OutputTarget> targets_;
     std::size_t matched_       = 0;
+    std::size_t param_count_   = 0;
     std::size_t binary_params_ = 0;
     bool bound_                = false;
 };

@@ -33,12 +33,13 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 核心骨架（M1） | ✅ VMC → OSC 端到端 |
 | 模块兼容层（M2） | ✅ **核心跑通**：C++ 直接驱动官方 ModuleProcess，拿到真实 PICO 数据 |
 | 参数层（M3） | ✅ v2 + v1 legacy + 地址发现 + binary；**真机验收通过**（[ADR-0006](docs/adr/0006-hardware-acceptance.md)） |
+| 录制回放（M4 之一） | ✅ 录原始包 + 回放 + 参数导出 CSV（[ADR-0007](docs/adr/0007-capture-replay.md)） |
 
 **已经能跑的**（M1 + M2 核心）：
 
 - **VRCFT 模块兼容**：C++ 直接驱动官方 `ModuleProcess.exe`，握手 → Init → 状态同步 →
   100 Hz 拉取 → 432 字节解码，实测从 PICO 模块拿到 1672 帧真实数据
-- **v2 参数派生**：协议层 88 个肌肉形状 → 88 个基础参数 + 71 个合成/简化/眼追参数，
+- **v2 参数派生**：协议层 88 个肌肉形状 → 88 个基础参数 + 88 个简化/合成/眼追参数，
   规则逐条对齐 VRCFT（`JawX = JawRight - JawLeft`、`EyeLid = Openness*0.75 + EyeWide*0.25` 等）
 - VMC (UDP 39539) 输入 → 统一形状映射 → VRChat OSC 输出
 - OSC 编解码：bundle、分片、零分配写入器、容错解析
@@ -54,10 +55,10 @@ fgb-cli run --source vrcft --vrchat 127.0.0.1:9000 --verbose
 
 **还没做的**：
 
-- VRCFT .NET 模块兼容层（M2，关键路径上的下一步——协议已验证，见 ADR-0003）
-- 头像切换的实时感知（OSCQuery / `/avatar/change`）
-- 校准、滤波器、UI（M3）
-- 多 Sink、录制回放（M4）
+- 头像切换的实时感知（目前启动时读 VRChat 日志确认，换头像需重跑）
+- 校准、滤波器、UI（M3 剩余）
+- 多 Sink（VMC / 共享内存 / OpenXR）
+- 与 VRCFT 输出的逐参数对齐（量化"替代"的最后一道关口）
 
 **已验证的关键事实**（M0，详见 [ADR-0003](docs/adr/0003-vrcft-ipc-protocol.md)）：
 

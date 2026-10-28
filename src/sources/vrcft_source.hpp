@@ -1,4 +1,4 @@
-// VRCFT 模块兼容数据源。
+﻿// VRCFT 模块兼容数据源。
 //
 // 一个完整会话的时序（详见 docs/adr/0003）：
 //   启动进程 → 握手(原样回 ACK) → GetSupported → Init → **Status(Active)**
@@ -10,6 +10,7 @@
 //     此时重启模块进程有机会恢复，所以内置重试
 #pragma once
 
+#include "capture/capture_file.hpp"
 #include "core/cont/seqlock.hpp"
 #include "sources/source.hpp"
 #include "vrcft/module_host.hpp"
@@ -35,6 +36,9 @@ struct VrcftSourceConfig {
     int max_restarts         = 3;
     float eye_full_scale_deg = 30.0f;
 
+    // 非空时把每一个 ReplyUpdate 原样录进该文件（见 capture/capture_file.hpp）
+    std::filesystem::path record_path;
+
     int handshake_timeout_ms = 5000;
     int init_timeout_ms      = 10000;
     int teardown_wait_ms     = 2000;
@@ -55,6 +59,7 @@ public:
     const std::string& last_error() const noexcept { return last_error_; }
     int restart_count() const noexcept { return restarts_; }
     bool module_alive() const noexcept { return host_.alive(); }
+    std::size_t recorded_frames() const noexcept { return recorder_.frames(); }
 
 private:
     void run_loop() noexcept;
@@ -76,6 +81,8 @@ private:
 
     std::thread thread_;
     std::atomic<bool> running_{false};
+    capture::Writer recorder_;
+    std::uint64_t capture_t0_ = 0;
     std::atomic<bool> dirty_{false};
     std::atomic<std::uint64_t> frames_{0};
     std::atomic<std::uint64_t> packets_{0};

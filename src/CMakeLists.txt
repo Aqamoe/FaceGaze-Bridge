@@ -44,6 +44,8 @@ add_library(fgb_engine STATIC
     sinks/vrchat_sink.cpp
     sources/vmc_source.cpp
     sources/vrcft_source.cpp
+    sources/replay_source.cpp
+    capture/capture_file.cpp
     engine/engine.cpp)
 target_link_libraries(fgb_engine PUBLIC fgb_core fgb_osc fgb_net fgb_vrcft fgb_params)
 

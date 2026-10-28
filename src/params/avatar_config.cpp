@@ -436,6 +436,7 @@ void ParamRouter::rebuild(std::string_view v2_prefix, const AvatarConfig* config
     addresses_.clear();
     targets_.clear();
     matched_       = 0;
+    param_count_   = 0;
     binary_params_ = 0;
     bound_         = config != nullptr;
 
@@ -546,9 +547,17 @@ void ParamRouter::rebuild(std::string_view v2_prefix, const AvatarConfig* config
     }
 
     if (config != nullptr) {
+        // 统计"不同的参数个数"，别用 matched_（那是"绑定条数"，符号位会重复计入）
+        const ParamEntry* last = nullptr;
+        for (const OutputTarget& t : targets_) {
+            if (t.entry != nullptr && t.entry != last) {
+                ++param_count_;
+                last = t.entry;
+            }
+        }
         FGB_INFO(kTag,
-                 "已绑定头像「%s」：%zu 个参数命中，其中 %zu 个走二进制编码；共 %zu 条 OSC 目标（%s）",
-                 config->name.c_str(), matched_, binary_params_, targets_.size(),
+                 "已绑定头像「%s」：%zu 个参数（其中 %zu 个用二进制编码），展开成 %zu 条 OSC 目标（%s）",
+                 config->name.c_str(), param_count_, binary_params_, targets_.size(),
                  config->path.c_str());
     } else {
         FGB_INFO(kTag, "未发现头像配置，回退到固定前缀 %s%zu 个参数", std::string(v2_prefix).c_str(),
