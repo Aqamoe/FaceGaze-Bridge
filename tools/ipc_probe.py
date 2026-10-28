@@ -80,6 +80,9 @@ def main() -> int:
                     help="发送 EventInit 并收集数据包。注意：模块会绑定硬件端口，"
                          "与正在运行的 VRCFT 冲突，需先关闭它。")
     ap.add_argument("--init-seconds", type=float, default=3.0, help="Init 后收集时长")
+    ap.add_argument("--init-delay", type=float, default=0.0,
+                    help="Init 成功后等待多久再设 Active。模块会 Dispose 探测用的 socket 再重绑"
+                         "同一端口，Windows 下存在投递竞态，延迟可规避。")
     args = ap.parse_args()
 
     exe = os.path.join(args.install_dir, "VRCFaceTracking.ModuleProcess.exe")
@@ -172,8 +175,25 @@ def main() -> int:
                 streams = struct.unpack("<i", body[5 + name_len:9 + name_len])[0] if len(body) >= 9 + name_len else 0
                 print(f"        eyeSuccess={bool(flags & 1)} expressionSuccess={bool(flags & 2)}")
                 print(f"        模块名={name_text!r}  图标流={streams}")
+                # 诊断：确认模块子进程是否真的绑上了硬件端口
+                try:
+                    import subprocess as _sp
+                    out = _sp.run(["netstat", "-ano", "-p", "UDP"], capture_output=True, text=True,
+                                  errors="replace", timeout=5).stdout
+                    hits = [ln.strip() for ln in out.splitlines()
+                            if "29765" in ln or ":29765" in ln]
+                    if hits:
+                        for h in hits:
+                            print(f"        [DIAG] {h}")
+                    else:
+                        print("        [DIAG] 没有任何进程绑定 29765！")
+                except Exception as exc:
+                    print(f"        [DIAG] netstat 失败: {exc}")
                 # 数据是拉模式：每发一个 EventUpdate，模块才回一个 ReplyUpdatePacket
                 if args.init and peer and not teardown_sent:
+                    if args.init_delay > 0:
+                        print(f"[INFO] 等待 {args.init_delay}s，让模块的 socket 重绑稳定 ...")
+                        time.sleep(args.init_delay)
                     # 关键一步：先把模块状态同步为 Active。
                     # 模块的 Update() 普遍写成 `if (Status == ModuleState.Active)`，
                     # 不设这个状态，模块每帧都直接返回，一个值都不写。

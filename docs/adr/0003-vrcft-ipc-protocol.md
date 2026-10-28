@@ -197,20 +197,57 @@ VRCFaceTracking.ModuleProcess.exe --port <serverPort> --module-path <dllPath> --
 
 ### 关于最后一项的排查记录
 
-两次独立测试（VRCFT 关闭、`ModuleProcess` 独立启动、`EventUpdateStatus(Active)` 已发）都只拿到
-`INVALID_FLOAT`。同时观察到：
+经过三轮实验，链路已被切到只剩最后一环。**证据链如下：**
 
-- 模块日志显示 `使用端口：29765`，即硬件接收端口绑定成功
-- 头部字段是 `0.0`（默认值），只有眼睛/表情被写成 `INVALID_FLOAT`
-  → 说明是模块**主动判定硬件无数据**，不是解码问题
-- PICO Connect 正常运行，`PICO Streaming Service` 占着 `127.0.0.1:29866`
+**实验 1 · PICO 到底发不发？**
+VRCFT 关闭、不启动任何模块，直接用 `SO_REUSEADDR` 绑 29765 监听：
+```
+8 秒内收到 721 个包，包长 912 字节（约 90 Hz）
+```
+→ **PICO 一直在发，与 VRCFT 是否运行无关。**
 
-也就是说：**协议链路本身已验证到底，剩下的是 PICO Connect → 模块 这一段的数据供给问题**，
-可能的解释是 PICO 侧检测到消费端（VRCFT）消失后暂停了转发，或模块与 PICO 之间需要一次
-由 VRCFT 触发的注册。
+**实验 2 · 模块绑上端口了吗？**
+Init 成功后跑 `netstat -ano`：
+```
+UDP  0.0.0.0:29765  *:*  56508   ← 正是模块子进程 PID
+```
+→ **绑定成功，地址端口都对。**
 
-这条不阻塞 M2：FGB 真正替代 VRCFT 运行时，PICO 侧的对端就是 FGB 自己，届时可做一次终极验证。
-若届时仍无数据，排查方向依次为：模块绑定地址（`0.0.0.0` vs `127.0.0.1`）、PICO 侧的会话状态、模块版本差异。
+**实验 3 · 加延迟能绕过竞态吗？**
+Init 后等 2 秒再设 Active 并开始拉取：仍然全 `INVALID_FLOAT`。
+→ **不是时序问题。**
+
+**根因在模块的 socket 生命周期**（源码 `VRCFTPicoModule.cs`）：
+
+```csharp
+// 静态字段初始化时就绑了两个端口
+private static readonly int[] Ports = [29765, 29763];
+private static readonly UdpClient[] Clients = Ports.Select(p => new UdpClient(p)).ToArray();
+
+// Initialize 里：探测哪个端口有数据，然后全部 Dispose，再重新绑
+var portIndex = await ListenOnPorts();          // 收到包 → 确定端口
+foreach (var client in Clients) client.Dispose(); // 关闭探测用的 socket
+_udpClient = new UdpClient(_port);              // 重新绑定同一端口
+```
+
+`Dispose()` 后立刻在**同一端口**重新绑定，Windows 的 UDP 端口共享语义（`SO_REUSEADDR`）下，
+单播包会被投递给"最后一个绑定"的 socket——但如果旧句柄尚未完全回收，新 socket 会绑定成功却收不到包。
+这正是"Init 返回 true、端口占用正确、`Receive()` 却一直超时"的原因。
+
+而且这个故障**几乎没有日志**：`Updater.Update()` 里超时要累积 **600 次（60 秒）**才打一条警告
+（`if (++_timeOut > 600)`），短时间测试完全静默。
+
+**结论**：这是模块自身的缺陷，不是 FGB 协议实现的问题。协议层（握手 / 能力 / Init / 状态 / 拉取 / 432 字节解码）已全部验证通过。
+
+**FGB 的应对策略**（写入 M2 设计）：
+
+1. Init 成功后做**数据有效性探测**：连续 N 帧（建议 30 帧 / 0.5 秒）全为 `INVALID_FLOAT` 即判定"无数据"
+2. 判定后**重启模块进程重试**（最多 3 次，退避 0.5s / 1s / 2s）——模块重走一遍流程有机会拿到干净的 socket
+3. 三次失败则把该源标记为 `faulted`，在 UI 明确提示"模块已连接但硬件无数据"，而不是静默降级
+4. 提示文案要点明"可能需要重启 PICO Connect 或重新连接头显"，避免用户以为是 FGB 的问题
+
+若后续发现重试无效，再考虑在 FGB 侧实现**原生 PICO 接收**（直接解析 912 字节的原始包），绕过这个模块。
+那需要额外逆向 PICO 的包格式，属于 M5 之后的事。
 
 ## 8. 待补
 
