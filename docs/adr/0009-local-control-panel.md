@@ -1,6 +1,7 @@
 # ADR-0009 · 本地控制面板用 HTTP + 浏览器，而不是原生窗口
 
-- 状态：已采纳
+- 状态：**已被 [ADR-0010](0010-webview2-ui-and-websocket-ipc.md) 取代**（形态改成 WebView2 外壳 + WebSocket IPC；
+  本 ADR 里"接口要能脚本验证""面板跑在主循环里"这两条结论仍然有效）
 - 日期：2026-10-29
 - 影响：新增 `net/tcp_listener`、`web/json`、`web/panel`，CLI 增加 `--panel`
 

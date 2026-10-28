@@ -35,7 +35,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 参数层（M3） | ✅ v2 + v1 legacy + 地址发现 + binary；**真机验收通过**（[ADR-0006](docs/adr/0006-hardware-acceptance.md)） |
 | 录制回放（M4 之一） | ✅ 录原始包 + 回放 + 参数导出 CSV（[ADR-0007](docs/adr/0007-capture-replay.md)） |
 | 校准与滤波（M3 剩余） | ✅ 逐形状校准（从两份抓包推导）+ One Euro 滤波（[ADR-0008](docs/adr/0008-calibration-and-filtering.md)） |
-| 控制面板（UI 第一步） | ✅ 本地 HTTP 面板：实时状态 / 参数表 / 滤波滑杆（[ADR-0009](docs/adr/0009-local-control-panel.md)） |
+| 界面（WebView2） | ✅ `fgb-ui` 原生窗口 + WebSocket IPC：状态 / 参数热力图 / 输出 / 日志 / 设置（[ADR-0010](docs/adr/0010-webview2-ui-and-websocket-ipc.md)） |
 
 **已经能跑的**（M1 + M2 核心）：
 
@@ -48,18 +48,24 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 - 无锁核心：SPSC ring、seqlock 快照
 - VRChat 输出端：死区过滤、bundle 聚合、1200 字节主动分包、1 Hz 心跳
 - 眼追参数派生（`EyeLeftX/Y`、`EyeLidLeft/Right`），`parameters` / `native` / `both` 三模式
-- 29 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）
+- 界面：WebView2 窗口（`fgb-ui`）↔ 引擎走本机 WebSocket，10 Hz 推送状态与 365 个参数值，
+  滤波滑杆/重新读取头像/日志实时回传
+- 85 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面探针
+  （`tools/probe_ipc.py`、`tools/probe_ui.py`）
 
 ```bash
 # 用 FGB 接管 VRCFT 的模块（需先关闭 VRCFT，模块端口是独占的）
 fgb-cli run --source vrcft --vrchat 127.0.0.1:9000 --verbose
+
+# 带界面：拉起 WebView2 窗口（隐含 --panel 8787）
+fgb-cli run --source vrcft --ui
 ```
 
 **还没做的**：
 
-- 头像切换的实时感知（目前启动时读 VRChat 日志确认，换头像需重跑）
-- 托盘常驻壳（面板已经有了，缺的是"开机自启 + 右键菜单"这一层）
-- 面板里还不能改输出目标 / 参数集 / 校准档案，仍需重启
+- 头像切换的实时感知（目前启动时读 VRChat 日志确认，换头像需在界面里点"重新读取"）
+- 托盘常驻壳（界面已经能单开一个窗口，缺的是"开机自启 + 右键菜单"这一层）
+- 界面里还不能改输出目标 / 参数集 / 校准档案，仍需重启
 - 多 Sink（VMC / 共享内存 / OpenXR）
 - 与 VRCFT 输出的逐参数对齐（量化"替代"的最后一道关口）
 
@@ -91,6 +97,10 @@ python tools/smoke_vmc.py
 ```bash
 fgb-cli run --vmc-port 39539 --vrchat 127.0.0.1:9000 --eye-mode parameters
 ```
+
+界面的依赖只有 **WebView2 Runtime**（Win10/11 随 Edge 预装）。SDK 在 configure 时从 NuGet 拉一次到
+`build/_deps`；内网环境可以自己解压好再 `-DFGB_WEBVIEW2_DIR=<目录>`，或者 `-DFGB_BUILD_UI=OFF` 只编引擎。
+页面资源在 `ui/`，构建时复制到 `fgb-cli.exe` 旁边；改 UI 不用重编。
 
 ---
 
@@ -138,14 +148,18 @@ VRCFT 生态的现实是：绝大多数模型只把 `FT/v2/EyeLeftX`、`EyeLidLe
 ## 仓库结构
 
 ```
-src/base      日志、时钟、错误类型            零依赖
+src/base      日志（含订阅回调）、时钟        零依赖
 src/core      数据模型、无锁容器、滤波/校准   零 I/O，纯计算
 src/osc       OSC 编解码                     零分配写入器
-src/net       UDP 封装
-src/sources   输入（VMC / 待接入 VRCFT 模块）
+src/net       UDP / TCP / WebSocket 服务端
+src/sources   输入（VMC / VRCFT 模块 / 抓包回放）
 src/sinks     输出（VRChat / 待接入 VMC、共享内存）
 src/engine    合并、快照发布、扇出
+src/web       控制面 IPC：WS 协议、状态/参数/日志推送、静态页面
+src/ui        fgb-ui：WebView2 外壳（Win32 窗口，不含业务逻辑）
+src/cli       fgb-cli
+ui/           界面资源（index.html / app.js / style.css，无构建步骤）
 tests         单元测试 + 金样测试
-tools         抓包与冒烟脚本
+tools         抓包、冒烟与 IPC/界面探针脚本
 docs          方案、ADR、路线图
 ```

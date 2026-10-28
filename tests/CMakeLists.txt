@@ -9,6 +9,7 @@ add_executable(fgb-tests
     test_v1_params.cpp
     test_capture.cpp
     test_calibration.cpp
+    test_ws.cpp
     test_web.cpp)
 
 target_include_directories(fgb-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

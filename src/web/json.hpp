@@ -52,5 +52,6 @@ bool query_number(std::string_view query, std::string_view key, double& out);
 bool query_bool(std::string_view query, std::string_view key, bool& out);
 bool body_number(std::string_view body, std::string_view key, double& out);
 bool body_bool(std::string_view body, std::string_view key, bool& out);
+bool body_string(std::string_view body, std::string_view key, std::string& out);
 
 } // namespace fgb::web

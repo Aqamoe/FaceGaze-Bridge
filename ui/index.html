@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FaceGaze Bridge</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">FG</div>
+      <div class="brand-text">
+        <strong>FaceGaze Bridge</strong>
+        <span id="brand-version">控制面板</span>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <button class="nav-item active" data-page="status"><span class="dot"></span>状态</button>
+      <button class="nav-item" data-page="params"><span class="dot"></span>参数</button>
+      <button class="nav-item" data-page="output"><span class="dot"></span>输出</button>
+      <button class="nav-item" data-page="logs"><span class="dot"></span>日志</button>
+      <button class="nav-item" data-page="settings"><span class="dot"></span>设置</button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="link-state" id="link-state">
+        <i class="led"></i><span id="link-text">连接中…</span>
+      </div>
+      <div class="muted" id="link-detail">—</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="page-title">运行状态</h1>
+        <p class="subtitle" id="page-subtitle">实时指标来自引擎主循环，10 Hz 推送</p>
+      </div>
+      <div class="topbar-right">
+        <span class="pill" id="pill-source">—</span>
+        <span class="pill" id="pill-eye">—</span>
+      </div>
+    </header>
+
+    <div class="content">
+      <!-- 状态 -->
+      <section class="page active" data-page="status">
+        <div class="cards">
+          <article class="card">
+            <h2>输入帧率</h2>
+            <div class="metric"><b id="m-fps">0</b><span>fps</span></div>
+            <div class="hint" id="m-source">—</div>
+          </article>
+          <article class="card">
+            <h2>累计帧</h2>
+            <div class="metric"><b id="m-frames">0</b></div>
+            <div class="hint">进入引擎的原始帧</div>
+          </article>
+          <article class="card">
+            <h2>引擎 tick</h2>
+            <div class="metric"><b id="m-ticks">0</b></div>
+            <div class="hint"><span id="m-late">0</span> 次迟到</div>
+          </article>
+          <article class="card">
+            <h2>OSC 输出</h2>
+            <div class="metric"><b id="m-messages">0</b><span>条</span></div>
+            <div class="hint"><span id="m-bytes">0</span> KB</div>
+          </article>
+        </div>
+
+        <div class="grid-2">
+          <article class="card">
+            <h2>当前头像</h2>
+            <div class="kv"><span>名称</span><b id="a-name">—</b></div>
+            <div class="kv"><span>ID</span><b id="a-id" class="mono">—</b></div>
+            <div class="kv"><span>绑定方式</span><b id="a-bound">—</b></div>
+            <div class="kv"><span>命中参数</span><b id="a-params">—</b></div>
+            <div class="kv"><span>OSC 目标</span><b id="a-targets">—</b></div>
+            <div class="kv"><span>二进制参数</span><b id="a-binary">—</b></div>
+          </article>
+
+          <article class="card">
+            <h2>热力图概览</h2>
+            <div class="mini-heat" id="mini-heat"></div>
+            <div class="hint">最近一帧参数值，进入「参数」页看完整列表</div>
+          </article>
+        </div>
+      </section>
+
+      <!-- 参数 -->
+      <section class="page" data-page="params">
+        <div class="toolbar">
+          <input id="param-search" type="search" placeholder="搜索参数名，例如 Jaw / Eye">
+          <label class="switch"><input type="checkbox" id="param-only-sent" checked> 只看已发送</label>
+          <span class="muted" id="param-count">—</span>
+        </div>
+        <div class="heatmap" id="heatmap"></div>
+        <div class="empty" id="param-empty" hidden>没有匹配的参数</div>
+      </section>
+
+      <!-- 输出 -->
+      <section class="page" data-page="output">
+        <div class="grid-2">
+          <article class="card">
+            <h2>输出目标</h2>
+            <div class="kv"><span>参数集</span><b id="o-mode">—</b></div>
+            <div class="kv"><span>眼追模式</span><b id="o-eye">—</b></div>
+            <div class="kv"><span>OSC 目标数</span><b id="o-targets">—</b></div>
+            <div class="kv"><span>绑定条数</span><b id="o-matched">—</b></div>
+            <div class="kv"><span>二进制参数</span><b id="o-binary">—</b></div>
+            <button class="btn" id="o-reload">重新读取头像参数表</button>
+            <p class="hint">换头像后如果表情不动，点这里重新解析地址，不用重启引擎。</p>
+          </article>
+          <article class="card">
+            <h2>链路</h2>
+            <ol class="chain">
+              <li><b>输入</b><span id="c-source">—</span></li>
+              <li><b>处理</b><span>校准 → One Euro 滤波</span></li>
+              <li><b>派生</b><span>88 形状 → v2 / v1 参数</span></li>
+              <li><b>输出</b><span>OSC /avatar/parameters/*</span></li>
+            </ol>
+            <p class="hint">引擎与界面是两个进程：关掉界面不影响追踪数据继续输出。</p>
+          </article>
+        </div>
+      </section>
+
+      <!-- 日志 -->
+      <section class="page" data-page="logs">
+        <div class="toolbar">
+          <label class="switch"><input type="checkbox" id="log-follow" checked> 自动滚动</label>
+          <select id="log-level">
+            <option value="trace">全部（含 trace）</option>
+            <option value="info" selected>info 及以上</option>
+            <option value="warn">warn 及以上</option>
+            <option value="error">只看 error</option>
+          </select>
+          <button class="btn ghost" id="log-clear">清空</button>
+        </div>
+        <div class="logs" id="logs"></div>
+      </section>
+
+      <!-- 设置 -->
+      <section class="page" data-page="settings">
+        <div class="grid-2">
+          <article class="card">
+            <h2>One Euro 滤波</h2>
+            <label class="switch"><input type="checkbox" id="f-enabled"> 启用滤波</label>
+            <div class="slider-row">
+              <span>minCutoff</span>
+              <input type="range" id="f-cutoff" min="0.1" max="8" step="0.1">
+              <b id="f-cutoff-v">—</b>
+            </div>
+            <div class="slider-row">
+              <span>beta</span>
+              <input type="range" id="f-beta" min="0" max="3" step="0.05">
+              <b id="f-beta-v">—</b>
+            </div>
+            <p class="hint">调大 minCutoff 更跟手，调小更稳；beta 控制快速动作时的补偿。改动立即生效。</p>
+          </article>
+          <article class="card">
+            <h2>引擎</h2>
+            <div class="kv"><span>控制面</span><b class="mono" id="s-link">—</b></div>
+            <div class="kv"><span>界面连接数</span><b id="s-clients">—</b></div>
+            <div class="kv"><span>日志级别</span><b>
+              <select id="s-level">
+                <option value="debug">debug</option>
+                <option value="info" selected>info</option>
+                <option value="warn">warn</option>
+                <option value="error">error</option>
+              </select>
+            </b></div>
+            <button class="btn danger" id="s-quit">停止引擎</button>
+            <p class="hint">停止后追踪输出立即中断；重启用命令行 <code>fgb-cli run</code>。</p>
+          </article>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

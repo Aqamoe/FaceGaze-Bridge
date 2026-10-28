@@ -238,6 +238,43 @@ bool body_number(std::string_view body, std::string_view key, double& out) {
     return true;
 }
 
+bool body_string(std::string_view body, std::string_view key, std::string& out) {
+    const std::size_t pos = find_value_after(body, key);
+    if (pos == std::string_view::npos || pos >= body.size() || body[pos] != '"') {
+        return false;
+    }
+    std::string value;
+    std::size_t i = pos + 1;
+    while (i < body.size()) {
+        const char c = body[i];
+        if (c == '\\' && i + 1 < body.size()) {
+            switch (body[i + 1]) {
+            case 'n':
+                value.push_back('\n');
+                break;
+            case 'r':
+                value.push_back('\r');
+                break;
+            case 't':
+                value.push_back('\t');
+                break;
+            default:
+                value.push_back(body[i + 1]); // \" \\ \/ 等
+                break;
+            }
+            i += 2;
+            continue;
+        }
+        if (c == '"') {
+            out = std::move(value);
+            return true;
+        }
+        value.push_back(c);
+        ++i;
+    }
+    return false;
+}
+
 bool body_bool(std::string_view body, std::string_view key, bool& out) {
     const std::size_t pos = find_value_after(body, key);
     if (pos == std::string_view::npos) {

@@ -2,6 +2,7 @@
 // 而 M1 阶段只需要一个能上色的同步日志。
 #pragma once
 
+#include <functional>
 #include <string_view>
 
 namespace fgb::log {
@@ -21,6 +22,11 @@ bool enabled(Level l) noexcept;
 
 // printf 风格。仅用于控制面与低频路径，热路径禁止调用。
 void write(Level l, std::string_view tag, const char* fmt, ...) noexcept;
+
+// 日志订阅。UI 面板要显示引擎日志，但日志本身不该知道"面板"这个东西存在，
+// 所以只提供一个回调口子；传空回调即取消订阅。
+using Callback = std::function<void(Level, std::string_view tag, std::string_view message)>;
+void set_callback(Callback callback);
 
 } // namespace fgb::log
 

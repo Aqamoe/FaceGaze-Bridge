@@ -3,7 +3,7 @@
 #include "engine/engine.hpp"
 #include "capture/capture_file.hpp"
 #include "core/process/one_euro.hpp"
-#include "web/panel.hpp"
+#include "web/ipc.hpp"
 #include "params/avatar_config.hpp"
 #include "params/calibration.hpp"
 #include "params/catalog.hpp"
@@ -64,7 +64,9 @@ void print_usage() {
                  "  --replay <文件>         回放抓包（配合 --source replay）\n"
                  "  --replay-speed <倍率>   回放速度，0 = 不限 (默认 1.0)\n"
                  "  --replay-loop           回放到末尾后重新开始\n"
-                 "  --panel <端口>          启动本地控制面板（http://127.0.0.1:<端口>/）\n"
+                 "  --panel <端口>          启动控制面 IPC（ws://127.0.0.1:<端口>/ws）\n"
+                 "  --ui                    启动时拉起 WebView2 界面（隐含 --panel 8787）\n"
+                 "  --ui-dir <目录>         页面资源目录（默认 <exe>/ui）\n"
                  "  --calibration <文件>    应用校准档案（见 calibrate 命令）\n"
                  "  --filter <on|off>       一欧元滤波（默认 off，与 VRCFT 一致）\n"
                  "  --filter-cutoff <值>    滤波最小截止频率 (默认 1.0)\n"
@@ -146,13 +148,66 @@ bool parse_host_port(std::string_view text, std::string& host, std::uint16_t& po
     return !host.empty() && parse_uint16(text.substr(colon + 1), port);
 }
 
+// 页面资源随 exe 放在 ui/ 目录（构建时由 CMake 复制过去）。
+// 找不到就不发页面：引擎照跑，只是界面空白——比整个启动失败要好。
+std::filesystem::path default_ui_dir() {
+#ifdef _WIN32
+    wchar_t buffer[MAX_PATH]{};
+    const DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+    if (length > 0 && length < MAX_PATH) {
+        const auto dir = std::filesystem::path{buffer}.parent_path() / L"ui";
+        std::error_code ec;
+        if (std::filesystem::exists(dir / L"index.html", ec)) {
+            return dir;
+        }
+    }
+#endif
+    return {};
+}
+
+// 界面用独立进程起（WebView2 外壳崩一次不该带走追踪输出）。
+// 引擎与 UI 之间只有 WS 一条线，谁先起来都行：外壳会自己重试导航。
+bool launch_ui(std::uint16_t port) {
+#ifdef _WIN32
+    wchar_t buffer[MAX_PATH]{};
+    const DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) {
+        return false;
+    }
+    const auto exe = std::filesystem::path{buffer}.parent_path() / L"fgb-ui.exe";
+    std::error_code ec;
+    if (!std::filesystem::exists(exe, ec)) {
+        std::fprintf(stderr, "找不到 fgb-ui.exe（和 fgb-cli 放在同一目录），界面已跳过\n");
+        return false;
+    }
+
+    std::wstring command = L"\"" + exe.wstring() + L"\" --port " + std::to_wstring(port);
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (::CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr,
+                         &startup, &process) == 0) {
+        std::fprintf(stderr, "启动 fgb-ui 失败（错误码 %lu）\n", ::GetLastError());
+        return false;
+    }
+    ::CloseHandle(process.hThread);
+    ::CloseHandle(process.hProcess);
+    return true;
+#else
+    (void)port;
+    return false;
+#endif
+}
+
 int cmd_run(int argc, char** argv) {
     fgb::VmcSourceConfig vmc_cfg;
     fgb::ReplayConfig replay_cfg;
     std::string record_path;
     std::string calibration_path;
     bool filter_enabled   = false;
+    bool open_ui          = false;
     std::uint16_t panel_port = 0;
+    std::filesystem::path ui_dir;
     float filter_min_cutoff = 1.0f;
     float filter_beta       = 0.5f;
     fgb::VrchatSinkConfig vrchat_cfg;
@@ -189,6 +244,14 @@ int cmd_run(int argc, char** argv) {
                 return 2;
             }
             panel_port = port;
+        } else if (arg == "--ui") {
+            open_ui = true;
+        } else if (arg == "--ui-dir") {
+            const auto v = next_value(arg);
+            if (v.empty()) {
+                return 2;
+            }
+            ui_dir = std::filesystem::path{std::string{v}};
         } else if (arg == "--calibration") {
             calibration_path = std::string{next_value(arg)};
         } else if (arg == "--filter") {
@@ -280,6 +343,10 @@ int cmd_run(int argc, char** argv) {
 
     fgb::log::set_level(verbose ? fgb::log::Level::debug : fgb::log::Level::info);
 
+    if (open_ui && panel_port == 0) {
+        panel_port = 8787; // --ui 隐含控制面
+    }
+
     fgb::EngineConfig engine_cfg;
     engine_cfg.tick_hz = tick_hz;
     fgb::Engine engine{engine_cfg};
@@ -342,6 +409,33 @@ int cmd_run(int argc, char** argv) {
     engine.add_sink(std::move(sink));
     fgb::clock::raise_timer_resolution();
 
+    // 控制面先于引擎启动：这样"引擎启动 / 头像绑定 / 模块握手"这几行日志也能进 UI 的日志页。
+    // 反过来的话，界面连上时这些事都已经发生过一遍，日志页永远是空的——
+    // 而用户最先想知道的就是"刚才为什么没数据"。
+    std::unique_ptr<fgb::web::IpcServer> ipc;
+    if (panel_port != 0) {
+        if (ui_dir.empty()) {
+            ui_dir = default_ui_dir();
+        }
+
+        fgb::web::IpcContext ctx;
+        ctx.engine      = &engine;
+        ctx.sink        = sink_raw;
+        ctx.filter      = filter_raw;
+        ctx.source_name = source_kind;
+        ctx.params_mode = fgb::to_string(vrchat_cfg.params_mode);
+        ctx.eye_mode    = fgb::to_string(vrchat_cfg.eye_mode);
+        ctx.ui_dir      = ui_dir;
+        ctx.quit        = &g_stop;
+
+        ipc = std::make_unique<fgb::web::IpcServer>(std::move(ctx));
+        std::string ipc_error;
+        if (!ipc->start(panel_port, ipc_error)) {
+            std::fprintf(stderr, "%s%s\n", "控制面启动失败：", ipc_error.c_str());
+            ipc.reset();
+        }
+    }
+
     if (!engine.start()) {
         fgb::clock::restore_timer_resolution();
         return 1;
@@ -351,27 +445,11 @@ int cmd_run(int argc, char** argv) {
     SetConsoleCtrlHandler(console_handler, TRUE);
 #endif
 
-    std::unique_ptr<fgb::web::Panel> panel;
-    if (panel_port != 0) {
-        fgb::web::PanelContext ctx;
-        ctx.engine       = &engine;
-        ctx.sink         = sink_raw;
-        ctx.filter       = filter_raw;
-        ctx.source_name  = source_kind;
-        ctx.avatar_name  = sink_raw->avatar_name();
-        ctx.avatar_id    = sink_raw->avatar_id();
-        ctx.param_count  = sink_raw->router().param_count();
-        ctx.target_count = sink_raw->router().targets().size();
-        ctx.binary_count = sink_raw->router().binary_param_count();
-        ctx.params_mode  = fgb::to_string(vrchat_cfg.params_mode);
-        ctx.eye_mode     = fgb::to_string(vrchat_cfg.eye_mode);
-        ctx.quit         = &g_stop;
-
-        panel = std::make_unique<fgb::web::Panel>(std::move(ctx));
-        std::string panel_error;
-        if (!panel->start(panel_port, panel_error)) {
-            std::fprintf(stderr, "%s%s\n", "面板启动失败：", panel_error.c_str());
-            panel.reset();
+    if (open_ui) {
+        if (ipc) {
+            launch_ui(ipc->port());
+        } else {
+            std::fprintf(stderr, "控制面没起来，界面已跳过\n");
         }
     }
 
@@ -380,13 +458,14 @@ int cmd_run(int argc, char** argv) {
     std::uint64_t next_tick       = started + period;
     std::uint64_t last_report     = started;
 
-    std::uint32_t panel_counter = 0;
+    std::uint32_t ipc_counter = 0;
     while (!g_stop.load(std::memory_order_acquire)) {
         engine.tick_once(fgb::clock::now_ns());
 
-        // 每 4 个 tick 收一次面板请求（30 Hz 足够跟手，又不至于拖慢主循环）
-        if (panel && (++panel_counter % 4U) == 0U) {
-            panel->serve_once(0);
+        // 每 4 个 tick 处理一次控制面（30 Hz 轮询 + 内部 10 Hz 推送）。
+        // 放在主循环里而不是单独线程：引擎与面板共享同一份状态，零加锁。
+        if (ipc && (++ipc_counter % 4U) == 0U) {
+            ipc->pump(0);
         }
 
         fgb::clock::sleep_until_ns(next_tick);

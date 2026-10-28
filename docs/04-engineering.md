@@ -29,8 +29,9 @@
 | 测试 | Catch2 | BSL-1.0 | v3，支持 BDD 风格 |
 | 基准 | Google Benchmark | Apache-2.0 | OSC 编码、ring buffer |
 | 崩溃 | Crashpad | Apache-2.0 | 本地转储，不上传 |
-| UI 运行时 | WebView2 | 微软 | Win10+ 已预装（Evergreen） |
-| 前端 | TypeScript + Vite + Svelte | MIT | 体积小、无虚拟 DOM 开销 |
+| UI 运行时 | WebView2 | 微软 | Win10+ 已预装（Evergreen）；SDK 编译期从 NuGet 取一次 |
+| 前端 | 原生 JS（当前）→ TypeScript + Vite + Svelte（按需） | MIT | 先保持零构建：改一行 CSS 刷新就见效；页面过千行或需要类型约束时再上构建链 |
+| UI ↔ 引擎 | WebSocket + JSON（自写 RFC 6455 子集） | — | 回环、可 curl 对照、可脚本验证；见 ADR-0010 |
 | .NET 宿主 | .NET 8 SDK | MIT | 仅编译 `vrcft-host` |
 | 安装包 | Inno Setup | 自由 | 比 WiX 简单，脚本化好 |
 

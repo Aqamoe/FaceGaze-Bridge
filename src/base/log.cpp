@@ -12,6 +12,10 @@ namespace {
 
 std::atomic<Level> g_level{Level::info};
 std::mutex g_mutex;
+std::mutex g_callback_mutex;
+Callback g_callback;
+// 回调里再打日志会无限递归；用 thread_local 挡一层
+thread_local bool t_in_callback = false;
 
 constexpr const char* level_name(Level l) noexcept {
     switch (l) {
@@ -65,9 +69,36 @@ void write(Level l, std::string_view tag, const char* fmt, ...) noexcept {
 #endif
 
     // 单次 fprintf 保证一行不被其他线程拆开
-    std::lock_guard<std::mutex> lock(g_mutex);
-    std::fprintf(stderr, "[%02d:%02d:%02d.%03d] %s %.*s: %s\n", tm.tm_hour, tm.tm_min, tm.tm_sec,
-                 static_cast<int>(ms), level_name(l), static_cast<int>(tag.size()), tag.data(), msg);
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        std::fprintf(stderr, "[%02d:%02d:%02d.%03d] %s %.*s: %s\n", tm.tm_hour, tm.tm_min,
+                     tm.tm_sec, static_cast<int>(ms), level_name(l),
+                     static_cast<int>(tag.size()), tag.data(), msg);
+    }
+
+    // 回调在锁外调用：订阅者可能自己加锁，跟 fprintf 抢同一把锁会拖慢日志
+    if (t_in_callback) {
+        return;
+    }
+    try {
+        Callback callback;
+        {
+            std::lock_guard<std::mutex> lock(g_callback_mutex);
+            callback = g_callback;
+        }
+        if (callback) {
+            t_in_callback = true;
+            callback(l, tag, std::string_view{msg});
+            t_in_callback = false;
+        }
+    } catch (...) {
+        t_in_callback = false;
+    }
+}
+
+void set_callback(Callback callback) {
+    std::lock_guard<std::mutex> lock(g_callback_mutex);
+    g_callback = std::move(callback);
 }
 
 } // namespace fgb::log
