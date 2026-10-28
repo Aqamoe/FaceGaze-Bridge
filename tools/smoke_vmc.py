@@ -172,7 +172,9 @@ def main() -> int:
     expect = [
         "/avatar/parameters/FT/v2/JawOpen",
         "/avatar/parameters/FT/v2/MouthCornerPullLeft",
-        "/avatar/parameters/FT/v2/BrowInnerUp",
+        # browInnerUp 是双侧统一的 ARKit 输入，协议层拆成左右两个肌肉形状
+        "/avatar/parameters/FT/v2/BrowInnerUpLeft",
+        "/avatar/parameters/FT/v2/BrowInnerUpRight",
         "/avatar/parameters/FT/v2/EyeLidLeft",
     ]
 

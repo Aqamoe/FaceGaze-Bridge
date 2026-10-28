@@ -1,12 +1,23 @@
-﻿// Unified Expressions v2 形状集。
+﻿// Unified Expressions 形状集 —— 与 VRCFaceTracking 的协议层严格对齐。
 //
-// 顺序即线上协议顺序，**只能在末尾追加，永不可重排或插入**。
-// 枚举与名称表由同一份 X-macro 列表生成，从机制上杜绝两者错位。
+// 【这是协议，不是偏好】
+// 顺序取自 VRCFaceTracking.Core/Params/Expressions/UnifiedExpressions.cs 的
+// `public enum UnifiedExpressions`（88 项，Max = 88）。IPC 数据包里的
+// Expression_Shapes 数组就是按这个顺序排列的 float[89]，索引错一位，
+// 整张脸就会错位。**只能在末尾追加，永不可重排或插入。**
 //
-// 注意：眼追参数（EyeLeftX / EyeRightX / EyeY / EyeLidLeft / EyeLidRight）不在
-// 此枚举内。它们由 EyeState 派生输出，见 core/model/frame.hpp 与 sinks/vrchat_sink.cpp。
-// 这不是疏漏——眼追的权威数据是视线向量与睁眼度，把它们再塞进形状数组会造成
-// 两处真相，迟早不一致。
+// 【两层结构，别混淆】
+//   本枚举 = 肌肉层基础形状（BrowLowererLeft、JawRight、MouthCornerPullLeft…）
+//   v2 参数 = 输出层的合成参数（BrowDownLeft、JawX、MouthSmileLeft…）
+// 后者由前者派生，例如：
+//   v2/MouthSmileLeft  = MouthCornerPullLeft + MouthCornerSlantLeft
+//   v2/JawX            = JawRight - JawLeft
+//   v2/EyeLidLeft      = Openness * 0.75 + EyeWideLeft * 0.25
+// 派生规则见 VRCFaceTracking.Core/Params/Expressions/UnifiedExpressionsParameters.cs，
+// 实现放在 sinks/ 层，不进数据模型。
+//
+// 眼追（EyeLeftX / EyeRightX / EyeLid 等）同样不属于此枚举：权威数据是
+// EyeState 里的视线向量与睁眼度，形状数组里再存一份会造成两处真相。
 #pragma once
 
 #include <cstddef>
@@ -16,106 +27,109 @@
 namespace fgb {
 
 // clang-format off
-#define FGB_SHAPE_LIST(X)  \
-    /* brow (11) */        \
-    X(BrowDownLeft)        \
-    X(BrowDownRight)       \
-    X(BrowInnerUp)         \
-    X(BrowInnerUpLeft)     \
-    X(BrowInnerUpRight)    \
-    X(BrowLowererLeft)     \
-    X(BrowLowererRight)    \
-    X(BrowOuterUpLeft)     \
-    X(BrowOuterUpRight)    \
-    X(BrowPinchLeft)       \
-    X(BrowPinchRight)      \
-    /* eye (2) */          \
-    X(EyeSquintLeft)       \
-    X(EyeSquintRight)      \
-    /* cheek (5) */        \
-    X(CheekPuffSuck)       \
-    X(CheekPuffSuckLeft)   \
-    X(CheekPuffSuckRight)  \
-    X(CheekSquintLeft)     \
-    X(CheekSquintRight)    \
-    /* jaw (5) */          \
-    X(JawClench)           \
-    X(JawMandibleRaise)    \
-    X(JawOpen)             \
-    X(JawX)                \
-    X(JawZ)                \
-    /* lip funnel (5) */   \
-    X(LipFunnel)           \
-    X(LipFunnelLowerLeft)  \
-    X(LipFunnelLowerRight) \
-    X(LipFunnelUpperLeft)  \
-    X(LipFunnelUpperRight) \
-    /* lip pucker (5) */   \
-    X(LipPucker)           \
-    X(LipPuckerLowerLeft)  \
-    X(LipPuckerLowerRight) \
-    X(LipPuckerUpperLeft)  \
-    X(LipPuckerUpperRight) \
-    /* lip suck (8) */     \
-    X(LipSuckCornerLeft)   \
-    X(LipSuckCornerRight)  \
-    X(LipSuckLower)        \
-    X(LipSuckLowerLeft)    \
-    X(LipSuckLowerRight)   \
-    X(LipSuckUpper)        \
-    X(LipSuckUpperLeft)    \
-    X(LipSuckUpperRight)   \
-    /* mouth (27) */       \
-    X(MouthClosed)         \
-    X(MouthCornerPullLeft) \
-    X(MouthCornerPullRight)\
-    X(MouthCornerSlantLeft)\
-    X(MouthCornerSlantRight)\
-    X(MouthDimpleLeft)     \
-    X(MouthDimpleRight)    \
-    X(MouthFrownLeft)      \
-    X(MouthFrownRight)     \
-    X(MouthLowerDownLeft)  \
-    X(MouthLowerDownRight) \
-    X(MouthLowerX)         \
-    X(MouthPressLeft)      \
-    X(MouthPressRight)     \
-    X(MouthRaiserLower)    \
-    X(MouthRaiserUpper)    \
-    X(MouthSmileLeft)      \
-    X(MouthSmileRight)     \
-    X(MouthStretchLeft)    \
-    X(MouthStretchRight)   \
-    X(MouthTightenerLeft)  \
-    X(MouthTightenerRight) \
-    X(MouthUpperDeepenLeft)\
-    X(MouthUpperDeepenRight)\
-    X(MouthUpperUpLeft)    \
-    X(MouthUpperUpRight)   \
-    X(MouthUpperX)         \
-    /* nasal (4) */        \
-    X(NasalConstrictLeft)  \
-    X(NasalConstrictRight) \
-    X(NasalDilationLeft)   \
-    X(NasalDilationRight)  \
-    /* neck (2) */         \
-    X(NeckFlexLeft)        \
-    X(NeckFlexRight)       \
-    /* nose (2) */         \
-    X(NoseSneerLeft)       \
-    X(NoseSneerRight)      \
-    /* velum / throat (2) */ \
-    X(SoftPalateClose)     \
-    X(ThroatSwallow)       \
-    /* tongue (8) */       \
-    X(TongueArchY)         \
-    X(TongueOut)           \
-    X(TongueRoll)          \
-    X(TongueShape)         \
-    X(TongueTwistLeft)     \
-    X(TongueTwistRight)    \
-    X(TongueX)             \
-    X(TongueY)
+#define FGB_SHAPE_LIST(X)          \
+    /* eye (4) */                  \
+    X(EyeSquintRight)              \
+    X(EyeSquintLeft)               \
+    X(EyeWideRight)                \
+    X(EyeWideLeft)                 \
+    /* brow (8) */                 \
+    X(BrowPinchRight)              \
+    X(BrowPinchLeft)               \
+    X(BrowLowererRight)            \
+    X(BrowLowererLeft)             \
+    X(BrowInnerUpRight)            \
+    X(BrowInnerUpLeft)             \
+    X(BrowOuterUpRight)            \
+    X(BrowOuterUpLeft)             \
+    /* nose (4) */                 \
+    X(NasalDilationRight)          \
+    X(NasalDilationLeft)           \
+    X(NasalConstrictRight)         \
+    X(NasalConstrictLeft)          \
+    /* cheek (6) */                \
+    X(CheekSquintRight)            \
+    X(CheekSquintLeft)             \
+    X(CheekPuffRight)              \
+    X(CheekPuffLeft)               \
+    X(CheekSuckRight)              \
+    X(CheekSuckLeft)               \
+    /* jaw (8) */                  \
+    X(JawOpen)                     \
+    X(JawRight)                    \
+    X(JawLeft)                     \
+    X(JawForward)                  \
+    X(JawBackward)                 \
+    X(JawClench)                   \
+    X(JawMandibleRaise)            \
+    X(MouthClosed)                 \
+    /* lip suck (6) */             \
+    X(LipSuckUpperRight)           \
+    X(LipSuckUpperLeft)            \
+    X(LipSuckLowerRight)           \
+    X(LipSuckLowerLeft)            \
+    X(LipSuckCornerRight)          \
+    X(LipSuckCornerLeft)           \
+    /* lip funnel (4) */           \
+    X(LipFunnelUpperRight)         \
+    X(LipFunnelUpperLeft)          \
+    X(LipFunnelLowerRight)         \
+    X(LipFunnelLowerLeft)          \
+    /* lip pucker (4) */           \
+    X(LipPuckerUpperRight)         \
+    X(LipPuckerUpperLeft)          \
+    X(LipPuckerLowerRight)         \
+    X(LipPuckerLowerLeft)          \
+    /* upper lip / lower lip (10) */ \
+    X(MouthUpperUpRight)           \
+    X(MouthUpperUpLeft)            \
+    X(MouthUpperDeepenRight)       \
+    X(MouthUpperDeepenLeft)        \
+    X(NoseSneerRight)              \
+    X(NoseSneerLeft)               \
+    X(MouthLowerDownRight)         \
+    X(MouthLowerDownLeft)          \
+    X(MouthUpperRight)             \
+    X(MouthUpperLeft)              \
+    X(MouthLowerRight)             \
+    X(MouthLowerLeft)              \
+    /* smile (4) */                \
+    X(MouthCornerPullRight)        \
+    X(MouthCornerPullLeft)         \
+    X(MouthCornerSlantRight)       \
+    X(MouthCornerSlantLeft)        \
+    /* sad (4) */                  \
+    X(MouthFrownRight)             \
+    X(MouthFrownLeft)              \
+    X(MouthStretchRight)           \
+    X(MouthStretchLeft)            \
+    /* mouth detail (8) */         \
+    X(MouthDimpleRight)            \
+    X(MouthDimpleLeft)             \
+    X(MouthRaiserUpper)            \
+    X(MouthRaiserLower)            \
+    X(MouthPressRight)             \
+    X(MouthPressLeft)              \
+    X(MouthTightenerRight)         \
+    X(MouthTightenerLeft)          \
+    /* tongue (12) */              \
+    X(TongueOut)                   \
+    X(TongueUp)                    \
+    X(TongueDown)                  \
+    X(TongueRight)                 \
+    X(TongueLeft)                  \
+    X(TongueRoll)                  \
+    X(TongueBendDown)              \
+    X(TongueCurlUp)                \
+    X(TongueSquish)                \
+    X(TongueFlat)                  \
+    X(TongueTwistRight)            \
+    X(TongueTwistLeft)             \
+    /* velum / neck (4) */         \
+    X(SoftPalateClose)             \
+    X(ThroatSwallow)               \
+    X(NeckFlexRight)               \
+    X(NeckFlexLeft)
 // clang-format on
 
 enum class Shape : std::uint16_t {

@@ -29,7 +29,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 阶段 | 状态 |
 |---|---|
 | 方案设计 | ✅ 完成（本文档集） |
-| 技术预研（M0） | ⬜ 未开始（已有一手观察，见 [ADR-0001](docs/adr/0001-vrcft-osc-observed.md)） |
+| 技术预研（M0） | ✅ 协议已实测跑通（[ADR-0003](docs/adr/0003-vrcft-ipc-protocol.md)） |
 | 核心骨架（M1） | 🔄 进行中 |
 
 **已经能跑的**（M1 垂直切片）：
@@ -43,10 +43,18 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 
 **还没做的**：
 
-- VRCFT .NET 模块兼容层（M2，整个项目的关键路径）
+- VRCFT .NET 模块兼容层（M2，关键路径上的下一步——协议已验证，见 ADR-0003）
 - v1 legacy 参数、简化参数、binary 编码（M3）
 - 校准、滤波器、UI（M3）
 - 多 Sink、录制回放（M4）
+
+**已验证的关键事实**（M0，详见 [ADR-0003](docs/adr/0003-vrcft-ipc-protocol.md)）：
+
+- 可以脱离 VRCFT 主程序，自带端口驱动官方 `ModuleProcess.exe`
+- 数据是**拉模式**：每发一个 `EventUpdate` 才回一个 `ReplyUpdatePacket`
+- 数据包 432 字节，`structSize=420` = 16 个眼球/头部 float + 89 个形状 float
+- 协议层形状是 **88 个肌肉层形状**（`BrowLowererLeft`、`JawRight`），
+  v2 参数（`BrowDownLeft`、`JawX`）是 Core 侧派生出来的另一层
 
 ---
 
