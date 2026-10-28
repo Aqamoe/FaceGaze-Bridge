@@ -114,6 +114,18 @@ Server 校验 challenge 后**把整个包原样回发**作为 ACK。
 +16 : text     UTF-8
 ```
 
+### EventUpdateStatus (204) —— 状态同步，**不可省略**
+```
++8  : moduleState  int32   -1=Uninitialized, 0=Idle, 1=Active
++12 : usingEye     uint8   bool
++13 : usingExpression uint8  bool
+```
+共 14 字节。
+
+模块收到后会把 `ExtTrackingModule.Status` 设成该值。**绝大多数模块的 `Update()` 第一行就是
+`if (Status == ModuleState.Active)`**，不设这个状态，模块每帧都在空转，返回的全是
+`INVALID_FLOAT`。FGB 必须在 Init 成功后立即发一次 `EventUpdateStatus(Active)`。
+
 ## 4. 时序
 
 ```
@@ -127,6 +139,8 @@ Client                                Server
   │                                     │
   │◀──── EventInit(flags) ──────────────┤
   ├──── ReplyInit(flags, name, icons) ─▶│
+  │                                     │
+  │◀──── EventUpdateStatus(Active) ─────┤   ← 必须！否则 Update() 空转
   │                                     │
   │◀──── EventUpdate ───────────────────┤   ← 拉模式：一次 Update 回一帧
   ├──── ReplyUpdate(struct 420B) ──────▶│
@@ -151,6 +165,13 @@ FGB 的实现必须保证 **Init/Teardown 配对**，且在 Init 失败时不要
 模块通常独占硬件端口（PICO 模块绑定固定 UDP 端口）。同时跑两个实例时，第二个 Init 会失败且错误信息很隐晦。
 FGB 启动第二个实例前应先探测端口占用，并给出明确提示。
 
+**坑 4 · 忘了同步 `ModuleState.Active`，拿到的是满屏 INVALID_FLOAT。**
+第一次实测就栽在这里：握手、Init 全部成功，`ReplyUpdate` 也正常返回 432 字节，但 105 个字段全是
+`INVALID_FLOAT`。原因是没发 `EventUpdateStatus`，模块 `Update()` 里 `if (Status == Active)` 不成立，
+一个值都不写。
+**这个错误极具迷惑性**：链路看起来完全正常，只是"没有数据"，很容易被误判成硬件问题或协议解码错误。
+排查顺序应该是：先确认发过 `EventUpdateStatus`，再看模块日志里的硬件连接状态。
+
 ## 6. 启动参数
 
 ```
@@ -168,10 +189,28 @@ VRCFaceTracking.ModuleProcess.exe --port <serverPort> --module-path <dllPath> --
 | 握手 | ✅ challenge 匹配，pid / modulePath 解出正确 |
 | 能力查询 | ✅ `eye=True expression=True` |
 | Init | ✅ 模块名 `PICO / 完整面部追踪`，1 个图标流 |
+| 状态同步 | ✅ `EventUpdateStatus(Active)` 后模块进入工作状态 |
 | 数据包 | ✅ 432 字节，`structSize=420`，3 秒 1957 个包 |
 | Teardown | ✅ 确认包收到，退出码 0 |
-| 无硬件时数据 | 全部 `0x4F800000`（INVALID_FLOAT），符合预期 |
 | 未 Init 就 Teardown | ❌ 模块崩溃 0xC0000005（模块自身缺陷，见坑 2） |
+| 脱离 VRCFT 取真实数据 | ⚠️ 模块正常出帧，但眼睛/表情字段仍为 `INVALID_FLOAT` |
+
+### 关于最后一项的排查记录
+
+两次独立测试（VRCFT 关闭、`ModuleProcess` 独立启动、`EventUpdateStatus(Active)` 已发）都只拿到
+`INVALID_FLOAT`。同时观察到：
+
+- 模块日志显示 `使用端口：29765`，即硬件接收端口绑定成功
+- 头部字段是 `0.0`（默认值），只有眼睛/表情被写成 `INVALID_FLOAT`
+  → 说明是模块**主动判定硬件无数据**，不是解码问题
+- PICO Connect 正常运行，`PICO Streaming Service` 占着 `127.0.0.1:29866`
+
+也就是说：**协议链路本身已验证到底，剩下的是 PICO Connect → 模块 这一段的数据供给问题**，
+可能的解释是 PICO 侧检测到消费端（VRCFT）消失后暂停了转发，或模块与 PICO 之间需要一次
+由 VRCFT 触发的注册。
+
+这条不阻塞 M2：FGB 真正替代 VRCFT 运行时，PICO 侧的对端就是 FGB 自己，届时可做一次终极验证。
+若届时仍无数据，排查方向依次为：模块绑定地址（`0.0.0.0` vs `127.0.0.1`）、PICO 侧的会话状态、模块版本差异。
 
 ## 8. 待补
 

@@ -174,6 +174,12 @@ def main() -> int:
                 print(f"        模块名={name_text!r}  图标流={streams}")
                 # 数据是拉模式：每发一个 EventUpdate，模块才回一个 ReplyUpdatePacket
                 if args.init and peer and not teardown_sent:
+                    # 关键一步：先把模块状态同步为 Active。
+                    # 模块的 Update() 普遍写成 `if (Status == ModuleState.Active)`，
+                    # 不设这个状态，模块每帧都直接返回，一个值都不写。
+                    status = struct.pack("<i", 1) + bytes([1, 1])  # Active, usingEye, usingExpr
+                    sock.sendto(build(204, status), peer)
+                    print("[SEND] EventUpdateStatus (Active)")
                     sock.sendto(build(203), peer)
                     print("[SEND] EventUpdate  （开始拉取数据）")
 
@@ -207,7 +213,7 @@ def main() -> int:
                 # EventLog: level(int32) + length(int32) + text
                 level, text_len = struct.unpack("<ii", body[0:8])
                 text = body[8:8 + text_len].decode("utf-8", "replace")
-                if text and level >= 3:
+                if text and level >= 2:
                     print(f"        log[{level}]: {text.strip()[:110]}")
 
     finally:
