@@ -18,10 +18,10 @@
 #include "params/catalog.hpp"
 #include "sinks/sink.hpp"
 
-#include <array>
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace fgb {
 
@@ -80,8 +80,11 @@ public:
 
 private:
     void resolve_addresses();
-    void emit_one(osc::BundleWriter& writer, std::size_t slot, std::string_view address,
-                  params::ParamKind kind, float value, bool force) noexcept;
+    void map_target_groups();
+    void emit_params(osc::BundleWriter& writer, const params::EvalContext& ctx,
+                     bool force) noexcept;
+    void emit_value(osc::BundleWriter& writer, std::size_t slot, std::string_view address,
+                    params::ParamKind kind, float value, bool force) noexcept;
     void emit_eye_native(osc::BundleWriter& writer, const FaceFrame& frame, bool force) noexcept;
     void flush(osc::BundleWriter& writer) noexcept;
     void reset_dedup() noexcept;
@@ -93,10 +96,10 @@ private:
     SinkStats stats_{};
     params::ParamRouter router_;
 
-    // 槽位索引 = catalog 展开后的扁平索引
-    std::array<float, params::kMaxParamCount> last_values_{};
-    std::array<std::uint8_t, params::kMaxParamCount> sent_{};
-    std::array<std::uint8_t, params::kMaxParamCount> active_{};
+    // 槽位索引 = router 目标列表下标（一个参数可能对应多条目标：float + 若干二进制位）
+    std::vector<float> last_values_;
+    std::vector<std::uint8_t> sent_;
+    std::vector<std::uint8_t> target_group_; // 每条目标属于哪个 catalog 组，用于 v2/v1 过滤
 
     float last_native_pitch_yaw_[4]{};
     float last_native_closed_ = 0.0f;

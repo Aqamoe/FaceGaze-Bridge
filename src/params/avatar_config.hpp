@@ -68,6 +68,31 @@ struct AvatarPick {
 
 AvatarPick pick_avatar(const std::string& osc_root, std::size_t candidates = 8);
 
+// 一个参数最终要写成的 OSC 目标。
+//
+// 同一个逻辑参数在不同头像上有三种落地方式，互斥但可以并存：
+//   Float      头像声明了 `<名>` 为 Float            → 一条 float
+//   Bool       头像声明了 `<名>` 为 Bool             → 一条 T/F
+//   BinaryBit  头像声明了 `<名>1`/`<名>2`/`<名>4`…  → 每声明一位一条 T/F
+//   Negative   `<名>Negative`，binary 的伴生符号位，取值 = (值 < 0)
+struct OutputTarget {
+    std::string address;
+    enum class Kind : std::uint8_t { Float, Bool, BinaryBit, Negative } kind = Kind::Float;
+    const ParamEntry* entry = nullptr; // 取值来源
+    std::uint8_t shift      = 0;       // BinaryBit：这一位对应第几次移位
+    std::uint8_t bit_count  = 0;       // BinaryBit：头像一共声明了几位（量化级数 = 2^bit_count）
+    bool has_negative       = false;   // 该参数是否声明了 <名>Negative
+};
+
+// 二进制参数的一位怎么取值。
+//
+// 规则照抄 VRCFT 的 BinaryBaseParameter.ProcessBinary：
+//   1. 负值只有在头像声明了 <名>Negative 时才有意义，否则整位归零（不是取绝对值）
+//   2. 级数 = 2^bit_count，量化 = (int)(|v| * 级数)
+//   3. |v| > 0.99999 直接全置位——否则 (int)(1.0 * 级数) 会溢出到不存在的位
+bool binary_bit(float value, std::uint8_t shift, std::uint8_t bit_count,
+                bool has_negative) noexcept;
+
 // 逻辑名 → 真实地址。
 class ParamRouter {
 public:
@@ -86,15 +111,25 @@ public:
     std::size_t matched() const noexcept { return matched_; }
     bool bound_to_avatar() const noexcept { return bound_; }
 
+    // 真正要发出去的 OSC 目标列表（按参数索引升序，同参数的多个目标相邻）
+    const std::vector<OutputTarget>& targets() const noexcept { return targets_; }
+    std::size_t binary_param_count() const noexcept { return binary_params_; }
+
     // 供测试：判断某个声明地址是否匹配某个逻辑名
     static bool matches_tail(std::string_view address, std::string_view name) noexcept;
+
+    // 供测试：把 `<名>4` 这样的地址拆成 (基名匹配, 索引)。index = 0 表示没匹配上。
+    static bool match_binary_tail(std::string_view address, std::string_view name,
+                                  int& index) noexcept;
 
 private:
     void rebuild(std::string_view v2_prefix, const AvatarConfig* config);
 
     std::vector<std::string> addresses_;
-    std::size_t matched_ = 0;
-    bool bound_          = false;
+    std::vector<OutputTarget> targets_;
+    std::size_t matched_       = 0;
+    std::size_t binary_params_ = 0;
+    bool bound_                = false;
 };
 
 } // namespace fgb::params

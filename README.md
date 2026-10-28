@@ -32,7 +32,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 技术预研（M0） | ✅ 协议已实测跑通（[ADR-0003](docs/adr/0003-vrcft-ipc-protocol.md)） |
 | 核心骨架（M1） | ✅ VMC → OSC 端到端 |
 | 模块兼容层（M2） | ✅ **核心跑通**：C++ 直接驱动官方 ModuleProcess，拿到真实 PICO 数据 |
-| 参数层（M3） | 🔄 v2 派生 + v1 legacy + 头像地址发现完成；binary 编码待做 |
+| 参数层（M3） | ✅ v2 派生 + v1 legacy + 头像地址发现 + binary 编码 |
 
 **已经能跑的**（M1 + M2 核心）：
 
@@ -55,7 +55,6 @@ fgb-cli run --source vrcft --vrchat 127.0.0.1:9000 --verbose
 **还没做的**：
 
 - VRCFT .NET 模块兼容层（M2，关键路径上的下一步——协议已验证，见 ADR-0003）
-- binary 参数编码（`Name1`/`Name2`/`Name4`…），这是 v2 匹配率的下一个增量
 - 头像切换的实时感知（OSCQuery / `/avatar/change`）
 - 校准、滤波器、UI（M3）
 - 多 Sink、录制回放（M4）

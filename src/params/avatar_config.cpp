@@ -226,6 +226,25 @@ AvatarPick pick_avatar(const std::string& osc_root, std::size_t candidates) {
     return best;
 }
 
+bool binary_bit(float value, std::uint8_t shift, std::uint8_t bit_count,
+                bool has_negative) noexcept {
+    if (value < 0.0f) {
+        if (!has_negative) {
+            return false;
+        }
+        value = -value;
+    }
+    if (value > 0.99999f) {
+        return true;
+    }
+    if (bit_count == 0 || bit_count > 15) {
+        return false;
+    }
+    const int levels    = 1 << bit_count;
+    const int quantized = static_cast<int>(value * static_cast<float>(levels));
+    return ((quantized >> shift) & 1) == 1;
+}
+
 bool ParamRouter::matches_tail(std::string_view address, std::string_view name) noexcept {
     if (name.empty() || address.size() <= name.size()) {
         return false;
@@ -258,54 +277,189 @@ bool ParamRouter::matches_tail(std::string_view address, std::string_view name) 
     return true;
 }
 
+bool ParamRouter::match_binary_tail(std::string_view address, std::string_view name,
+                                   int& index) noexcept {
+    index = 0;
+    if (address.empty() || name.empty()) {
+        return false;
+    }
+    // 从尾部剥掉数字
+    std::size_t digits = 0;
+    while (digits < address.size()) {
+        const char c = address[address.size() - 1 - digits];
+        if (c < '0' || c > '9') {
+            break;
+        }
+        ++digits;
+    }
+    if (digits == 0 || digits == address.size()) {
+        return false;
+    }
+    const std::string_view base = address.substr(0, address.size() - digits);
+    if (!matches_tail(base, name)) {
+        return false;
+    }
+    int value = 0;
+    for (std::size_t i = address.size() - digits; i < address.size(); ++i) {
+        value = value * 10 + (address[i] - '0');
+        if (value > 65535) {
+            return false; // 明显不是位序号，防止溢出
+        }
+    }
+    index = value;
+    return true;
+}
+
 void ParamRouter::clear() {
     addresses_.clear();
-    matched_ = 0;
-    bound_   = false;
+    targets_.clear();
+    matched_       = 0;
+    binary_params_ = 0;
+    bound_         = false;
 }
 
 void ParamRouter::use_fallback(std::string_view v2_prefix) { rebuild(v2_prefix, nullptr); }
 
 void ParamRouter::bind(const AvatarConfig& config) { rebuild("FT/v2/", &config); }
 
+namespace {
+
+// VRCFT 的 GetBinarySteps：只有 2 的幂才是合法位序号，返回值是移位量。
+bool binary_shift_of(int index, std::uint8_t& shift) noexcept {
+    if (index <= 0) {
+        return false;
+    }
+    int value = 1;
+    for (std::uint8_t i = 0; i < 16; ++i) {
+        if (value == index) {
+            shift = i;
+            return true;
+        }
+        value *= 2;
+    }
+    return false;
+}
+
+} // namespace
+
 void ParamRouter::rebuild(std::string_view v2_prefix, const AvatarConfig* config) {
     addresses_.clear();
-    matched_ = 0;
-    bound_   = config != nullptr;
+    targets_.clear();
+    matched_       = 0;
+    binary_params_ = 0;
+    bound_         = config != nullptr;
 
     for (const Group& group : groups()) {
         for (const ParamEntry& entry : group.entries) {
-            std::string address;
+            std::string primary;
+            std::string negative;
+            std::vector<OutputTarget> bits;
+
             if (config == nullptr) {
-                address = kRoot;
-                address += group.fallback_prefix;
-                address += entry.name;
+                primary = kRoot;
+                primary += group.fallback_prefix;
+                primary += entry.name;
             } else {
                 std::string logical;
                 logical.reserve(group.name_prefix.size() + entry.name.size());
                 logical.append(group.name_prefix);
                 logical.append(entry.name);
 
+                // 主参数：同名的 Float / Bool
                 for (const AvatarParam& declared : config->params) {
-                    if (declared.kind != entry.kind) {
-                        continue;
-                    }
-                    if (matches_tail(declared.address, logical)) {
-                        address = declared.address;
+                    if (declared.kind == entry.kind && matches_tail(declared.address, logical)) {
+                        primary = declared.address;
                         break;
                     }
                 }
-                if (!address.empty()) {
-                    ++matched_;
+
+                // 符号位：<名>Negative，只可能是 Bool
+                std::string negative_name = logical + "Negative";
+                for (const AvatarParam& declared : config->params) {
+                    if (declared.kind == ParamKind::Bool &&
+                        matches_tail(declared.address, negative_name)) {
+                        negative = declared.address;
+                        break;
+                    }
+                }
+
+                // 二进制位：<名>1 / <名>2 / <名>4 …，只认 2 的幂
+                struct Bit {
+                    std::uint8_t shift;
+                    std::string address;
+                };
+                std::vector<Bit> found;
+                for (const AvatarParam& declared : config->params) {
+                    if (declared.kind != ParamKind::Bool) {
+                        continue;
+                    }
+                    int index = 0;
+                    std::uint8_t shift = 0;
+                    if (!match_binary_tail(declared.address, logical, index) ||
+                        !binary_shift_of(index, shift)) {
+                        continue;
+                    }
+                    bool duplicate = false;
+                    for (const Bit& b : found) {
+                        if (b.shift == shift) {
+                            duplicate = true;
+                            break;
+                        }
+                    }
+                    if (!duplicate) {
+                        found.push_back({shift, declared.address});
+                    }
+                }
+                std::sort(found.begin(), found.end(),
+                          [](const Bit& a, const Bit& b) { return a.shift < b.shift; });
+
+                if (!found.empty()) {
+                    ++binary_params_;
+                    for (const Bit& b : found) {
+                        OutputTarget t;
+                        t.address   = b.address;
+                        t.kind      = OutputTarget::Kind::BinaryBit;
+                        t.entry     = &entry;
+                        t.shift     = b.shift;
+                        t.bit_count = static_cast<std::uint8_t>(found.size());
+                        bits.push_back(std::move(t));
+                    }
                 }
             }
-            addresses_.push_back(std::move(address));
+
+            addresses_.push_back(primary);
+            const bool has_negative = !negative.empty();
+
+            if (!primary.empty()) {
+                OutputTarget t;
+                t.address = primary;
+                t.kind    = entry.kind == ParamKind::Bool ? OutputTarget::Kind::Bool
+                                                          : OutputTarget::Kind::Float;
+                t.entry        = &entry;
+                t.has_negative = has_negative;
+                targets_.push_back(std::move(t));
+                ++matched_;
+            }
+            if (!negative.empty()) {
+                OutputTarget t;
+                t.address = negative;
+                t.kind    = OutputTarget::Kind::Negative;
+                t.entry   = &entry;
+                targets_.push_back(std::move(t));
+                ++matched_;
+            }
+            for (OutputTarget& t : bits) {
+                t.has_negative = has_negative;
+                targets_.push_back(std::move(t));
+            }
         }
     }
 
     if (config != nullptr) {
-        FGB_INFO(kTag, "已绑定头像「%s」：%zu / %zu 个参数在头像上存在（%s）", config->name.c_str(),
-                 matched_, addresses_.size(), config->path.c_str());
+        FGB_INFO(kTag,
+                 "已绑定头像「%s」：%zu 个参数命中，其中 %zu 个走二进制编码；共 %zu 条 OSC 目标（%s）",
+                 config->name.c_str(), matched_, binary_params_, targets_.size(),
+                 config->path.c_str());
     } else {
         FGB_INFO(kTag, "未发现头像配置，回退到固定前缀 %s%zu 个参数", std::string(v2_prefix).c_str(),
                  addresses_.size());

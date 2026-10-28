@@ -279,3 +279,104 @@ FGB_TEST(router_fallback_prefix) {
     FGB_CHECK(found);
     FGB_CHECK(router.address(jaw) == "/avatar/parameters/JawOpen");
 }
+
+// ---------------------------------------------------------------------------
+// binary 参数
+// ---------------------------------------------------------------------------
+
+FGB_TEST(match_binary_tail_extracts_index) {
+    int index = 0;
+    FGB_CHECK(ParamRouter::match_binary_tail("/avatar/parameters/FT/v2/JawOpen4", "v2/JawOpen",
+                                            index));
+    FGB_CHECK(index == 4);
+
+    FGB_CHECK(
+        ParamRouter::match_binary_tail("/avatar/parameters/v2/MouthPress16", "v2/MouthPress", index));
+    FGB_CHECK(index == 16);
+
+    // 没有数字后缀、或者基名对不上，都不算
+    FGB_CHECK(!ParamRouter::match_binary_tail("/avatar/parameters/FT/v2/JawOpen", "v2/JawOpen",
+                                              index));
+    FGB_CHECK(!ParamRouter::match_binary_tail("/avatar/parameters/FT/v2/JawForward4", "v2/JawOpen",
+                                              index));
+
+    // legacy 名不能匹配 v2 的二进制参数（与 matches_tail 同一条规则）
+    FGB_CHECK(!ParamRouter::match_binary_tail("/avatar/parameters/FT/v2/JawOpen4", "JawOpen",
+                                              index));
+}
+
+FGB_TEST(binary_bit_quantizes_by_declared_width) {
+    // 3 位 = 8 级。0.5 → 4 → 100b：只有 shift=2 置位
+    FGB_CHECK(!binary_bit(0.5f, 0, 3, false));
+    FGB_CHECK(!binary_bit(0.5f, 1, 3, false));
+    FGB_CHECK(binary_bit(0.5f, 2, 3, false));
+
+    // 0.25 → 2 → 010b
+    FGB_CHECK(!binary_bit(0.25f, 0, 3, false));
+    FGB_CHECK(binary_bit(0.25f, 1, 3, false));
+    FGB_CHECK(!binary_bit(0.25f, 2, 3, false));
+
+    // 0 → 全灭
+    for (std::uint8_t s = 0; s < 3; ++s) {
+        FGB_CHECK(!binary_bit(0.0f, s, 3, false));
+    }
+}
+
+FGB_TEST(binary_bit_full_scale_sets_every_bit) {
+    // 1.0 不能走量化：8 * 1.0 = 8 会落到第 4 位，而头像只声明了 3 位
+    for (std::uint8_t s = 0; s < 3; ++s) {
+        FGB_CHECK(binary_bit(1.0f, s, 3, false));
+        FGB_CHECK(binary_bit(0.999999f, s, 3, false));
+    }
+}
+
+FGB_TEST(binary_bit_negative_needs_symbol_param) {
+    // 没有 <名>Negative 时负值整位归零，而不是取绝对值
+    FGB_CHECK(!binary_bit(-0.5f, 2, 3, false));
+
+    // 有符号位时按绝对值编码，符号单独走 Negative
+    FGB_CHECK(binary_bit(-0.5f, 2, 3, true));
+}
+
+FGB_TEST(router_builds_binary_targets) {
+    AvatarConfig cfg;
+    cfg.params.push_back({"/avatar/parameters/FT/v2/JawOpen1", ParamKind::Bool});
+    cfg.params.push_back({"/avatar/parameters/FT/v2/JawOpen2", ParamKind::Bool});
+    cfg.params.push_back({"/avatar/parameters/FT/v2/JawOpen4", ParamKind::Bool});
+    cfg.params.push_back({"/avatar/parameters/FT/v2/JawOpenNegative", ParamKind::Bool});
+    // 非 2 的幂，VRCFT 会丢弃
+    cfg.params.push_back({"/avatar/parameters/FT/v2/JawOpen3", ParamKind::Bool});
+
+    ParamRouter router;
+    router.bind(cfg);
+    FGB_CHECK(router.binary_param_count() == 1);
+
+    bool found = false;
+    const std::size_t jaw = flat_index_of(kV2BaseGroup, "JawOpen", ParamKind::Float, found);
+    FGB_CHECK(found);
+
+    // 该参数应产生 3 个二进制位 + 1 个符号位，没有 float 目标
+    std::size_t bits = 0;
+    std::size_t neg  = 0;
+    std::size_t flat = 0;
+    for (const auto& t : router.targets()) {
+        if (t.entry == nullptr) {
+            ++flat;
+            continue;
+        }
+        if (t.address.find("JawOpen") != std::string::npos) {
+            if (t.kind == OutputTarget::Kind::BinaryBit) {
+                ++bits;
+                FGB_CHECK(t.bit_count == 3);
+                FGB_CHECK(t.has_negative);
+            } else if (t.kind == OutputTarget::Kind::Negative) {
+                ++neg;
+            }
+        }
+    }
+    FGB_CHECK(bits == 3);
+    FGB_CHECK(neg == 1);
+
+    // 主地址仍为空（头像没声明 float 版本）
+    FGB_CHECK(router.address(jaw).empty());
+}

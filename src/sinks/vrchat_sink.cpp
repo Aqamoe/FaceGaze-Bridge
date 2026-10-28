@@ -89,10 +89,25 @@ bool parse_params_mode(std::string_view text, ParamsMode& out) noexcept {
 
 VrchatSink::VrchatSink(VrchatSinkConfig config) : config_(std::move(config)) { reset_dedup(); }
 
+void VrchatSink::map_target_groups() {
+    // 目标列表与 catalog 同序，按参数逐个对齐即可，不需要额外查找
+    target_group_.assign(router_.targets().size(), 0);
+    std::size_t slot             = 0;
+    const auto groups            = params::groups();
+    const auto& targets          = router_.targets();
+    for (std::size_t g = 0; g < groups.size(); ++g) {
+        for (const params::ParamEntry& entry : groups[g].entries) {
+            while (slot < targets.size() && targets[slot].entry == &entry) {
+                target_group_[slot] = static_cast<std::uint8_t>(g);
+                ++slot;
+            }
+        }
+    }
+}
+
 void VrchatSink::reset_dedup() noexcept {
-    last_values_.fill(0.0f);
-    sent_.fill(0);
-    active_.fill(0);
+    last_values_.assign(router_.targets().size(), 0.0f);
+    sent_.assign(router_.targets().size(), 0);
     for (float& v : last_native_pitch_yaw_) {
         v = 0.0f;
     }
@@ -140,6 +155,7 @@ bool VrchatSink::start() {
         return false;
     }
     resolve_addresses();
+    map_target_groups();
     reset_dedup();
     started_ = true;
     FGB_INFO(kTag, "输出到 %s:%u，眼追模式 %s，参数集 %s", config_.host.c_str(),
@@ -155,6 +171,7 @@ void VrchatSink::stop() noexcept {
 
 void VrchatSink::reload_avatar() {
     resolve_addresses();
+    map_target_groups();
     reset_dedup();
 }
 
@@ -173,9 +190,9 @@ void VrchatSink::flush(osc::BundleWriter& writer) noexcept {
     writer.begin_bundle();
 }
 
-void VrchatSink::emit_one(osc::BundleWriter& writer, std::size_t slot, std::string_view address,
-                          params::ParamKind kind, float value, bool force) noexcept {
-    if (address.empty() || slot >= params::kMaxParamCount) {
+void VrchatSink::emit_value(osc::BundleWriter& writer, std::size_t slot, std::string_view address,
+                            params::ParamKind kind, float value, bool force) noexcept {
+    if (address.empty() || slot >= sent_.size()) {
         ++stats_.suppressed;
         return;
     }
@@ -205,6 +222,48 @@ void VrchatSink::emit_one(osc::BundleWriter& writer, std::size_t slot, std::stri
     if (ok) {
         last_values_[slot] = value;
         sent_[slot]        = 1;
+    }
+}
+
+void VrchatSink::emit_params(osc::BundleWriter& writer, const params::EvalContext& ctx,
+                             bool force) noexcept {
+    const auto& targets = router_.targets();
+    const params::ParamEntry* cached  = nullptr;
+    float value                       = 0.0f;
+
+    for (std::size_t slot = 0; slot < targets.size(); ++slot) {
+        const params::OutputTarget& target = targets[slot];
+        if (target.entry == nullptr || slot >= target_group_.size() ||
+            !wants_group(config_.params_mode, target_group_[slot])) {
+            continue;
+        }
+        // 目标按参数聚在一起，同一个参数的多条目标只算一次
+        if (target.entry != cached) {
+            value  = target.entry->eval(ctx);
+            cached = target.entry;
+        }
+
+        using Kind = params::OutputTarget::Kind;
+        switch (target.kind) {
+        case Kind::Float:
+        case Kind::Bool:
+            emit_value(writer, slot, target.address,
+                       target.kind == Kind::Bool ? params::ParamKind::Bool
+                                                 : params::ParamKind::Float,
+                       value, force);
+            break;
+        case Kind::Negative:
+            emit_value(writer, slot, target.address, params::ParamKind::Bool,
+                       value < 0.0f ? 1.0f : 0.0f, force);
+            break;
+        case Kind::BinaryBit: {
+            const bool bit = params::binary_bit(value, target.shift, target.bit_count,
+                                                target.has_negative);
+            emit_value(writer, slot, target.address, params::ParamKind::Bool, bit ? 1.0f : 0.0f,
+                       force);
+            break;
+        }
+        }
     }
 }
 
@@ -274,21 +333,7 @@ void VrchatSink::submit(const FaceFrame& frame, const GazeState& /*gaze*/, std::
 
     if (want_params) {
         const params::EvalContext ctx{frame, config_.eye_full_scale_deg};
-        const auto groups = params::groups();
-
-        std::size_t slot = 0;
-        for (std::size_t g = 0; g < groups.size(); ++g) {
-            const auto& group = groups[g];
-            const bool emit_group = wants_group(config_.params_mode, g);
-
-            for (const params::ParamEntry& entry : group.entries) {
-                if (emit_group) {
-                    const std::string& address = router_.address(slot);
-                    emit_one(writer, slot, address, entry.kind, entry.eval(ctx), heartbeat);
-                }
-                ++slot;
-            }
-        }
+        emit_params(writer, ctx, heartbeat);
     }
 
     if (want_native) {
