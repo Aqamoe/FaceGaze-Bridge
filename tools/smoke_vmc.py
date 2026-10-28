@@ -107,8 +107,11 @@ def main() -> int:
     sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     cli = subprocess.Popen(
+        # 关掉头像地址发现：这个测试验证的是"管道通不通"，不是"地址对不对"。
+        # 开发机上装着 VRChat 时，发现到的头像会改变地址集合，断言就会随机失败。
         [args.cli, "run", "--duration", str(int(args.seconds) + 2),
-         "--vmc-port", str(args.vmc_port), "--vrchat", f"127.0.0.1:{args.osc_port}"],
+         "--vmc-port", str(args.vmc_port), "--vrchat", f"127.0.0.1:{args.osc_port}",
+         "--no-avatar-discovery"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
     )

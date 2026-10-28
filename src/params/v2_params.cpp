@@ -1,4 +1,4 @@
-#include "params/v2_params.hpp"
+﻿#include "params/v2_params.hpp"
 
 #include "core/model/math.hpp"
 
@@ -52,9 +52,21 @@ float mouth_sad_left(const EvalContext& c) noexcept {
 }
 
 #define P(param_name, expr) \
-    {param_name, [](const EvalContext& c) noexcept -> float { return (expr); }}
+    {param_name, ParamKind::Float, [](const EvalContext& c) noexcept -> float { return (expr); }}
 
-constexpr ParamDef kComposite[] = {
+constexpr ParamEntry kComposite[] = {
+    // ---- UnifiedSimpleExpressions：8 个简化形状 ----
+    // VRCFT 把它们当独立参数输出（v2/<名字>），avatar 里绑得最多的就是这几个。
+    // 它们同时也是下面若干合成参数的输入，所以必须单独发一份。
+    P("BrowUpLeft", brow_up_left(c)),
+    P("BrowUpRight", brow_up_right(c)),
+    P("BrowDownLeft", brow_down_left(c)),
+    P("BrowDownRight", brow_down_right(c)),
+    P("MouthSmileLeft", mouth_smile_left(c)),
+    P("MouthSmileRight", mouth_smile_right(c)),
+    P("MouthSadLeft", mouth_sad_left(c)),
+    P("MouthSadRight", mouth_sad_right(c)),
+
     // ---- 眼追（Vector2 参数被 VRCFT 展开成 X / Y 两个 float）----
     P("EyeX", (eye_x(c.frame.eyes.left, c) + eye_x(c.frame.eyes.right, c)) * 0.5f),
     P("EyeY", (eye_y(c.frame.eyes.left, c) + eye_y(c.frame.eyes.right, c)) * 0.5f),
@@ -195,8 +207,12 @@ constexpr ParamDef kComposite[] = {
 
 } // namespace
 
-std::span<const ParamDef> composite_params() noexcept {
+std::span<const ParamEntry> composite_params() noexcept {
     return {kComposite, sizeof(kComposite) / sizeof(kComposite[0])};
 }
+
+float simple_mouth_smile_left(const EvalContext& c) noexcept { return mouth_smile_left(c); }
+
+float simple_mouth_smile_right(const EvalContext& c) noexcept { return mouth_smile_right(c); }
 
 } // namespace fgb::params

@@ -1,6 +1,8 @@
 ﻿#include "base/clock.hpp"
 #include "base/log.hpp"
 #include "engine/engine.hpp"
+#include "params/avatar_config.hpp"
+#include "params/catalog.hpp"
 #include "sinks/vrchat_sink.hpp"
 #include "sources/vmc_source.hpp"
 #include "sources/vrcft_source.hpp"
@@ -42,6 +44,9 @@ void print_usage() {
                  "用法:\n"
                  "  fgb-cli run [选项]     启动桥接\n"
                  "  fgb-cli shapes         列出全部统一形状\n"
+                 "  fgb-cli params         查看参数地址解析结果（排查表情不动时先跑这个）\n"
+                 "         --list          列出最近修改的头像配置\n"
+                 "         --avatar-config <路径>\n"
                  "  fgb-cli version        显示版本\n"
                  "\n"
                  "run 选项:\n"
@@ -51,6 +56,10 @@ void print_usage() {
                  "  --module-dll <路径>     要加载的模块 DLL 路径\n"
                  "  --vrchat <host:port>    VRChat OSC 目标 (默认 127.0.0.1:9000)\n"
                  "  --eye-mode <模式>       parameters | native | both (默认 parameters)\n"
+                 "  --params <参数集>       v2 | v1 | both (默认 v2)\n"
+                 "  --param-prefix <前缀>   找不到头像配置时 v2 参数用的地址前缀\n"
+                 "                          (默认 FT/v2/，因为多数头像这么命名)\n"
+                 "  --avatar-config <路径>  指定头像参数表 JSON，不给则自动挑最新的\n"
                  "  --tick-hz <hz>          引擎 tick 频率 (默认 120)\n"
                  "  --duration <秒>         运行指定秒数后退出，0 为不限 (默认 0)\n"
                  "  --verbose               打开调试日志\n");
@@ -173,6 +182,27 @@ int cmd_run(int argc, char** argv) {
                 std::fprintf(stderr, "未知的 eye-mode\n");
                 return 2;
             }
+        } else if (arg == "--params") {
+            const auto v = next_value(arg);
+            if (v.empty() || !fgb::parse_params_mode(v, vrchat_cfg.params_mode)) {
+                std::fprintf(stderr, "未知的 params 模式\n");
+                return 2;
+            }
+        } else if (arg == "--param-prefix") {
+            const auto v = next_value(arg);
+            if (v.empty()) {
+                return 2;
+            }
+            vrchat_cfg.fallback_prefix = std::string{v};
+        } else if (arg == "--avatar-config") {
+            const auto v = next_value(arg);
+            if (v.empty()) {
+                return 2;
+            }
+            vrchat_cfg.avatar_config = std::string{v};
+            vrchat_cfg.discover_avatar = true;
+        } else if (arg == "--no-avatar-discovery") {
+            vrchat_cfg.discover_avatar = false;
         } else if (arg == "--tick-hz") {
             const auto v = next_value(arg);
             std::uint16_t hz = 0;
@@ -283,6 +313,92 @@ int cmd_shapes() {
     return 0;
 }
 
+// 参数地址诊断：把"头像声明了什么"和"我们准备发到哪里"摆在一起看。
+// 排查"表情不动"时这一步能省掉大半时间。
+int cmd_params(int argc, char** argv) {
+    std::string avatar_path;
+    std::string prefix = "FT/v2/";
+    fgb::ParamsMode mode = fgb::ParamsMode::v2;
+
+    for (int i = 2; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        const auto next = [&]() -> std::string_view {
+            return (i + 1 < argc) ? std::string_view{argv[++i]} : std::string_view{};
+        };
+        if (arg == "--avatar-config") {
+            avatar_path = std::string{next()};
+        } else if (arg == "--param-prefix") {
+            prefix = std::string{next()};
+        } else if (arg == "--params") {
+            fgb::parse_params_mode(next(), mode);
+        } else if (arg == "--list") {
+            const auto all = fgb::params::scan_avatars(fgb::params::default_osc_root(), 20);
+            std::printf("%s\n", ("最近修改的 " + std::to_string(all.size()) +
+                                 " 个头像配置：").c_str());
+            for (const auto& cfg : all) {
+                std::printf("  %-40s %-24s %zu\n", cfg.id.c_str(), cfg.name.c_str(),
+                            cfg.params.size());
+            }
+            return 0;
+        }
+    }
+
+    fgb::params::ParamRouter router;
+    if (avatar_path.empty()) {
+        const auto pick = fgb::params::pick_avatar(fgb::params::default_osc_root());
+        if (!pick.valid) {
+            std::printf("没找到头像参数表，使用兜底前缀 %s\n", prefix.c_str());
+            router.use_fallback(prefix);
+        } else {
+            std::printf("%s\n", ("自动选中「" + pick.config.name + "」(" + pick.config.id +
+                                 ")，" + std::to_string(pick.config.params.size()) +
+                                 " 个声明参数，其中 " + std::to_string(pick.v2_param_count) +
+                                 " 个 v2 参数")
+                                    .c_str());
+            router.bind(pick.config);
+        }
+    } else {
+        fgb::params::AvatarConfig cfg;
+        if (!fgb::params::load_avatar_file(avatar_path, cfg)) {
+            std::fprintf(stderr, "无法解析 %s\n", avatar_path.c_str());
+            return 1;
+        }
+        std::printf("%s\n", ("使用「" + cfg.name + "」(" + cfg.id + ")，" +
+                             std::to_string(cfg.params.size()) + " 个声明参数")
+                                .c_str());
+        router.bind(cfg);
+    }
+
+    std::printf("%s\n\n", ("匹配：" + std::to_string(router.matched()) + " / " +
+                            std::to_string(router.total()))
+                               .c_str());
+    std::size_t slot = 0;
+    std::size_t shown = 0;
+    const auto groups = fgb::params::groups();
+    for (std::size_t g = 0; g < groups.size(); ++g) {
+        const bool is_v1 = g >= 2;
+        if ((mode == fgb::ParamsMode::v2 && is_v1) || (mode == fgb::ParamsMode::v1 && !is_v1)) {
+            slot += groups[g].entries.size();
+            continue;
+        }
+        for (const auto& entry : groups[g].entries) {
+            const std::string& addr = router.address(slot++);
+            if (addr.empty()) {
+                continue;
+            }
+            if (shown < 40) {
+                std::printf("  %-28.*s -> %s\n", static_cast<int>(entry.name.size()),
+                            entry.name.data(), addr.c_str());
+                ++shown;
+            }
+        }
+    }
+    if (shown == 40) {
+        std::printf("  ...\n");
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -297,6 +413,9 @@ int main(int argc, char** argv) {
     }
     if (cmd == "shapes") {
         return cmd_shapes();
+    }
+    if (cmd == "params") {
+        return cmd_params(argc, argv);
     }
     if (cmd == "version" || cmd == "--version") {
         std::printf("FaceGaze Bridge " FGB_VERSION "\n");

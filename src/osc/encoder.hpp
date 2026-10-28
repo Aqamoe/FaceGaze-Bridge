@@ -26,6 +26,11 @@ public:
     // 便捷：一条消息携带 N 个 float（N <= 63）
     bool write_floats(std::string_view address, std::span<const float> values) noexcept;
 
+    // 便捷：bool 在 OSC 里没有参数体，只有类型标签 T / F
+    bool write_bool(std::string_view address, bool value) noexcept {
+        return begin_message(address, value ? ",T" : ",F") && end_message();
+    }
+
     std::span<const std::byte> data() const noexcept { return buffer_.first(size_); }
     std::size_t size() const noexcept { return size_; }
     bool empty() const noexcept { return size_ == 0; }

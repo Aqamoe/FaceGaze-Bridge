@@ -10,23 +10,23 @@ namespace {
 
 constexpr char kTag[] = "vrchat";
 
-constexpr char kParamPrefix[]         = "/avatar/parameters/FT/v2/";
-constexpr std::size_t kParamPrefixLen = sizeof(kParamPrefix) - 1;
-
 constexpr char kAddrNativePitchYaw[] = "/tracking/eye/LeftRightPitchYaw";
 constexpr char kAddrNativeClosed[]   = "/tracking/eye/EyesClosedAmount";
 
-// 一条 float 参数消息的经验长度：地址 + 对齐 + 类型标签 + 参数 + bundle 长度前缀
+// 一条参数消息的经验长度：地址 + 对齐 + 类型标签 + 参数 + bundle 长度前缀
 constexpr std::size_t kEstimatedMessageSize = 72;
 
-std::string_view make_address(std::string_view name, char (&buf)[96]) noexcept {
-    const std::size_t total = kParamPrefixLen + name.size();
-    if (name.empty() || total >= sizeof(buf)) {
-        return {};
+bool wants_group(ParamsMode mode, std::size_t group_index) noexcept {
+    const bool is_v1 = group_index >= 2; // 0=v2 基础, 1=v2 派生, 2=v1
+    switch (mode) {
+    case ParamsMode::v2:
+        return !is_v1;
+    case ParamsMode::v1:
+        return is_v1;
+    case ParamsMode::both:
+        return true;
     }
-    std::memcpy(buf, kParamPrefix, kParamPrefixLen);
-    std::memcpy(buf + kParamPrefixLen, name.data(), name.size());
-    return {buf, total};
+    return true;
 }
 
 } // namespace
@@ -59,11 +59,40 @@ bool parse_eye_output_mode(std::string_view text, EyeOutputMode& out) noexcept {
     return false;
 }
 
+const char* to_string(ParamsMode mode) noexcept {
+    switch (mode) {
+    case ParamsMode::v2:
+        return "v2";
+    case ParamsMode::v1:
+        return "v1";
+    case ParamsMode::both:
+        return "both";
+    }
+    return "v2";
+}
+
+bool parse_params_mode(std::string_view text, ParamsMode& out) noexcept {
+    if (text == "v2") {
+        out = ParamsMode::v2;
+        return true;
+    }
+    if (text == "v1" || text == "legacy") {
+        out = ParamsMode::v1;
+        return true;
+    }
+    if (text == "both") {
+        out = ParamsMode::both;
+        return true;
+    }
+    return false;
+}
+
 VrchatSink::VrchatSink(VrchatSinkConfig config) : config_(std::move(config)) { reset_dedup(); }
 
 void VrchatSink::reset_dedup() noexcept {
     last_values_.fill(0.0f);
     sent_.fill(0);
+    active_.fill(0);
     for (float& v : last_native_pitch_yaw_) {
         v = 0.0f;
     }
@@ -73,21 +102,60 @@ void VrchatSink::reset_dedup() noexcept {
     last_heartbeat_ns_  = 0;
 }
 
+void VrchatSink::resolve_addresses() {
+    if (!config_.discover_avatar && config_.avatar_config.empty()) {
+        router_.use_fallback(config_.fallback_prefix);
+        return;
+    }
+
+    // 1. 显式指定的配置文件优先
+    if (!config_.avatar_config.empty()) {
+        params::AvatarConfig cfg;
+        if (params::load_avatar_file(config_.avatar_config, cfg)) {
+            router_.bind(cfg);
+            return;
+        }
+        FGB_WARN(kTag, "无法解析指定的头像配置 %s，改用自动发现", config_.avatar_config.c_str());
+    }
+
+    // 2. 自动发现：在最近改动的若干配置里挑最像面捕头像的那份
+    const std::string root = params::default_osc_root();
+    const params::AvatarPick pick = params::pick_avatar(root);
+
+    if (pick.valid && pick.v2_param_count >= 8) {
+        router_.bind(pick.config);
+        return;
+    }
+
+    FGB_WARN(kTag, "没找到带面捕参数的头像配置（%s，最近 %zu 份里最多只有 %zu 个 v2 参数），"
+                   "回退到固定前缀 %s——如果表情不动，多半是这个前缀和头像里的参数名不一致",
+             root.c_str(), static_cast<std::size_t>(8), pick.v2_param_count,
+             config_.fallback_prefix.c_str());
+    router_.use_fallback(config_.fallback_prefix);
+}
+
 bool VrchatSink::start() {
     if (!socket_.open_sender()) {
         FGB_ERROR(kTag, "无法创建 UDP socket");
         return false;
     }
+    resolve_addresses();
     reset_dedup();
     started_ = true;
-    FGB_INFO(kTag, "输出到 %s:%u，眼追模式 %s", config_.host.c_str(),
-             static_cast<unsigned>(config_.port), to_string(config_.eye_mode));
+    FGB_INFO(kTag, "输出到 %s:%u，眼追模式 %s，参数集 %s", config_.host.c_str(),
+             static_cast<unsigned>(config_.port), to_string(config_.eye_mode),
+             to_string(config_.params_mode));
     return true;
 }
 
 void VrchatSink::stop() noexcept {
     started_ = false;
     socket_.close();
+}
+
+void VrchatSink::reload_avatar() {
+    resolve_addresses();
+    reset_dedup();
 }
 
 void VrchatSink::flush(osc::BundleWriter& writer) noexcept {
@@ -105,22 +173,22 @@ void VrchatSink::flush(osc::BundleWriter& writer) noexcept {
     writer.begin_bundle();
 }
 
-void VrchatSink::emit_one(osc::BundleWriter& writer, std::size_t slot, std::string_view name,
-                          float value, bool force) noexcept {
-    if (slot >= params::kMaxParamCount) {
+void VrchatSink::emit_one(osc::BundleWriter& writer, std::size_t slot, std::string_view address,
+                          params::ParamKind kind, float value, bool force) noexcept {
+    if (address.empty() || slot >= params::kMaxParamCount) {
+        ++stats_.suppressed;
         return;
     }
     if (!std::isfinite(value)) {
         return;
     }
-    if (!force && sent_[slot] != 0 && std::fabs(value - last_values_[slot]) < config_.shape_epsilon) {
-        ++stats_.suppressed;
-        return;
-    }
 
-    char addr_buf[96];
-    const std::string_view address = make_address(name, addr_buf);
-    if (address.empty()) {
+    const bool changed = kind == params::ParamKind::Bool
+                             ? (sent_[slot] == 0) || ((value >= 0.5f) != (last_values_[slot] >= 0.5f))
+                             : (sent_[slot] == 0) ||
+                                   std::fabs(value - last_values_[slot]) >= config_.shape_epsilon;
+    if (!force && !changed) {
+        ++stats_.suppressed;
         return;
     }
 
@@ -128,8 +196,13 @@ void VrchatSink::emit_one(osc::BundleWriter& writer, std::size_t slot, std::stri
         flush(writer);
     }
 
-    const float one[1] = {value};
-    if (writer.write_floats(address, one)) {
+    const bool ok = kind == params::ParamKind::Bool
+                        ? writer.write_bool(address, value >= 0.5f)
+                        : [&]() {
+                              const float one[1] = {value};
+                              return writer.write_floats(address, one);
+                          }();
+    if (ok) {
         last_values_[slot] = value;
         sent_[slot]        = 1;
     }
@@ -200,17 +273,21 @@ void VrchatSink::submit(const FaceFrame& frame, const GazeState& /*gaze*/, std::
         config_.eye_mode == EyeOutputMode::native || config_.eye_mode == EyeOutputMode::both;
 
     if (want_params) {
+        const params::EvalContext ctx{frame, config_.eye_full_scale_deg};
+        const auto groups = params::groups();
+
         std::size_t slot = 0;
+        for (std::size_t g = 0; g < groups.size(); ++g) {
+            const auto& group = groups[g];
+            const bool emit_group = wants_group(config_.params_mode, g);
 
-        // 1. 88 个基础肌肉形状，值直接来自协议层
-        for (std::size_t i = 0; i < kShapeCount; ++i, ++slot) {
-            emit_one(writer, slot, shape_name(static_cast<Shape>(i)), frame.shapes[i], heartbeat);
-        }
-
-        // 2. 眼追 / 简化 / 合成参数，按 VRCFT 的公式派生
-        params::EvalContext ctx{frame, config_.eye_full_scale_deg};
-        for (const auto& def : params::composite_params()) {
-            emit_one(writer, slot++, def.name, def.eval(ctx), heartbeat);
+            for (const params::ParamEntry& entry : group.entries) {
+                if (emit_group) {
+                    const std::string& address = router_.address(slot);
+                    emit_one(writer, slot, address, entry.kind, entry.eval(ctx), heartbeat);
+                }
+                ++slot;
+            }
         }
     }
 
