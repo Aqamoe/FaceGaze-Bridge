@@ -36,6 +36,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 录制回放（M4 之一） | ✅ 录原始包 + 回放 + 参数导出 CSV（[ADR-0007](docs/adr/0007-capture-replay.md)） |
 | 校准与滤波（M3 剩余） | ✅ 逐形状校准（从两份抓包推导）+ One Euro 滤波（[ADR-0008](docs/adr/0008-calibration-and-filtering.md)） |
 | 界面（WebView2） | ✅ `fgb-ui` 原生窗口 + WebSocket IPC：状态 / 模块 / 参数热力图 / 输出 / 日志 / 设置（[ADR-0010](docs/adr/0010-webview2-ui-and-websocket-ipc.md)） |
+| 界面本地化 | ✅ 简中 / 英 / 日三语，界面内切换并记住选择（[ADR-0012](docs/adr/0012-ui-localization.md)） |
 | 模块管理 | ✅ 扫描 VRCFT `CustomLibs` + FGB `vrcft-libs`、解析 `module.json`、选择启动模块并持久化（[ADR-0011](docs/adr/0011-module-management.md)） |
 
 **已经能跑的**（M1 + M2 核心）：
@@ -53,6 +54,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
   滤波滑杆/重新读取头像/日志实时回传
 - 模块管理：自动发现 VRCFT 的 `CustomLibs` 与 FGB 的 `vrcft-libs`，解析 `module.json`，
   界面里选启动模块（写 `%APPDATA%\FaceGazeBridge\fgb.ini`），故障时显示模块自己报的原因
+- 界面三语（简中 / 英 / 日）+ 双击即用的发布包（`cmake --install` 到 `dist/`）
 - 87 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面探针
   （`tools/probe_ipc.py`、`tools/probe_ui.py`）
 

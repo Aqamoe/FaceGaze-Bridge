@@ -220,6 +220,24 @@ def main():
         "})()"))
     print(f"模块页：{modules}")
 
+    # 三语切换：文案表是三份，切换后必须整页重画（标题、pill、卡片都在 JS 里生成）
+    langs = json.loads(cdp.evaluate(
+        "(() => {"
+        "  const snap = () => ({"
+        "    nav: [...document.querySelectorAll('.nav-item')].map(n => n.textContent.trim()),"
+        "    title: document.getElementById('page-title').textContent,"
+        "    stored: localStorage.getItem('fgb.lang')"
+        "  });"
+        "  const before = snap();"
+        "  set_lang('en');"
+        "  const en = snap();"
+        "  set_lang('ja');"
+        "  const ja = snap();"
+        "  set_lang('zh');"
+        "  return JSON.stringify({before, en, ja});"
+        "})()"))
+    print(f"语言：{langs}")
+
     logs = json.loads(cdp.evaluate(
         "(() => {"
         "  document.querySelector('.nav-item[data-page=\"logs\"]').click();"
@@ -245,6 +263,12 @@ def main():
         ok = False
     if modules.get("active") != "modules" or modules.get("cards") != modules.get("expected"):
         print("FAIL 模块页与 catalog 不一致（期望渲染的卡片数对不上）")
+        ok = False
+    if langs["en"]["nav"][0] != "Status" or langs["ja"]["nav"][0] != "状態":
+        print("FAIL 三语文案没生效（检查 ui/i18n.js 与 set_lang）")
+        ok = False
+    if langs["en"]["stored"] != "en" or langs["ja"]["stored"] != "ja":
+        print("FAIL 语言选择没写进 localStorage")
         ok = False
     if logs.get("active") != "logs" or logs.get("lines", 0) == 0:
         print("FAIL 日志页没有内容（新连接应补发最近日志）")

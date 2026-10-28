@@ -14,6 +14,93 @@
 
 const $ = (id) => document.getElementById(id);
 
+// ---------- 本地化 ----------
+//
+// 文案在 ui/i18n.js，这里只做查表与"缺键回落到中文"。
+// 语言记在 localStorage：WebView2 的用户数据目录会保留，所以选过一次就一直生效。
+const DICTS = window.FGB_I18N || { zh: {} };
+const LANGS = window.FGB_LANGS || [{ code: "zh", label: "简体中文" }];
+const FALLBACK_LANG = "zh";
+
+let lang = initial_lang();
+
+function initial_lang() {
+  const stored = localStorage.getItem("fgb.lang");
+  if (stored && DICTS[stored]) {
+    return stored;
+  }
+  const nav = (navigator.language || "zh").toLowerCase();
+  let guess = "en";
+  if (nav.startsWith("zh")) {
+    guess = "zh";
+  } else if (nav.startsWith("ja")) {
+    guess = "ja";
+  }
+  return DICTS[guess] ? guess : FALLBACK_LANG;
+}
+
+function t(key, vars) {
+  let text = (DICTS[lang] || {})[key];
+  if (text === undefined) {
+    if (lang !== FALLBACK_LANG) {
+      console.warn(`[i18n] ${lang} 缺少文案: ${key}`);
+    }
+    text = (DICTS[FALLBACK_LANG] || {})[key];
+  }
+  if (text === undefined) {
+    return key;
+  }
+  if (vars) {
+    for (const [name, value] of Object.entries(vars)) {
+      text = text.split(`{${name}}`).join(String(value));
+    }
+  }
+  return text;
+}
+
+function locale_tag() {
+  return lang === "zh" ? "zh-CN" : lang === "ja" ? "ja-JP" : "en-US";
+}
+
+// 静态文案走 data-i18n；动态文案在各 render_* 里用 t()。
+function apply_l10n() {
+  document.documentElement.lang = lang;
+  document.querySelectorAll("[data-i18n]").forEach((node) => {
+    node.textContent = t(node.dataset.i18n);
+  });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((node) => {
+    node.placeholder = t(node.dataset.i18nPlaceholder);
+  });
+  $("brand-version").textContent = state.version ? `v${state.version}` : t("app.subtitle");
+
+  // 页面标题、pill、模块卡片等都是动态生成的，切语言后要重画一遍
+  update_page_header();
+  if (state.status) {
+    render_status(state.status);
+  }
+  if (state.view === "modules") {
+    render_modules();
+  }
+  if (state.view === "logs") {
+    rerender_logs();
+  }
+  set_link(state.connected ? true : null, state.connected ? t("link.connected") : t("link.connecting"));
+}
+
+function set_lang(code) {
+  if (!DICTS[code]) {
+    return;
+  }
+  lang = code;
+  localStorage.setItem("fgb.lang", code);
+  apply_l10n();
+  // 下拉框自己也要跟上，否则从代码/探针切换后界面会显示"选的是中文"
+  const select = $("lang");
+  if (select) {
+    select.value = code;
+  }
+}
+
 const state = {
   connected: false,
   version: "",
@@ -32,13 +119,14 @@ const state = {
 };
 
 const PAGE_META = {
-  status: ["运行状态", "实时指标来自引擎主循环，10 Hz 推送"],
-  modules: ["模块", "扫描 VRCFT 的模块目录，选择启动时加载哪个"],
-  params: ["参数热力图", "88 个形状 + 派生参数，颜色深浅即当前值"],
-  output: ["输出与链路", "OSC 目标、眼追模式与当前头像绑定情况"],
-  logs: ["日志", "引擎与模块日志经 IPC 实时回传"],
-  settings: ["设置", "改动立即生效，不需要重启引擎"],
+  status: ["page.status.title", "page.status.sub"],
+  modules: ["page.modules.title", "page.modules.sub"],
+  params: ["page.params.title", "page.params.sub"],
+  output: ["page.output.title", "page.output.sub"],
+  logs: ["page.logs.title", "page.logs.sub"],
+  settings: ["page.settings.title", "page.settings.sub"],
 };
+
 
 // ---------- WebSocket ----------
 
@@ -62,18 +150,18 @@ function connect() {
   socket.onopen = () => {
     state.connected = true;
     state.retry = 0;
-    set_link(true, "已连接引擎");
+    set_link(true, t("link.connected"));
   };
 
   socket.onclose = () => {
     state.connected = false;
-    set_link(false, "引擎已断开");
+    set_link(false, t("link.disconnected"));
     schedule_reconnect();
   };
 
   socket.onerror = () => {
     if (!state.connected) {
-      set_link(null, "连接失败");
+      set_link(null, t("link.failed"));
     }
   };
 
@@ -115,7 +203,7 @@ function handle(message) {
   switch (message.type) {
     case "hello":
       state.version = message.version || "";
-      $("brand-version").textContent = state.version ? `v${state.version}` : "控制面板";
+      $("brand-version").textContent = state.version ? `v${state.version}` : t("app.subtitle");
       break;
     case "catalog":
       build_catalog(message.names || [], message.sent || []);
@@ -137,7 +225,7 @@ function handle(message) {
       break;
     case "ack":
       if (message.command === "reload_avatar" && message.ok) {
-        push_log({ level: "info", tag: "ui", message: "已重新读取头像参数表" });
+        push_log({ level: "info", tag: "ui", message: t("log.avatar_reloaded") });
       }
       break;
     default:
@@ -155,23 +243,27 @@ function render_status(status) {
   $("m-late").textContent = fmt_int(status.late_ticks);
   $("m-messages").textContent = fmt_int(status.messages);
   $("m-bytes").textContent = ((status.bytes || 0) / 1024).toFixed(1);
-  $("m-source").textContent = status.source_ok ? `${status.source} 运行中` : `${status.source} 无数据`;
+  $("m-source").textContent = t(status.source_ok ? "status.fps.hint.running" : "status.fps.hint.idle", {
+    source: status.source || "—",
+  });
 
-  $("pill-source").textContent = status.source ? `输入 · ${status.source}` : "输入 · —";
+  $("pill-source").textContent = status.source ? `${t("pill.input")} · ${status.source}` : `${t("pill.input")} · —`;
   $("pill-source").className = "pill" + (status.source_ok ? " accent" : "");
-  $("pill-eye").textContent = `眼追 · ${status.eye_mode || "—"}`;
+  $("pill-eye").textContent = `${t("pill.eye")} · ${status.eye_mode || "—"}`;
 
-  $("a-name").textContent = status.avatar_name || "未发现头像配置";
+  $("a-name").textContent = status.avatar_name || t("status.avatar.missing");
   $("a-id").textContent = (status.avatar_id || "—").slice(0, 24);
-  $("a-bound").textContent = status.bound_to_avatar ? "头像参数表" : "兜底前缀";
-  $("a-params").textContent = `${status.param_count || 0} / ${status.matched || 0} 条`;
+  $("a-bound").textContent = status.bound_to_avatar
+    ? t("status.avatar.bound.avatar")
+    : t("status.avatar.bound.prefix");
+  $("a-params").textContent = `${status.param_count || 0} / ${status.matched || 0}`;
   $("a-targets").textContent = status.target_count || 0;
   $("a-binary").textContent = status.binary_count || 0;
 
   $("o-mode").textContent = status.params_mode || "—";
   $("o-eye").textContent = status.eye_mode || "—";
   $("o-targets").textContent = status.target_count || 0;
-  $("o-matched").textContent = `${status.matched || 0} 条绑定`;
+  $("o-matched").textContent = `${status.matched || 0}${t("output.matched.suffix")}`;
   $("o-binary").textContent = status.binary_count || 0;
   $("c-source").textContent = `${status.source || "—"} · ${(status.fps || 0).toFixed(1)} fps`;
   $("s-clients").textContent = status.clients || 0;
@@ -299,21 +391,22 @@ function apply_param_filter() {
     }
   });
 
-  $("param-count").textContent = `${visible} / ${state.cells.length} 个参数`;
+  $("param-count").textContent = t("params.count", { visible, total: state.cells.length });
   $("param-empty").hidden = visible !== 0;
 }
 
 // ---------- 渲染：模块 ----------
 
-const MODULE_STATES = {
-  active: ["运行中", "ok"],
-  starting: ["初始化中", "warn"],
-  error: ["故障", "err"],
-  stopped: ["已停止", "err"],
-  broken: ["缺少 DLL", "err"],
-  installed: ["已安装", ""],
-  none: ["未加载", ""],
-  external: ["外部指定", ""],
+// 状态 → (文案 key, chip 样式)。文案在 i18n.js 的 state.* 下。
+const MODULE_STATE_STYLES = {
+  active: "ok",
+  starting: "warn",
+  error: "err",
+  stopped: "err",
+  broken: "err",
+  installed: "",
+  none: "",
+  external: "",
 };
 
 function el(tag, className, text) {
@@ -328,8 +421,8 @@ function el(tag, className, text) {
 }
 
 function format_state(key) {
-  const [label, cls] = MODULE_STATES[key] || MODULE_STATES.installed;
-  return { label, cls };
+  const style = MODULE_STATE_STYLES[key] !== undefined ? MODULE_STATE_STYLES[key] : "";
+  return { label: t(`state.${key}`), cls: style };
 }
 
 function render_modules() {
@@ -338,13 +431,13 @@ function render_modules() {
   const list = $("module-list");
   list.textContent = "";
 
-  $("mod-config").textContent = (data && data.config) || "未持久化";
+  $("mod-config").textContent = (data && data.config) || t("modules.unpersisted");
   $("mod-config").title = (data && data.config) || "";
 
   if (!items.length) {
     const empty = el("div", "empty");
-    empty.append(el("div", "", "没有发现模块"));
-    empty.append(el("div", "hint", "把 VRCFT 的模块放进 %APPDATA%\\VRCFaceTracking\\CustomLibs，或放一份到 exe 旁边的 vrcft-libs"));
+    empty.append(el("div", "", t("modules.empty")));
+    empty.append(el("div", "hint", t("modules.empty.hint")));
     if (data && data.roots) {
       for (const root of data.roots) {
         empty.append(el("div", "module-meta", `[${root.origin}] ${root.path}`));
@@ -388,8 +481,8 @@ function module_card(item, data) {
   }
 
   const meta = el("div", "module-meta");
-  meta.append(el("span", "", `id  ${item.id}`));
-  meta.append(el("span", "", `dll ${item.dll || "（未找到）"}`));
+  meta.append(el("span", "", `${t("modules.id")}  ${item.id}`));
+  meta.append(el("span", "", `${t("modules.dll")} ${item.dll || t("modules.none_found")}`));
   card.append(meta);
 
   const error = el("div", "module-error");
@@ -399,12 +492,11 @@ function module_card(item, data) {
 
   const actions = el("div", "module-actions");
   if (item.active) {
-    const note = el("span", "muted", "当前引擎加载的就是它；切换需重启引擎");
-    actions.append(note);
+    actions.append(el("span", "muted", t("modules.current")));
   } else if (item.broken) {
-    actions.append(el("span", "muted", "目录里没有可加载的 DLL，先修好模块再选"));
+    actions.append(el("span", "muted", t("modules.broken.hint")));
   } else {
-    const button = el("button", "btn", "设为启动模块");
+    const button = el("button", "btn", t("modules.set"));
     button.addEventListener("click", () => send({ type: "set_module", id: item.id }));
     actions.append(button);
   }
@@ -464,9 +556,10 @@ function append_log_line(entry, time) {
   const line = document.createElement("div");
   line.className = `log-line log-level-${entry.level || "info"}`;
 
-  const t = document.createElement("span");
-  t.className = "t";
-  t.textContent = time.toLocaleTimeString("zh-CN", { hour12: false });
+  // 不能叫 t：会把全局的翻译函数 t() 遮住，后面所有文案都变成 "t is not a function"
+  const time_span = document.createElement("span");
+  time_span.className = "t";
+  time_span.textContent = time.toLocaleTimeString(locale_tag(), { hour12: false });
   const lv = document.createElement("span");
   lv.className = "lv";
   lv.textContent = (entry.level || "info").toUpperCase();
@@ -476,7 +569,7 @@ function append_log_line(entry, time) {
   const msg = document.createElement("span");
   msg.textContent = entry.message || "";
 
-  line.append(t, lv, tg, msg);
+  line.append(time_span, lv, tg, msg);
   box.append(line);
 
   while (box.childElementCount > 600) {
@@ -499,6 +592,12 @@ function rerender_logs() {
 
 // ---------- 交互 ----------
 
+function update_page_header() {
+  const [title_key, subtitle_key] = PAGE_META[state.view] || ["", ""];
+  $("page-title").textContent = title_key ? t(title_key) : "";
+  $("page-subtitle").textContent = subtitle_key ? t(subtitle_key) : "";
+}
+
 function switch_page(page) {
   state.view = page;
   document.querySelectorAll(".nav-item").forEach((item) => {
@@ -507,9 +606,7 @@ function switch_page(page) {
   document.querySelectorAll(".page").forEach((item) => {
     item.classList.toggle("active", item.dataset.page === page);
   });
-  const [title, subtitle] = PAGE_META[page] || ["", ""];
-  $("page-title").textContent = title;
-  $("page-subtitle").textContent = subtitle;
+  update_page_header();
 
   if (page === "logs") {
     rerender_logs();
@@ -572,9 +669,22 @@ function wire() {
   });
 
   $("s-quit").addEventListener("click", () => {
-    if (window.confirm("停止引擎？追踪输出会立即中断。")) {
+    if (window.confirm(t("confirm.quit"))) {
       send({ type: "quit" });
     }
+  });
+
+  // 语言选择器：选项来自 i18n.js 的 FGB_LANGS，选完立刻整页重画
+  const lang_select = $("lang");
+  for (const item of LANGS) {
+    const option = document.createElement("option");
+    option.value = item.code;
+    option.textContent = item.label;
+    lang_select.append(option);
+  }
+  lang_select.value = lang;
+  lang_select.addEventListener("change", () => {
+    set_lang(lang_select.value);
   });
 
   window.addEventListener("beforeunload", () => {
@@ -585,9 +695,9 @@ function wire() {
 }
 
 function fmt_int(value) {
-  return (value || 0).toLocaleString("en-US");
+  return (value || 0).toLocaleString(locale_tag());
 }
 
-set_link(null, "连接中…");
+apply_l10n();
 wire();
 connect();

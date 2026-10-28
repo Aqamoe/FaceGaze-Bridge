@@ -13,17 +13,17 @@
       <div class="brand-mark">FG</div>
       <div class="brand-text">
         <strong>FaceGaze Bridge</strong>
-        <span id="brand-version">控制面板</span>
+        <span id="brand-version" data-i18n="app.subtitle">控制面板</span>
       </div>
     </div>
 
     <nav class="nav">
-      <button class="nav-item active" data-page="status"><span class="dot"></span>状态</button>
-      <button class="nav-item" data-page="modules"><span class="dot"></span>模块</button>
-      <button class="nav-item" data-page="params"><span class="dot"></span>参数</button>
-      <button class="nav-item" data-page="output"><span class="dot"></span>输出</button>
-      <button class="nav-item" data-page="logs"><span class="dot"></span>日志</button>
-      <button class="nav-item" data-page="settings"><span class="dot"></span>设置</button>
+      <button class="nav-item active" data-page="status"><span class="dot"></span><span data-i18n="nav.status">状态</span></button>
+      <button class="nav-item" data-page="modules"><span class="dot"></span><span data-i18n="nav.modules">模块</span></button>
+      <button class="nav-item" data-page="params"><span class="dot"></span><span data-i18n="nav.params">参数</span></button>
+      <button class="nav-item" data-page="output"><span class="dot"></span><span data-i18n="nav.output">输出</span></button>
+      <button class="nav-item" data-page="logs"><span class="dot"></span><span data-i18n="nav.logs">日志</span></button>
+      <button class="nav-item" data-page="settings"><span class="dot"></span><span data-i18n="nav.settings">设置</span></button>
     </nav>
 
     <div class="sidebar-foot">
@@ -51,42 +51,42 @@
       <section class="page active" data-page="status">
         <div class="cards">
           <article class="card">
-            <h2>输入帧率</h2>
+            <h2 data-i18n="status.fps">输入帧率</h2>
             <div class="metric"><b id="m-fps">0</b><span>fps</span></div>
             <div class="hint" id="m-source">—</div>
           </article>
           <article class="card">
-            <h2>累计帧</h2>
+            <h2 data-i18n="status.frames">累计帧</h2>
             <div class="metric"><b id="m-frames">0</b></div>
-            <div class="hint">进入引擎的原始帧</div>
+            <div class="hint" data-i18n="status.frames.hint">进入引擎的原始帧</div>
           </article>
           <article class="card">
-            <h2>引擎 tick</h2>
+            <h2 data-i18n="status.ticks">引擎 tick</h2>
             <div class="metric"><b id="m-ticks">0</b></div>
-            <div class="hint"><span id="m-late">0</span> 次迟到</div>
+            <div class="hint"><span id="m-late">0</span> <span data-i18n="status.ticks.late">次迟到</span></div>
           </article>
           <article class="card">
-            <h2>OSC 输出</h2>
-            <div class="metric"><b id="m-messages">0</b><span>条</span></div>
+            <h2 data-i18n="status.osc">OSC 输出</h2>
+            <div class="metric"><b id="m-messages">0</b><span data-i18n="status.unit.frames">条</span></div>
             <div class="hint"><span id="m-bytes">0</span> KB</div>
           </article>
         </div>
 
         <div class="grid-2">
           <article class="card">
-            <h2>当前头像</h2>
-            <div class="kv"><span>名称</span><b id="a-name">—</b></div>
-            <div class="kv"><span>ID</span><b id="a-id" class="mono">—</b></div>
-            <div class="kv"><span>绑定方式</span><b id="a-bound">—</b></div>
-            <div class="kv"><span>命中参数</span><b id="a-params">—</b></div>
-            <div class="kv"><span>OSC 目标</span><b id="a-targets">—</b></div>
-            <div class="kv"><span>二进制参数</span><b id="a-binary">—</b></div>
+            <h2 data-i18n="status.avatar.title">当前头像</h2>
+            <div class="kv"><span data-i18n="status.avatar.name">名称</span><b id="a-name">—</b></div>
+            <div class="kv"><span data-i18n="status.avatar.id">ID</span><b id="a-id" class="mono">—</b></div>
+            <div class="kv"><span data-i18n="status.avatar.bound">绑定方式</span><b id="a-bound">—</b></div>
+            <div class="kv"><span data-i18n="status.avatar.params">命中参数</span><b id="a-params">—</b></div>
+            <div class="kv"><span data-i18n="status.avatar.targets">OSC 目标</span><b id="a-targets">—</b></div>
+            <div class="kv"><span data-i18n="status.avatar.binary">二进制参数</span><b id="a-binary">—</b></div>
           </article>
 
           <article class="card">
-            <h2>热力图概览</h2>
+            <h2 data-i18n="status.heat.title">热力图概览</h2>
             <div class="mini-heat" id="mini-heat"></div>
-            <div class="hint">最近一帧参数值，进入「参数」页看完整列表</div>
+            <div class="hint" data-i18n="status.heat.hint">最近一帧参数值，进入「参数」页看完整列表</div>
           </article>
         </div>
       </section>
@@ -94,50 +94,47 @@
       <!-- 模块 -->
       <section class="page" data-page="modules">
         <div class="toolbar">
-          <button class="btn" id="mod-rescan">重新扫描</button>
-          <span class="pill" id="mod-config-title">配置文件</span>
+          <button class="btn" id="mod-rescan" data-i18n="modules.rescan">重新扫描</button>
+          <span class="pill" data-i18n="modules.config">配置文件</span>
           <span class="muted mono" id="mod-config">—</span>
         </div>
         <div class="module-list" id="module-list"></div>
-        <p class="hint">
-          引擎一次只加载一个模块：点「设为启动模块」写进配置文件，<b>重启引擎后生效</b>。
-          眼追与表情分属两个模块的并发加载还在 M4 计划里。
-        </p>
+        <p class="hint" data-i18n="modules.note">引擎一次只加载一个模块：点「设为启动模块」写进配置文件，重启引擎后生效。眼追与表情分属两个模块的并发加载还在 M4 计划里。</p>
       </section>
 
       <!-- 参数 -->
       <section class="page" data-page="params">
         <div class="toolbar">
-          <input id="param-search" type="search" placeholder="搜索参数名，例如 Jaw / Eye">
-          <label class="switch"><input type="checkbox" id="param-only-sent" checked> 只看已发送</label>
+          <input id="param-search" type="search" data-i18n-placeholder="params.search" placeholder="搜索参数名，例如 Jaw / Eye">
+          <label class="switch"><input type="checkbox" id="param-only-sent" checked> <span data-i18n="params.only_sent">只看已发送</span></label>
           <span class="muted" id="param-count">—</span>
         </div>
         <div class="heatmap" id="heatmap"></div>
-        <div class="empty" id="param-empty" hidden>没有匹配的参数</div>
+        <div class="empty" id="param-empty" data-i18n="params.empty" hidden>没有匹配的参数</div>
       </section>
 
       <!-- 输出 -->
       <section class="page" data-page="output">
         <div class="grid-2">
           <article class="card">
-            <h2>输出目标</h2>
-            <div class="kv"><span>参数集</span><b id="o-mode">—</b></div>
-            <div class="kv"><span>眼追模式</span><b id="o-eye">—</b></div>
-            <div class="kv"><span>OSC 目标数</span><b id="o-targets">—</b></div>
-            <div class="kv"><span>绑定条数</span><b id="o-matched">—</b></div>
-            <div class="kv"><span>二进制参数</span><b id="o-binary">—</b></div>
-            <button class="btn" id="o-reload">重新读取头像参数表</button>
-            <p class="hint">换头像后如果表情不动，点这里重新解析地址，不用重启引擎。</p>
+            <h2 data-i18n="output.targets.title">输出目标</h2>
+            <div class="kv"><span data-i18n="output.mode">参数集</span><b id="o-mode">—</b></div>
+            <div class="kv"><span data-i18n="output.eye">眼追模式</span><b id="o-eye">—</b></div>
+            <div class="kv"><span data-i18n="output.target_count">OSC 目标数</span><b id="o-targets">—</b></div>
+            <div class="kv"><span data-i18n="output.matched">绑定条数</span><b id="o-matched">—</b></div>
+            <div class="kv"><span data-i18n="output.binary">二进制参数</span><b id="o-binary">—</b></div>
+            <button class="btn" id="o-reload" data-i18n="output.reload">重新读取头像参数表</button>
+            <p class="hint" data-i18n="output.reload.hint">换头像后如果表情不动，点这里重新解析地址，不用重启引擎。</p>
           </article>
           <article class="card">
-            <h2>链路</h2>
+            <h2 data-i18n="output.chain.title">链路</h2>
             <ol class="chain">
-              <li><b>输入</b><span id="c-source">—</span></li>
-              <li><b>处理</b><span>校准 → One Euro 滤波</span></li>
-              <li><b>派生</b><span>88 形状 → v2 / v1 参数</span></li>
-              <li><b>输出</b><span>OSC /avatar/parameters/*</span></li>
+              <li><b data-i18n="output.chain.input">输入</b><span id="c-source">—</span></li>
+              <li><b data-i18n="output.chain.process">处理</b><span data-i18n="output.chain.process.desc">校准 → One Euro 滤波</span></li>
+              <li><b data-i18n="output.chain.derive">派生</b><span data-i18n="output.chain.derive.desc">88 形状 → v2 / v1 参数</span></li>
+              <li><b data-i18n="output.chain.out">输出</b><span>OSC /avatar/parameters/*</span></li>
             </ol>
-            <p class="hint">引擎与界面是两个进程：关掉界面不影响追踪数据继续输出。</p>
+            <p class="hint" data-i18n="output.chain.note">引擎与界面是两个进程：关掉界面不影响追踪数据继续输出。</p>
           </article>
         </div>
       </section>
@@ -145,14 +142,14 @@
       <!-- 日志 -->
       <section class="page" data-page="logs">
         <div class="toolbar">
-          <label class="switch"><input type="checkbox" id="log-follow" checked> 自动滚动</label>
+          <label class="switch"><input type="checkbox" id="log-follow" checked> <span data-i18n="logs.follow">自动滚动</span></label>
           <select id="log-level">
-            <option value="trace">全部（含 trace）</option>
-            <option value="info" selected>info 及以上</option>
-            <option value="warn">warn 及以上</option>
-            <option value="error">只看 error</option>
+            <option value="trace" data-i18n="logs.level.trace">全部（含 trace）</option>
+            <option value="info" selected data-i18n="logs.level.info">info 及以上</option>
+            <option value="warn" data-i18n="logs.level.warn">warn 及以上</option>
+            <option value="error" data-i18n="logs.level.error">只看 error</option>
           </select>
-          <button class="btn ghost" id="log-clear">清空</button>
+          <button class="btn ghost" id="log-clear" data-i18n="logs.clear">清空</button>
         </div>
         <div class="logs" id="logs"></div>
       </section>
@@ -161,8 +158,8 @@
       <section class="page" data-page="settings">
         <div class="grid-2">
           <article class="card">
-            <h2>One Euro 滤波</h2>
-            <label class="switch"><input type="checkbox" id="f-enabled"> 启用滤波</label>
+            <h2 data-i18n="settings.filter.title">One Euro 滤波</h2>
+            <label class="switch"><input type="checkbox" id="f-enabled"> <span data-i18n="settings.filter.enable">启用滤波</span></label>
             <div class="slider-row">
               <span>minCutoff</span>
               <input type="range" id="f-cutoff" min="0.1" max="8" step="0.1">
@@ -173,13 +170,14 @@
               <input type="range" id="f-beta" min="0" max="3" step="0.05">
               <b id="f-beta-v">—</b>
             </div>
-            <p class="hint">调大 minCutoff 更跟手，调小更稳；beta 控制快速动作时的补偿。改动立即生效。</p>
+            <p class="hint" data-i18n="settings.filter.hint">调大 minCutoff 更跟手，调小更稳；beta 控制快速动作时的补偿。改动立即生效。</p>
           </article>
+
           <article class="card">
-            <h2>引擎</h2>
-            <div class="kv"><span>控制面</span><b class="mono" id="s-link">—</b></div>
-            <div class="kv"><span>界面连接数</span><b id="s-clients">—</b></div>
-            <div class="kv"><span>日志级别</span><b>
+            <h2 data-i18n="settings.engine.title">引擎</h2>
+            <div class="kv"><span data-i18n="settings.engine.control">控制面</span><b class="mono" id="s-link">—</b></div>
+            <div class="kv"><span data-i18n="settings.engine.clients">界面连接数</span><b id="s-clients">—</b></div>
+            <div class="kv"><span data-i18n="settings.engine.log_level">日志级别</span><b>
               <select id="s-level">
                 <option value="debug">debug</option>
                 <option value="info" selected>info</option>
@@ -187,14 +185,23 @@
                 <option value="error">error</option>
               </select>
             </b></div>
-            <button class="btn danger" id="s-quit">停止引擎</button>
-            <p class="hint">停止后追踪输出立即中断；重启用命令行 <code>fgb-cli run</code>。</p>
+            <button class="btn danger" id="s-quit" data-i18n="settings.engine.stop">停止引擎</button>
+            <p class="hint" data-i18n="settings.engine.stop.hint">停止后追踪输出立即中断；重启用命令行 fgb-cli run。</p>
+          </article>
+
+          <article class="card">
+            <h2 data-i18n="settings.lang.title">界面语言</h2>
+            <div class="kv"><span data-i18n="settings.lang.label">语言</span><b>
+              <select id="lang"></select>
+            </b></div>
+            <p class="hint" data-i18n="settings.lang.hint">只影响界面文案，引擎日志保持中文。选择会记在本机。</p>
           </article>
         </div>
       </section>
     </div>
   </main>
 </div>
+<script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
