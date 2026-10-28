@@ -1,0 +1,14 @@
+# 统一换行为 LF，检出时按平台转换
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.dll binary
+*.exe binary
+*.fgbcap binary
+
+*.sln text eol=crlf
+*.vcxproj text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf

@@ -1,0 +1,36 @@
+FaceGaze Bridge
+Copyright 2026 FaceGaze Bridge contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+---
+
+## Third-party notices
+
+### VRCFaceTracking
+The module compatibility layer of this software interoperates with, and may
+redistribute, components of VRCFaceTracking.
+
+    VRCFaceTracking
+    Copyright 2021-2026 benaclejames and contributors
+    Licensed under the Apache License, Version 2.0
+    https://github.com/benaclejames/VRCFaceTracking
+
+This software is an independent implementation. It is not affiliated with,
+endorsed by, or sponsored by the VRCFaceTracking project. "VRCFaceTracking"
+and "VRCFT" are used only in factual, descriptive statements of
+interoperability and are not used as trademarks of this product.
+
+### Unity Expressions parameter naming
+Parameter names follow the Unified Expressions v2 specification published by
+the VRCFaceTracking project, which is licensed under Apache-2.0.
+
+### OpenXR
+The OpenXR API layer component, when built, links against the OpenXR loader.
+
+    Copyright (c) 2017-2026 The Khronos Group Inc.
+    Licensed under the Apache License, Version 2.0
+
+---
+
+Additional notices will be appended as dependencies are introduced.

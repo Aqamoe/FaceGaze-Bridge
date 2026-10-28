@@ -1,0 +1,59 @@
+# ---- build output ----
+/build/
+/out/
+/install/
+/artifacts/
+CMakeUserPresets.json
+compile_commands.json
+
+# ---- IDE ----
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.sln.docstates
+*.VC.db
+*.VC.VC.opendb
+
+# ---- compiler / linker ----
+*.obj
+*.o
+*.pch
+*.pdb
+*.ilk
+*.exp
+*.iobj
+*.ipdb
+*.tlog
+*.lastbuildstate
+*.log
+
+# ---- dotnet ----
+bin/
+obj/
+*.nuget.props
+*.nuget.targets
+
+# ---- node / ui ----
+node_modules/
+ui/dist/
+.vite/
+
+# ---- runtime artifacts ----
+*.fgbcap
+diagnostic-*.zip
+/captures/
+/logs/
+
+# ---- 项目内部工作数据 ----
+.workbuddy/
+
+# ---- os ----
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---- keep ----
+!LICENSE
+!NOTICE
