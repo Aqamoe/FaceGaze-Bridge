@@ -4,6 +4,7 @@
 // 只支持 `[节]`、`键 = 值`、`#`/`;` 行注释——超出的语法一律当错误，不做猜测。
 #pragma once
 
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <string_view>
@@ -17,10 +18,13 @@ struct IniEntry {
 };
 
 // 逐行回调。返回 false 表示文件打不开。
+bool ini_load(const std::filesystem::path& path,
+              const std::function<void(const IniEntry&)>& on_entry);
 bool ini_load(const std::string& path, const std::function<void(const IniEntry&)>& on_entry);
 
 class IniWriter {
 public:
+    bool open(const std::filesystem::path& path);
     bool open(const std::string& path);
     void close();
     void section(std::string_view name);

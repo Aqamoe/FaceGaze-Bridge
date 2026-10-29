@@ -113,6 +113,90 @@ FGB_TEST(outputs_save_load_roundtrip) {
     FGB_CHECK(fs::exists(path.string() + ".bak"));
 }
 
+FGB_TEST(output_profiles_roundtrip_and_listing) {
+    TempDir temp;
+    const fs::path dir = temp.path / "profiles";
+    std::string error;
+
+    const config::OutputOptions high = sample();
+    FGB_CHECK(config::save_output_profile(dir, "VR 高帧率", high, error));
+    FGB_CHECK(error.empty());
+
+    config::OutputOptions desktop = sample();
+    desktop.ws_enabled   = false;
+    desktop.udp_enabled  = false;
+    desktop.shm_enabled  = false;
+    desktop.vmc_enabled  = false;
+    FGB_CHECK(config::save_output_profile(dir, "桌面", desktop, error));
+
+    std::vector<config::OutputProfile> profiles;
+    FGB_CHECK(config::list_output_profiles(dir, profiles, error));
+    FGB_CHECK(profiles.size() == 2);
+
+    bool found = false;
+    for (const config::OutputProfile& profile : profiles) {
+        if (profile.name != "VR 高帧率") {
+            continue;
+        }
+        found = true;
+        config::OutputOptions loaded;
+        std::string name;
+        FGB_CHECK(config::load_output_profile(profile.path, loaded, name, error));
+        FGB_CHECK(name == "VR 高帧率");
+        FGB_CHECK(loaded == high);
+    }
+    FGB_CHECK(found);
+
+    // 同名再保存 = 覆盖，不新增文件
+    desktop.ws_enabled = true;
+    desktop.ws_port    = 9333;
+    FGB_CHECK(config::save_output_profile(dir, "桌面", desktop, error));
+    FGB_CHECK(config::list_output_profiles(dir, profiles, error));
+    FGB_CHECK(profiles.size() == 2);
+
+    FGB_CHECK(config::delete_output_profile(dir, "桌面", error));
+    FGB_CHECK(config::list_output_profiles(dir, profiles, error));
+    FGB_CHECK(profiles.size() == 1);
+    FGB_CHECK(!config::delete_output_profile(dir, "不存在", error));
+    FGB_CHECK(!error.empty());
+}
+
+FGB_TEST(output_profiles_reject_bad_names_and_values) {
+    TempDir temp;
+    const fs::path dir = temp.path / "profiles";
+    std::string error;
+
+    for (const char* name : {"", " a", "a ", "a/b", "a\\b", "a:b", "a*b", "..", "."}) {
+        FGB_CHECK(!config::save_output_profile(dir, name, sample(), error));
+        FGB_CHECK(!error.empty());
+    }
+    FGB_CHECK(!config::save_output_profile(dir, std::string(80, 'x'), sample(), error));
+    FGB_CHECK(!config::save_output_profile(dir, "ok", config::OutputOptions{.eye_mode = "warp"},
+                                          error));
+
+    config::OutputOptions loaded;
+    std::string name;
+    FGB_CHECK(!config::load_output_profile(dir / "missing.ini", loaded, name, error));
+}
+
+FGB_TEST(output_profiles_skip_corrupt_files) {
+    TempDir temp;
+    const fs::path dir = temp.path / "profiles";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    {
+        std::ofstream out(dir / "broken.ini");
+        out << "[profile]\nname = 坏预设\n[ws]\nenabled = 1\nport = 0\n";
+    }
+
+    std::string error;
+    FGB_CHECK(config::save_output_profile(dir, "好的", sample(), error));
+    std::vector<config::OutputProfile> profiles;
+    FGB_CHECK(config::list_output_profiles(dir, profiles, error));
+    FGB_CHECK(profiles.size() == 1);
+    FGB_CHECK(profiles.front().name == "好的");
+}
+
 FGB_TEST(outputs_load_missing_or_invalid_falls_back) {
     TempDir temp;
     config::OutputOptions options;

@@ -21,6 +21,12 @@ std::string_view trim(std::string_view s) noexcept {
 } // namespace
 
 bool ini_load(const std::string& path, const std::function<void(const IniEntry&)>& on_entry) {
+    return ini_load(std::filesystem::path{path}, on_entry);
+}
+
+bool ini_load(const std::filesystem::path& path,
+              const std::function<void(const IniEntry&)>& on_entry) {
+    // 用 path 打开：MSVC 会走宽字符 API，中文目录/文件名不会按 ANSI 丢字
     std::ifstream in(path);
     if (!in) {
         return false;
@@ -53,13 +59,18 @@ bool ini_load(const std::string& path, const std::function<void(const IniEntry&)
 }
 
 bool IniWriter::open(const std::string& path) {
+    return open(std::filesystem::path{path});
+}
+
+bool IniWriter::open(const std::filesystem::path& path) {
     close();
 #ifdef _WIN32
-    if (fopen_s(&file_, path.c_str(), "wb") != 0) {
+    // _wfopen_s 才能正确处理非 ANSI 的路径
+    if (_wfopen_s(&file_, path.wstring().c_str(), L"wb") != 0) {
         file_ = nullptr;
     }
 #else
-    file_ = std::fopen(path.c_str(), "wb");
+    file_ = std::fopen(path.string().c_str(), "wb");
 #endif
     return file_ != nullptr;
 }

@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace fgb::config {
 
@@ -54,5 +55,37 @@ bool load_outputs(const std::filesystem::path& path, OutputOptions& out, std::st
 // 先写 .tmp，旧文件留 .bak，再原子替换。
 bool save_outputs(const std::filesystem::path& path, const OutputOptions& options,
                   std::string& error);
+
+// ---- 命名输出预设（roadmap 4.8）----
+//
+// 每个预设一个 ini，放在独立的目录里；文件内容与 outputs.ini 相同，外加
+// `[profile] name=`（文件名会被清洗，展示名以文件内为准）。
+// 单独放目录而不是往 outputs.ini 里塞多节：清单/删除/备份都简单，
+// 坏掉一个预设也不会影响当前正在用的那份。
+
+struct OutputProfile {
+    std::string name;
+    std::filesystem::path path;
+};
+
+std::filesystem::path default_profiles_dir();
+
+// Windows 上 path(std::string) 按 ANSI 代码页解释，中文预设名会抛 std::filesystem_error。
+// 凡是来自用户文本/UTF-8 文件的路径段都走这里。
+std::filesystem::path path_from_utf8(std::string_view text);
+
+// 名称要能当文件名，也要能显示：拒绝路径分隔符、控制字符、首尾空白、`.`/`..`
+bool validate_profile_name(std::string_view name, std::string& error);
+
+// 目录不存在时返回 true + 空列表（还没建过预设不是错误）
+bool list_output_profiles(const std::filesystem::path& dir, std::vector<OutputProfile>& out,
+                          std::string& error);
+bool load_output_profile(const std::filesystem::path& file, OutputOptions& out, std::string& name,
+                         std::string& error);
+// 同名覆盖；没有同名就新建。原子写入，不碰 outputs.ini。
+bool save_output_profile(const std::filesystem::path& dir, std::string_view name,
+                         const OutputOptions& options, std::string& error);
+bool delete_output_profile(const std::filesystem::path& dir, std::string_view name,
+                           std::string& error);
 
 } // namespace fgb::config
