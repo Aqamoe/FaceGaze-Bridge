@@ -266,6 +266,10 @@ function render_status(status) {
   $("o-targets").textContent = status.target_count || 0;
   $("o-matched").textContent = `${status.matched || 0}${t("output.matched.suffix")}`;
   $("o-binary").textContent = status.binary_count || 0;
+  const vmc_out = status.vmc_out || {};
+  $("o-vmc").textContent = vmc_out.enabled
+    ? `${vmc_out.target} · ${fmt_int(vmc_out.messages)}`
+    : t("output.vmc.off");
   $("c-source").textContent = `${status.source || "—"} · ${(status.fps || 0).toFixed(1)} fps`;
   $("s-clients").textContent = status.clients || 0;
 

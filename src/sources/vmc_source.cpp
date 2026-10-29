@@ -2,6 +2,7 @@
 
 #include "base/clock.hpp"
 #include "base/log.hpp"
+#include "vmc/vmc_map.hpp"
 
 #include <chrono>
 #include <cstring>
@@ -11,82 +12,6 @@ namespace {
 
 constexpr char kTag[]           = "vmc";
 constexpr SourceId kVmcSourceId = 1;
-
-struct BlendMapping {
-    const char* name; // ARKit / PerfectSync 常见拼写
-    Shape shape;
-    float scale; // 双向形状用 +1 / -1 两条
-};
-
-// ARKit 的 52 个 blendshape 与协议层 88 个肌肉形状不是一一对应：
-// 有的是单侧（mouthSmileLeft → MouthCornerPullLeft），有的是双侧统一
-// （browInnerUp、cheekPuff），所以要允许一个输入名映射到多个形状。
-// 组合层（v2/MouthSmileLeft = CornerPull + CornerSlant）的派生在 sinks 层做，
-// 这里只负责把输入拆到肌肉层。
-constexpr BlendMapping kMappings[] = {
-    {"browDownLeft", Shape::BrowLowererLeft, 1.0f},
-    {"browDownRight", Shape::BrowLowererRight, 1.0f},
-    {"browInnerUp", Shape::BrowInnerUpLeft, 1.0f},
-    {"browInnerUp", Shape::BrowInnerUpRight, 1.0f},
-    {"browOuterUpLeft", Shape::BrowOuterUpLeft, 1.0f},
-    {"browOuterUpRight", Shape::BrowOuterUpRight, 1.0f},
-    {"cheekPuff", Shape::CheekPuffLeft, 1.0f},
-    {"cheekPuff", Shape::CheekPuffRight, 1.0f},
-    {"cheekSquintLeft", Shape::CheekSquintLeft, 1.0f},
-    {"cheekSquintRight", Shape::CheekSquintRight, 1.0f},
-    {"eyeSquintLeft", Shape::EyeSquintLeft, 1.0f},
-    {"eyeSquintRight", Shape::EyeSquintRight, 1.0f},
-    {"eyeWideLeft", Shape::EyeWideLeft, 1.0f},
-    {"eyeWideRight", Shape::EyeWideRight, 1.0f},
-    {"jawForward", Shape::JawForward, 1.0f},
-    {"jawLeft", Shape::JawLeft, 1.0f},
-    {"jawRight", Shape::JawRight, 1.0f},
-    {"jawOpen", Shape::JawOpen, 1.0f},
-    {"mouthClose", Shape::MouthClosed, 1.0f},
-    {"mouthDimpleLeft", Shape::MouthDimpleLeft, 1.0f},
-    {"mouthDimpleRight", Shape::MouthDimpleRight, 1.0f},
-    {"mouthFrownLeft", Shape::MouthFrownLeft, 1.0f},
-    {"mouthFrownRight", Shape::MouthFrownRight, 1.0f},
-    {"mouthFunnel", Shape::LipFunnelUpperLeft, 1.0f},
-    {"mouthFunnel", Shape::LipFunnelUpperRight, 1.0f},
-    {"mouthFunnel", Shape::LipFunnelLowerLeft, 1.0f},
-    {"mouthFunnel", Shape::LipFunnelLowerRight, 1.0f},
-    {"mouthLeft", Shape::MouthUpperLeft, 1.0f},
-    {"mouthLeft", Shape::MouthLowerLeft, 1.0f},
-    {"mouthRight", Shape::MouthUpperRight, 1.0f},
-    {"mouthRight", Shape::MouthLowerRight, 1.0f},
-    {"mouthLowerDownLeft", Shape::MouthLowerDownLeft, 1.0f},
-    {"mouthLowerDownRight", Shape::MouthLowerDownRight, 1.0f},
-    {"mouthPressLeft", Shape::MouthPressLeft, 1.0f},
-    {"mouthPressRight", Shape::MouthPressRight, 1.0f},
-    {"mouthPucker", Shape::LipPuckerUpperLeft, 1.0f},
-    {"mouthPucker", Shape::LipPuckerUpperRight, 1.0f},
-    {"mouthPucker", Shape::LipPuckerLowerLeft, 1.0f},
-    {"mouthPucker", Shape::LipPuckerLowerRight, 1.0f},
-    {"mouthShrugLower", Shape::MouthRaiserLower, 1.0f},
-    {"mouthShrugUpper", Shape::MouthRaiserUpper, 1.0f},
-    {"mouthSmileLeft", Shape::MouthCornerPullLeft, 1.0f},
-    {"mouthSmileRight", Shape::MouthCornerPullRight, 1.0f},
-    {"mouthStretchLeft", Shape::MouthStretchLeft, 1.0f},
-    {"mouthStretchRight", Shape::MouthStretchRight, 1.0f},
-    {"mouthUpperUpLeft", Shape::MouthUpperUpLeft, 1.0f},
-    {"mouthUpperUpRight", Shape::MouthUpperUpRight, 1.0f},
-    {"noseSneerLeft", Shape::NoseSneerLeft, 1.0f},
-    {"noseSneerRight", Shape::NoseSneerRight, 1.0f},
-    {"tongueOut", Shape::TongueOut, 1.0f},
-};
-
-// 一个输入名可能映射到多个肌肉形状，所以不能"找到第一条就返回"。
-void apply_blend(FaceFrame& frame, std::string_view name, float value) noexcept {
-    for (const auto& entry : kMappings) {
-        if (name != entry.name) {
-            continue;
-        }
-        const std::size_t idx = index_of(entry.shape);
-        frame.shapes[idx] += value * entry.scale;
-        frame.shapeValid[idx] = 1;
-    }
-}
 
 } // namespace
 
@@ -205,7 +130,7 @@ void VmcSource::handle_blend_value(std::string_view name, float value) noexcept 
     }
 
     // 累加而非覆盖：一个输入名可映射到多个肌肉形状（browInnerUp 等双侧形状）
-    apply_blend(pending_, name, value);
+    vmc::apply_blend(pending_, name, value);
 }
 
 void VmcSource::handle_apply() noexcept {

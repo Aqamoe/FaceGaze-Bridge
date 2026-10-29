@@ -39,6 +39,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 界面本地化 | ✅ 简中 / 英 / 日三语，界面内切换并记住选择（[ADR-0012](docs/adr/0012-ui-localization.md)） |
 | 模块管理 | ✅ 扫描 VRCFT `CustomLibs` + FGB `vrcft-libs`、解析 `module.json`、选择启动模块并持久化（[ADR-0011](docs/adr/0011-module-management.md)） |
 | 多源合并（M4） | ✅ 表情 / 眼追 / 头姿三通道分别选提供者，可重复 `--source`（[ADR-0013](docs/adr/0013-source-merging.md)） |
+| 多输出（M4） | ✅ VRChat OSC + VMC 第二路（`--vmc-out`），可同时驱动 Unity 场景（[ADR-0014](docs/adr/0014-vmc-output-sink.md)）；共享内存 Sink 未做 |
 
 **已经能跑的**（M1 + M2 核心）：
 
@@ -57,8 +58,10 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
   界面里选启动模块（写 `%APPDATA%\FaceGazeBridge\fgb.ini`），故障时显示模块自己报的原因
 - 多源合并：多个输入可同时工作（如模块给眼追、VMC 给表情），
   按通道选提供者并有过期回退；状态页能看见每个源在喂哪一路
+- 多输出：VRChat OSC 与 VMC 同时输出（`--vmc-out 127.0.0.1:9100`），
+  同一张脸可以既驱动 VRChat 模型又驱动 Unity 场景
 - 界面三语（简中 / 英 / 日）+ 双击即用的发布包（`cmake --install` 到 `dist/`）
-- 97 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面探针
+- 100 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面/VMC 输出探针
   （`tools/probe_ipc.py`、`tools/probe_ui.py`）
 
 ```bash

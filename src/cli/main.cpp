@@ -7,6 +7,7 @@
 #include "params/avatar_config.hpp"
 #include "params/calibration.hpp"
 #include "params/catalog.hpp"
+#include "sinks/vmc_sink.hpp"
 #include "sinks/vrchat_sink.hpp"
 #include "capture/capture_file.hpp"
 #include "sources/replay_source.hpp"
@@ -86,6 +87,7 @@ void print_usage() {
                  "  --module-dll <路径>     直接指定模块 DLL（跳过模块发现）\n"
                  "  --module-id <id>        按 id 或名字选模块，可重复（见 fgb-cli modules）\n"
                  "  --vrchat <host:port>    VRChat OSC 目标 (默认 127.0.0.1:9000)\n"
+                 "  --vmc-out <host:port>   额外按 VMC 协议输出一份（如 127.0.0.1:39539）\n"
                  "  --eye-mode <模式>       parameters | native | both (默认 parameters)\n"
                  "  --params <参数集>       v2 | v1 | both (默认 v2)\n"
                  "  --param-prefix <前缀>   找不到头像配置时 v2 参数用的地址前缀\n"
@@ -235,6 +237,9 @@ int cmd_run(int argc, char** argv) {
     float filter_min_cutoff = 1.0f;
     float filter_beta       = 0.5f;
     fgb::VrchatSinkConfig vrchat_cfg;
+    fgb::VmcSinkConfig vmc_out_cfg;
+    bool vmc_out_enabled    = false;
+    fgb::VmcSink* vmc_out_raw = nullptr;
     // 可重复出现，顺序即合并优先级：排前面的通道优先
     std::vector<std::string> source_kinds;
     // --module-id 同样可重复，按 vrcft 出现的顺序配对（两个模块各喂一路时用）
@@ -336,6 +341,17 @@ int cmd_run(int argc, char** argv) {
             if (v.empty() || !parse_uint16(v, vmc_cfg.port)) {
                 return 2;
             }
+        } else if (arg == "--vmc-out") {
+            const auto v = next_value(arg);
+            std::string host;
+            std::uint16_t port = 0;
+            if (v.empty() || !parse_host_port(v, host, port)) {
+                std::fprintf(stderr, "--vmc-out 需要 host:port（例如 127.0.0.1:39539）\n");
+                return 2;
+            }
+            vmc_out_cfg.host = host;
+            vmc_out_cfg.port = port;
+            vmc_out_enabled  = true;
         } else if (arg == "--vrchat") {
             const auto v = next_value(arg);
             if (v.empty() || !parse_host_port(v, vrchat_cfg.host, vrchat_cfg.port)) {
@@ -552,6 +568,14 @@ int cmd_run(int argc, char** argv) {
     auto sink        = std::make_unique<fgb::VrchatSink>(vrchat_cfg);
     fgb::VrchatSink* sink_raw = sink.get();
     engine.add_sink(std::move(sink));
+
+    // 第二路输出：把同一帧按 VMC 协议发出去，给 VSeeFace / Unity 场景之类的消费者。
+    // 默认不开——多播一路 UDP 是用户显式要求的行为，不该悄悄发生。
+    if (vmc_out_enabled) {
+        auto vmc_sink      = std::make_unique<fgb::VmcSink>(vmc_out_cfg);
+        vmc_out_raw        = vmc_sink.get();
+        engine.add_sink(std::move(vmc_sink));
+    }
     fgb::clock::raise_timer_resolution();
 
     // 控制面先于引擎启动：这样"引擎启动 / 头像绑定 / 模块握手"这几行日志也能进 UI 的日志页。
@@ -566,6 +590,7 @@ int cmd_run(int argc, char** argv) {
         fgb::web::IpcContext ctx;
         ctx.engine      = &engine;
         ctx.sink        = sink_raw;
+        ctx.vmc_out     = vmc_out_raw;
         ctx.filter      = filter_raw;
         ctx.source_name = join_names(source_names);
         ctx.params_mode = fgb::to_string(vrchat_cfg.params_mode);

@@ -60,15 +60,22 @@ add_library(fgb_process STATIC
     core/process/one_euro.cpp)
 target_link_libraries(fgb_process PUBLIC fgb_core)
 
+# VMC 协议的共享部分（blendshape 名字表）：输入和输出都用它，
+# 各自维护一份就会出现"能收不能发"。
+add_library(fgb_vmc STATIC
+    vmc/vmc_map.cpp)
+target_link_libraries(fgb_vmc PUBLIC fgb_core)
+
 add_library(fgb_engine STATIC
     engine/source_merger.cpp
     sinks/vrchat_sink.cpp
+    sinks/vmc_sink.cpp
     sources/vmc_source.cpp
     sources/vrcft_source.cpp
     sources/replay_source.cpp
     engine/engine.cpp)
 target_link_libraries(fgb_engine PUBLIC fgb_core fgb_osc fgb_net fgb_vrcft fgb_params fgb_capture
-                                      fgb_config fgb_process)
+                                      fgb_config fgb_process fgb_vmc)
 
 # 控制面：WebSocket IPC + 本地静态页面
 add_library(fgb_web STATIC

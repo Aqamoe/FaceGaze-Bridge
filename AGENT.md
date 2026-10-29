@@ -39,6 +39,8 @@
   静态文案用 `data-i18n` 属性。引擎日志保持中文，不要翻译。
 - **新增输入源必须声明 `frame.channels`**（`channel::kExpression / kEyes / kHead`）。
   合并层只认声明，不猜值——`FaceFrame::neutral()` 里眼睛是 valid 的，靠值猜会让源被误判成眼追来源。
+- **VMC 的 blendshape 名字表只有一份**（`src/vmc/vmc_map`）。输入和输出都 include 它，
+  不要各写一份——漂移的症状是"能收不能发"，且看起来像对端的问题。
 
 ## 3. 构建 / 测试 / 发布
 
@@ -55,7 +57,7 @@
 cmake -S . -B build/test -G "Visual Studio 16 2019" -A x64
 cmake --build build/test --config Debug --parallel
 
-# 单测（当前 97 个用例）
+# 单测（当前 100 个用例）
 ./build/test/bin/Debug/fgb-tests.exe
 # 或
 ctest --test-dir build/test -C Debug --output-on-failure
@@ -97,6 +99,10 @@ python tools/probe_ipc.py 8787
 # 界面：通过 WebView2 远程调试端口跑 JS，验证页面真的渲染了数据
 fgb-ui.exe --port 8787 --debug-port 9222
 python tools/probe_ui.py 9222 8787
+
+# VMC 第二路输出：按接收端视角收包，检查 Blend/Val + Apply + 头姿
+fgb-cli.exe run --source replay --replay <抓包> --replay-loop --vmc-out 127.0.0.1:9100
+python tools/probe_vmc_out.py 9100 5
 ```
 
 没有真机数据时用回放跑通链路：
@@ -153,6 +159,7 @@ src/core/      数据模型、无锁容器（SPSC ring / seqlock）、滤波与�
 src/osc/       OSC 编解码（零分配写入器）
 src/net/       UDP / TCP / WebSocket 服务端（自写 RFC 6455 子集）
 src/vrcft/     VRCFT 协议、沙箱、模块进程托管、模块发现（module_registry）
+src/vmc/       VMC blendshape 名字表（输入/输出共用，只有这一份）
 src/params/    参数目录、v2/v1 派生、地址路由、校准
 src/sources/   输入（VMC / VRCFT 模块 / 抓包回放）
 src/sinks/     输出（VRChat OSC）

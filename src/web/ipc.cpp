@@ -306,6 +306,23 @@ void IpcServer::build_metrics(std::string& out) {
     writer.key("alive").boolean(ctx_.vrcft != nullptr && ctx_.vrcft->module_alive());
     writer.obj_end();
 
+    // 第二路输出（VMC）：界面上要能确认"确实发出去了多少"，否则联调只能靠猜
+    writer.key("vmc_out");
+    writer.obj_begin();
+    if (ctx_.vmc_out != nullptr) {
+        const SinkStats vmc_stats = ctx_.vmc_out->stats();
+        writer.key("enabled").boolean(true);
+        writer.key("target").str(ctx_.vmc_out->target());
+        writer.key("messages").integer(static_cast<long long>(vmc_stats.messages));
+        writer.key("bytes").integer(static_cast<long long>(vmc_stats.bytes));
+    } else {
+        writer.key("enabled").boolean(false);
+        writer.key("target").str("");
+        writer.key("messages").integer(0);
+        writer.key("bytes").integer(0);
+    }
+    writer.obj_end();
+
     // 每个输入源的贡献：多源合并后，"谁在喂哪一路"必须看得见，
     // 否则用户只会看到"眼睛不动"，然后去怀疑滤波。
     writer.key("sources").arr_begin();

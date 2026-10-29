@@ -252,6 +252,20 @@ def main():
         "})()"))
     print(f"语言：{langs}")
 
+    # 输出页：VMC 第二路输出要能看见"发到哪、发了多少"
+    output = json.loads(cdp.evaluate(
+        "(() => {"
+        "  document.querySelector('.nav-item[data-page=\"output\"]').click();"
+        "  const vmc = state.status ? state.status.vmc_out : null;"
+        "  return JSON.stringify({"
+        "    active: document.querySelector('.page.active').dataset.page,"
+        "    text: document.getElementById('o-vmc').textContent,"
+        "    enabled: !!(vmc && vmc.enabled),"
+        "    target: vmc ? vmc.target : null"
+        "  });"
+        "})()"))
+    print(f"输出页：{output}")
+
     logs = json.loads(cdp.evaluate(
         "(() => {"
         "  document.querySelector('.nav-item[data-page=\"logs\"]').click();"
@@ -277,6 +291,12 @@ def main():
         ok = False
     if modules.get("active") != "modules" or modules.get("cards") != modules.get("expected"):
         print("FAIL 模块页与 catalog 不一致（期望渲染的卡片数对不上）")
+        ok = False
+    if output.get("active") != "output" or not output.get("text"):
+        print("FAIL 输出页的 VMC 行没有渲染")
+        ok = False
+    if output.get("enabled") and output.get("target") not in (output.get("text") or ""):
+        print("FAIL VMC 输出行没显示目标地址")
         ok = False
     if sources.get("rows") != sources.get("expected"):
         print("FAIL 输入源卡片行数与 status.sources 不一致")
