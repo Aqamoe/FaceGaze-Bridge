@@ -141,6 +141,9 @@ function apply_l10n() {
   if (state.view === "calibration") {
     render_calibration();
   }
+  if (state.view === "settings") {
+    render_steamvr();
+  }
   if (state.view === "logs") {
     rerender_logs();
   }
@@ -176,6 +179,8 @@ const state = {
   preview: null,
   cal_rows: [],
   cal_preview_on: false,
+  steamvr: null,
+  steamvr_busy: false,
   import_selection: new Set(),
   expanded_modules: new Set(),
   library_tab: "vrcft",
@@ -230,6 +235,9 @@ function connect() {
     if (state.view === "calibration") {
       state.cal_preview_on = false;
       set_cal_preview(true);
+    }
+    if (state.view === "settings") {
+      request_steamvr_refresh();
     }
   };
 
@@ -336,6 +344,9 @@ function handle(message) {
         render_preview(message);
       }
       break;
+    case "steamvr":
+      handle_steamvr(message);
+      break;
     case "log":
       push_log(message);
       break;
@@ -346,6 +357,10 @@ function handle(message) {
       if (!message.ok && message.error) {
         show_toast(`${message.command}: ${message.error}`, "error");
         push_log({ level: "warn", tag: "ui", message: `${message.command}: ${message.error}` });
+        if ((message.command || "").includes("steamvr")) {
+          state.steamvr_busy = false;
+          render_steamvr();
+        }
       } else if (message.ok && message.message) {
         show_toast(message.message);
         if (message.command === "import_modules") {
@@ -1451,6 +1466,110 @@ function queue_cal_eye() {
   }, 60);
 }
 
+// ---------- 渲染：SteamVR ----------
+//
+// 引擎侧所有 OpenVR 调用都在后台线程完成：这里看到的 busy 只是快照。
+// 命令发出去后先本地置 busy，收到下一次 steamvr 消息再以服务端为准。
+
+function sv_reason_text(reason) {
+  const key = `settings.steamvr.reason.${reason || "not_checked"}`;
+  const text = t(key);
+  return text === key ? (reason || "?") : text;
+}
+
+function sv_failure_text(data) {
+  return t("settings.steamvr.failed", { reason: sv_reason_text(data.reason) });
+}
+
+function handle_steamvr(message) {
+  const previous = state.steamvr;
+  state.steamvr = message;
+  state.steamvr_busy = !!message.busy;
+
+  // 动作完成：busy 从 true 回到 false 时给一次 toast；刷新不打扰
+  const action = message.action || "refresh";
+  if (previous && previous.busy && !message.busy && action !== "refresh") {
+    if (!message.ok) {
+      show_toast(sv_failure_text(message), "error");
+    } else if (action === "enable") {
+      show_toast(t("settings.steamvr.enabled"));
+    } else if (action === "disable") {
+      show_toast(t("settings.steamvr.disabled"));
+    } else if (action === "remove") {
+      show_toast(t("settings.steamvr.removed"));
+    }
+  }
+  if (state.view === "settings") {
+    render_steamvr();
+  }
+}
+
+function render_steamvr() {
+  const data = state.steamvr || {
+    available: false,
+    state: "unknown",
+    reason: "not_checked",
+    busy: false,
+    registered: false,
+  };
+  const available = !!data.available;
+  const busy = state.steamvr_busy || !!data.busy;
+  const state_id = data.state || "unknown";
+
+  const pill = $("sv-state");
+  pill.textContent = t(`settings.steamvr.state.${state_id}`);
+  pill.className = "pill" +
+    (state_id === "on" ? " accent" : "") +
+    (state_id === "error" || state_id === "not_running" || state_id === "not_installed" ? " warn" : "");
+
+  $("sv-autolaunch").checked = !!data.autolaunch;
+  // 只有 on/off 才是"SteamVR 在跑、可以改"的状态；not_running 时开关禁用并提示先启动
+  $("sv-autolaunch").disabled =
+    !available || busy || (state_id !== "on" && state_id !== "off");
+  $("sv-refresh").disabled = !available || busy;
+  $("sv-remove").disabled = !available || busy || !data.registered;
+  $("sv-busy").hidden = !busy;
+
+  $("sv-runtime").textContent = data.runtime_dir || "—";
+  $("sv-runtime").title = data.runtime_dir || "";
+  $("sv-manifest").textContent = data.manifest_path || "—";
+  $("sv-manifest").title = data.manifest_path || "";
+  $("sv-binary").textContent = data.binary_path || "—";
+  $("sv-binary").title = data.binary_path || "";
+
+  const detail = $("sv-detail");
+  if (!available) {
+    detail.textContent = t("settings.steamvr.unavailable");
+  } else if (busy) {
+    detail.textContent = t("settings.steamvr.working");
+  } else {
+    const reason = sv_reason_text(data.reason);
+    const extra = data.detail && data.reason !== "ok" ? ` · ${data.detail}` : "";
+    detail.textContent = `${reason}${extra}`;
+  }
+}
+
+function request_steamvr_refresh() {
+  if (!state.connected) {
+    return;
+  }
+  if (state.steamvr && state.steamvr.available === false) {
+    return;
+  }
+  state.steamvr_busy = true;
+  send({ type: "refresh_steamvr" });
+  render_steamvr();
+}
+
+function set_steamvr_autolaunch(enabled) {
+  state.steamvr_busy = true;
+  if (!send({ type: "set_steamvr_autolaunch", enabled })) {
+    state.steamvr_busy = false;
+    show_toast(t("link.failed"), "error");
+  }
+  render_steamvr();
+}
+
 // ---------- 日志 ----------
 
 const LEVEL_ORDER = { trace: 0, debug: 1, info: 2, warn: 3, error: 4 };
@@ -1563,6 +1682,10 @@ async function switch_page(page) {
   if (page === "library") {
     render_library();
   }
+  if (page === "settings") {
+    render_steamvr();
+    request_steamvr_refresh();
+  }
 }
 
 function push_filter() {
@@ -1591,6 +1714,26 @@ function wire() {
   });
   $("f-cutoff").addEventListener("change", push_filter);
   $("f-beta").addEventListener("change", push_filter);
+
+  $("sv-refresh").addEventListener("click", request_steamvr_refresh);
+  $("sv-autolaunch").addEventListener("change", () => {
+    if ($("sv-autolaunch").disabled) {
+      return;
+    }
+    set_steamvr_autolaunch($("sv-autolaunch").checked);
+  });
+  $("sv-remove").addEventListener("click", async () => {
+    if (!(await ask_confirm({
+      title: t("settings.steamvr.remove"),
+      message: t("settings.steamvr.remove_confirm"),
+      danger: true,
+    }))) {
+      return;
+    }
+    state.steamvr_busy = true;
+    send({ type: "remove_steamvr_manifest" });
+    render_steamvr();
+  });
 
   $("cal-search").addEventListener("input", cal_apply_filter);
   $("cal-only-active").addEventListener("change", cal_apply_filter);

@@ -16,7 +16,8 @@ add_executable(fgb-tests
     test_native_module.cpp
     test_shm.cpp
     test_merge.cpp
-    test_vmc_out.cpp)
+    test_vmc_out.cpp
+    test_steamvr.cpp)
 
 target_include_directories(fgb-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(fgb-tests PRIVATE FGB_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

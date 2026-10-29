@@ -338,6 +338,29 @@
           </article>
 
           <article class="card">
+            <h2 data-i18n="settings.steamvr.title">SteamVR 启动项</h2>
+            <div class="kv"><span data-i18n="settings.steamvr.state">状态</span><b>
+              <span class="pill" id="sv-state">—</span>
+            </b></div>
+            <label class="switch"><input type="checkbox" id="sv-autolaunch"> <span data-i18n="settings.steamvr.autolaunch">随 SteamVR 启动 FaceGaze Bridge</span></label>
+            <div class="toolbar" style="margin-top:10px">
+              <button class="btn" id="sv-refresh" data-i18n="settings.steamvr.refresh">重新检测</button>
+              <button class="btn ghost danger" id="sv-remove" data-i18n="settings.steamvr.remove">移除注册</button>
+              <span class="spinner" id="sv-busy" hidden></span>
+            </div>
+            <div class="kv"><span data-i18n="settings.steamvr.runtime">运行库</span><b class="mono" id="sv-runtime">—</b></div>
+            <div class="kv"><span data-i18n="settings.steamvr.manifest">清单</span><b class="mono" id="sv-manifest">—</b></div>
+            <div class="kv"><span data-i18n="settings.steamvr.binary">启动目标</span><b class="mono" id="sv-binary">—</b></div>
+            <p class="hint" id="sv-detail">—</p>
+            <p class="hint" data-i18n="settings.steamvr.overlay_hint">
+              「随 SteamVR 启动」会以 --tray 启动：只进托盘、不弹窗口；已有实例时只会恢复现有窗口。
+            </p>
+            <p class="hint" data-i18n="settings.steamvr.hint">
+              注册只在 SteamVR 正在运行时可用；FGB 借用了 dashboard overlay 的自启动机制，不会在头显里出现面板。
+            </p>
+          </article>
+
+          <article class="card">
             <h2 data-i18n="settings.lang.title">界面语言</h2>
             <div class="kv"><span data-i18n="settings.lang.label">语言</span><b>
               <select id="lang"></select>

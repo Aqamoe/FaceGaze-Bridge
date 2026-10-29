@@ -1,0 +1,22 @@
+{
+  "source": "builtin",
+  "applications": [
+    {
+      "app_key": "com.facegazebridge.desktop",
+      "launch_type": "binary",
+      "binary_path_windows": "FaceGaze Bridge.exe",
+      "arguments": "--tray",
+      "is_dashboard_overlay": true,
+      "strings": {
+        "en_us": {
+          "name": "FaceGaze Bridge",
+          "description": "Starts FaceGaze Bridge with SteamVR."
+        },
+        "zh_cn": {
+          "name": "FaceGaze Bridge",
+          "description": "随 SteamVR 启动 FaceGaze Bridge。"
+        }
+      }
+    }
+  ]
+}

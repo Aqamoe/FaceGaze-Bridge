@@ -108,6 +108,10 @@ std::string_view mime_type(std::string_view extension) noexcept {
     if (extension == ".ico") {
         return "image/x-icon";
     }
+    if (extension == ".fgbface") {
+        // 模型二进制：页面 fetch 后交给 WebGL，不需要浏览器理解内容
+        return "application/octet-stream";
+    }
     return {}; // 未知类型一律不发，避免把配置文件、二进制当静态资源漏出去
 }
 
@@ -161,6 +165,12 @@ IpcServer::IpcServer(IpcContext context) : ctx_(std::move(context)) {
         library_->refresh_if_stale(std::chrono::hours(6));
     }
 
+    // SteamVR 卡片只在发布布局（app.vrmanifest 与 exe 同目录）下可用；
+    // 命令行开发实例没有 exe_dir 时直接不挂服务，界面显示"不可用"。
+    if (!ctx_.exe_dir.empty()) {
+        steamvr_ = std::make_unique<steamvr::Service>(ctx_.exe_dir);
+    }
+
     // 启动时读到的档案就是"磁盘上的版本"：界面据此判断哪些改动还没保存
     if (ctx_.calib != nullptr) {
         saved_profile_ = ctx_.calib->profile();
@@ -191,6 +201,8 @@ IpcServer::IpcServer(IpcContext context) : ctx_(std::move(context)) {
         build_params(message);
         server_.send_text(conn, message);
         build_calibration(message);
+        server_.send_text(conn, message);
+        build_steamvr(message);
         server_.send_text(conn, message);
         send_backlog(conn);
     };
@@ -554,6 +566,33 @@ void IpcServer::build_preview(std::string& out) {
     writer.obj_end();
 }
 
+// SteamVR 状态是后台线程算出来的：这里只读快照，绝不在主循环里调 OpenVR。
+void IpcServer::build_steamvr(std::string& out) const {
+    out.clear();
+    const steamvr::Status status =
+        steamvr_ != nullptr ? steamvr_->snapshot() : steamvr::Status{};
+
+    JsonWriter writer{out};
+    writer.obj_begin();
+    writer.key("type").str("steamvr");
+    writer.key("available").boolean(steamvr_ != nullptr);
+    writer.key("state").str(steamvr::state_name(status.state));
+    writer.key("ok").boolean(status.ok);
+    writer.key("reason").str(status.reason.empty() ? "not_checked" : status.reason);
+    writer.key("detail").str(status.detail);
+    writer.key("action").str(status.action.empty() ? "refresh" : status.action);
+    writer.key("busy").boolean(steamvr_ != nullptr && steamvr_->busy());
+    writer.key("runtime_found").boolean(status.runtime_found);
+    writer.key("steamvr_running").boolean(status.steamvr_running);
+    writer.key("registered").boolean(status.registered);
+    writer.key("autolaunch").boolean(status.autolaunch);
+    writer.key("runtime_dir").str(status.runtime_dir);
+    writer.key("manifest_path").str(status.manifest_path);
+    writer.key("binary_path").str(status.binary_path);
+    writer.key("app_key").str(status.app_key);
+    writer.obj_end();
+}
+
 void IpcServer::broadcast_calibration() {
     std::string message;
     build_calibration(message);
@@ -756,6 +795,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     bool modules_dirty_only = false;
     bool library_touched    = false;
     bool calibration_changed = false;
+    bool steamvr_touched     = false;
     std::string modules_message;
     std::string ack_message;
     bool engine_restarting = false;
@@ -958,6 +998,37 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             calibration_changed = true;
             ok                  = true;
             ack_message         = "已恢复默认（全部形状透传）";
+        }
+    } else if (has_type && type == "refresh_steamvr") {
+        if (steamvr_ == nullptr) {
+            error = "steamvr not available";
+        } else {
+            steamvr_->request(steamvr::Service::Op::Refresh);
+            steamvr_touched = true;
+            ack_message     = "正在检测 SteamVR…";
+            ok              = true;
+        }
+    } else if (has_type && type == "set_steamvr_autolaunch") {
+        bool enabled = false;
+        if (steamvr_ == nullptr) {
+            error = "steamvr not available";
+        } else if (!json::field_bool(text, "enabled", enabled)) {
+            error = "missing enabled";
+        } else {
+            steamvr_->request(enabled ? steamvr::Service::Op::Enable
+                                      : steamvr::Service::Op::Disable);
+            steamvr_touched = true;
+            ack_message     = enabled ? "正在注册 SteamVR 启动项…" : "正在关闭 SteamVR 启动项…";
+            ok              = true;
+        }
+    } else if (has_type && type == "remove_steamvr_manifest") {
+        if (steamvr_ == nullptr) {
+            error = "steamvr not available";
+        } else {
+            steamvr_->request(steamvr::Service::Op::Remove);
+            steamvr_touched = true;
+            ack_message     = "正在移除 SteamVR 注册…";
+            ok              = true;
         }
     } else if (has_type && type == "reload_avatar") {
         if (ctx_.sink == nullptr) {
@@ -1238,6 +1309,12 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         // 不能停在用户以为成功的那一版
         broadcast_calibration();
     }
+    if (steamvr_touched) {
+        // 立刻推一次 busy 状态：多个页面同时开着时，按钮要一起禁用
+        std::string message;
+        build_steamvr(message);
+        server_.broadcast(message);
+    }
 }
 
 bool IpcServer::handle_http(const net::ws::HttpHead& head, std::string& body,
@@ -1281,6 +1358,12 @@ bool IpcServer::handle_http(const net::ws::HttpHead& head, std::string& body,
     // 只读预览：探针用 curl 就能断言"原始值/输出值与页面一致"，不必先起 WebSocket
     if (head.path == "/api/preview") {
         build_preview(body);
+        return true;
+    }
+
+    // SteamVR 状态快照：和 WS 的 steamvr 消息同源；动作只能走 WS 命令
+    if (head.path == "/api/steamvr") {
+        build_steamvr(body);
         return true;
     }
 
@@ -1458,6 +1541,16 @@ void IpcServer::pump(int timeout_ms) {
     server_.poll(timeout_ms);
     flush_logs();
     poll_picker();
+
+    // SteamVR 操作在后台线程：完成的这一刻由主循环统一广播，避免跨线程 send
+    if (steamvr_ != nullptr) {
+        steamvr::Status result;
+        if (steamvr_->take(result)) {
+            std::string message;
+            build_steamvr(message);
+            server_.broadcast(message);
+        }
+    }
 
     // 模块库的后台线程与界面是否连着无关：界面断开时下载也要能装完
     if (library_ != nullptr) {

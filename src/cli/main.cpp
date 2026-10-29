@@ -182,6 +182,18 @@ std::filesystem::path default_ui_dir() {
     return {};
 }
 
+// app.vrmanifest 与产品 exe 都平铺在 fgb-cli 旁边（发布布局）。
+std::filesystem::path executable_dir() {
+#ifdef _WIN32
+    wchar_t buffer[MAX_PATH]{};
+    const DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+    if (length > 0 && length < MAX_PATH) {
+        return std::filesystem::path{buffer}.parent_path();
+    }
+#endif
+    return {};
+}
+
 // 界面用独立进程起（WebView2 外壳崩一次不该带走追踪输出）。
 // 引擎与 UI 之间只有 WS 一条线，谁先起来都行：外壳会自己重试导航。
 bool launch_ui(std::uint16_t port) {
@@ -723,6 +735,7 @@ int cmd_run(int argc, char** argv) {
         ctx.params_mode = fgb::to_string(vrchat_cfg.params_mode);
         ctx.eye_mode    = fgb::to_string(vrchat_cfg.eye_mode);
         ctx.ui_dir      = ui_dir;
+        ctx.exe_dir     = executable_dir();
         ctx.quit        = &g_stop;
         ctx.restart_engine = &g_restart;
         ctx.preview     = preview_raw;

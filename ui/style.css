@@ -517,6 +517,7 @@ body {
 .cal-range { grid-template-columns: 30px 1fr 64px auto; margin: 6px 0; }
 
 .btn.tiny { padding: 3px 9px; font-size: 11.5px; margin-top: 0; }
+.btn:disabled { opacity: .42; cursor: not-allowed; }
 
 /* ---------- 日志 ---------- */
 .logs {

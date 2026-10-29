@@ -1,11 +1,11 @@
 # ADR-0020 · 随 SteamVR 启动（OpenVR 注册）
 
-- 状态：**提议**（2026-10-29 评估；方向已确认，未实施；上线前置的托盘常驻壳已在
-  [ADR-0022](0022-tray-shell-and-close-semantics.md) 完成，注册本身仍未开始）
+- 状态：**已实施（2026-10-29）**；真实注册/读回需 SteamVR 运行时验收，本机验收时
+  SteamVR 未运行，只覆盖了 `not_running` 分支。托盘常驻壳已在
+  [ADR-0022](0022-tray-shell-and-close-semantics.md) 完成。
 - 日期：2026-10-29
-- 影响：`app.vrmanifest`（新增，随包）、`src/openvr/`（新增）、`src/web/ipc`（新命令）、
-  `src/ui/main.cpp`（托盘启动参数与单实例）、设置页「SteamVR」卡片、安装/卸载清理、
-  `docs/02-features.md`、`docs/03-roadmap.md`
+- 影响：`app.vrmanifest`（新增，随包）、`src/openvr/`（新增）、`src/web/ipc`（新命令与推送）、
+  设置页「SteamVR」卡片、安装/卸载清理、`docs/02-features.md`、`docs/03-roadmap.md`
 
 ## 问题
 
@@ -181,17 +181,44 @@ manifest 指向 `FaceGaze Bridge.exe --tray`，理由：
 托盘常驻壳单独估算 2–4 人日（托盘图标、菜单、收进托盘、退出、单实例），
 不包含在上表内；它是本功能的上线前置，见 `docs/03-roadmap.md` M7.0。
 
+## 实施记录（2026-10-29）
+
+| 设计点 | 落地方式 | 与本文的差异 |
+|---|---|---|
+| 依赖 | `third_party/openvr/openvr.h`（BSD-3，仅头文件）；`openvr_api.dll` 运行时从用户 SteamVR 目录加载 | 没有链接/分发 `openvr_api.lib`；`NOTICE` 已补 OpenVR 段 |
+| 运行库定位 | `openvrpaths.vrpath` 的 `runtime` 数组 → `HKCU\Software\Valve\Steam\SteamPath` → `ProgramFiles(x86)`/`ProgramFiles` 下的 Steam 目录；只认含 `bin/win64/openvr_api.dll` 的目录 | 与本文一致；解析器只处理 `"runtime"`，不写通用 JSON 库 |
+| API | `VR_InitInternal2(Background)` / `VR_ShutdownInternal` / `VR_GetGenericInterface(IVRApplications_008)`；`AddApplicationManifest`、`SetApplicationAutoLaunch`、`GetApplicationAutoLaunch`、`RemoveApplicationManifest` | 与本文一致；每次操作开一个短会话，读完即关，避免缓存失效的接口指针 |
+| 线程 | `steamvr::Service` 后台线程执行 OpenVR 调用；结果由 `IpcServer::pump()` 广播 | 本文只要求"放引擎里"；这里进一步避免 `VR_Init` 阻塞 120 Hz 主循环 |
+| 状态机 | `unknown/not_installed/not_running/off/on/error` + `reason`（稳定标识，界面翻译）+ `detail`（原始错误） | 比本文多一个 `unknown`（尚未检测）和 `reason` 分层；四态语义不变 |
+| 失败处理 | Add 返回 `AppKeyAlreadyExists` 时读 `BinaryPath_String` 比对当前安装目录；不一致给 `app_key_conflict`，不自动改旧注册 | 本文只说"app_key 冲突"；这里把处置写清楚：先移除旧注册 |
+| 设置页 | 「SteamVR 启动项」卡片：状态 pill、自启动开关、重新检测、移除注册、运行库/清单/启动目标路径、原因文案；三语 | 与本文一致；开关仅在 `off/on` 可用，`not_running` 时禁用并提示先启动 SteamVR |
+| 随包 | `packaging/app.vrmanifest`；CMake 复制到 fgb-cli 同目录，`cmake --install` 装到发布根 | 与本文一致；manifest 的 `arguments` 是 `--tray` |
+| 只读接口 | `/api/steamvr` 返回最近一次快照（动作只走 WS） | 本文没要求，探针/curl 需要 |
+| 单测 | `tests/test_steamvr.cpp`：openvrpaths 解析、manifest 生成、路径布局、错误码映射 | CI 不依赖 SteamVR |
+
+**未完成/待验收**：本机 SteamVR 已安装但未运行，只能验证
+`VRInitError_Init_NoServerForBackgroundApp` → `not_running`、开关禁用、原因文案；
+`on/off` 真实注册、SteamVR 重启后自启动、移除后启动项消失仍需在 SteamVR 运行环境手动验收。
+验收步骤已写进 `docs/03-roadmap.md` M7.2。
+
+**已知边界**：
+
+- 运行库路径变化（移动安装目录）后旧 manifest 失效，界面会给出 `app_key_conflict` 或
+  `binary_missing`，用户需先「移除注册」再重新打开开关。
+- 卸载/删除程序不会自动清理 SteamVR 的 manifest；发布说明要求卸载前点「移除注册」。
+- OpenVR 的 `dashboard overlay` 只是自启动机制的载体，FGB 不提供 VR 内面板。
+
 ## 验证
 
-- [ ] 未装 SteamVR：开关禁用，文案说明原因，不崩溃
-- [ ] SteamVR 未运行：开关禁用，提示"先启动 SteamVR"；启动后可重试
-- [ ] 打开开关后，`GetApplicationAutoLaunch` 读回 true；SteamVR 重启后 FGB 进入托盘、不弹窗口
-- [ ] 关闭开关后，SteamVR 重启不再拉起 FGB
-- [ ] 「移除注册」后，SteamVR 的启动项里看不到 FGB
+- [ ] 未装 SteamVR：开关禁用，文案说明原因，不崩溃（逻辑已覆盖，缺无 SteamVR 的实机）
+- [x] SteamVR 未运行：开关禁用，提示"先启动 SteamVR"；可点「重新检测」（2026-10-29 实测）
+- [ ] 打开开关后，`GetApplicationAutoLaunch` 读回 true；SteamVR 重启后 FGB 进入托盘、不弹窗口（待 SteamVR 运行环境）
+- [ ] 关闭开关后，SteamVR 重启不再拉起 FGB（待 SteamVR 运行环境）
+- [ ] 「移除注册」后，SteamVR 的启动项里看不到 FGB（待 SteamVR 运行环境）
 - [ ] 已有 FGB 实例时，自启动不会产生第二个窗口/托盘图标，而是恢复现有实例
-- [ ] 移动安装目录后，旧路径失效时能提示"重新注册"
-- [ ] 托盘未完成时，设置页不显示/禁用 SteamVR 自启动入口（不发布半成品）
-- [ ] CI 不依赖 SteamVR：只有纯逻辑单测（manifest 生成、路径解析、错误码映射）
+- [ ] 移动安装目录后，旧路径失效时能提示"重新注册"（已实现 `app_key_conflict` / `binary_missing` 文案，未实机移动）
+- [x] 托盘已完成（M7.0），设置页开放 SteamVR 卡片，不再有"半成品入口"
+- [x] CI 不依赖 SteamVR：只有纯逻辑单测（manifest 生成、路径解析、错误码映射）
 
 ## 代价与风险
 

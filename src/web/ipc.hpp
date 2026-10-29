@@ -17,6 +17,7 @@
 #include "core/process/one_euro.hpp"
 #include "engine/engine.hpp"
 #include "net/ws_server.hpp"
+#include "openvr/steamvr.hpp"
 #include "params/calibration.hpp"
 #include "params/preview_tap.hpp"
 #include "sinks/shm_sink.hpp"
@@ -63,7 +64,8 @@ struct IpcContext {
     std::string source_name;
     std::string params_mode;
     std::string eye_mode;
-    std::filesystem::path ui_dir; // 静态页面根目录，空表示不发页面
+    std::filesystem::path ui_dir;    // 静态页面根目录，空表示不发页面
+    std::filesystem::path exe_dir;   // 产品 exe 所在目录；app.vrmanifest 在它旁边
 
     // 模块管理：非 vrcft 输入时为空。列表是"磁盘上有什么"，运行态在每个实例那边。
     vrcft::ModuleRegistry* modules = nullptr;
@@ -111,6 +113,7 @@ private:
     void build_metrics(std::string& out); // status 的公共部分，HTTP 接口复用
     void build_calibration(std::string& out);
     void build_preview(std::string& out);
+    void build_steamvr(std::string& out) const;
     // 校准档案变了就广播：多个页面/探针连上来时各自显示一致的状态
     void broadcast_calibration();
     // per-instance 运行态；state/error 都来自对应的 VrcftSource
@@ -154,6 +157,8 @@ private:
     std::deque<LogLine> recent_logs_; // 最近若干行，新连接建立时补发
     std::mutex log_mutex_;
     std::unique_ptr<vrcft::ModuleLibrary> library_;
+    // OpenVR 初始化会阻塞，放在后台线程；命令结果由 pump() 广播
+    std::unique_ptr<steamvr::Service> steamvr_;
     std::string pending_delete_id_;
     std::shared_ptr<PickerState> picker_;
     std::chrono::steady_clock::time_point last_library_push_{};
