@@ -313,7 +313,93 @@ def main():
         "})()"))
     print(f"校准预览：{cal_live}")
 
-    # 改一条映射 → 立即生效 → 保存 → 读回档案
+    # 3D 面部预览（ADR-0021 P3/P4）：模型、morph、区域高亮、2D 降级入口
+    face = {}
+    for _ in range(24):
+        face = json.loads(cdp.evaluate(
+            "(() => {"
+            "  const m = state.face_map || {};"
+            "  const r = state.face_renderer;"
+            "  return JSON.stringify({"
+            "    mode: state.face_mode,"
+            "    error: state.face_error || '',"
+            "    vertices: r ? r.model.vertex_count : 0,"
+            "    morphs: r ? r.model.morph_names.length : (m.morphs || []).length,"
+            "    regions: (m.regions || []).length,"
+            "    numeric_only: (m.numeric_only || []).length,"
+            "    none_rows: document.querySelectorAll('.cal-model-none').length,"
+            "    mapped_rows: document.querySelectorAll('.cal-model-region').length,"
+            "    fallback_regions: document.querySelectorAll('#cal-fallback [data-region]').length,"
+            "    target_active: r ? [...r.target].filter(v => v > 0.01).length : -1,"
+            "    canvas: [document.getElementById('cal-canvas').width,"
+            "             document.getElementById('cal-canvas').height]"
+            "  });"
+            "})()"))
+        if face.get("mode") in ("3d", "2d", "error"):
+            break
+        time.sleep(0.5)
+    print(f"3D 预览：{face}")
+
+    face_select = json.loads(cdp.evaluate(
+        "(() => {"
+        "  const row = document.querySelector('.cal-row[data-name=\"jawopen\"]');"
+        "  row.click();"
+        "  const r = state.face_renderer;"
+        "  return JSON.stringify({"
+        "    selected: state.face_selected,"
+        "    detail: document.getElementById('cal-face-detail').textContent,"
+        "    highlight: r ? r.highlight_target : -1,"
+        "    selected_rows: document.querySelectorAll('.cal-row.selected').length"
+        "  });"
+        "})()"))
+    print(f"3D 高亮：{face_select}")
+
+    face_view = json.loads(cdp.evaluate(
+        "(() => {"
+        "  document.querySelector('[data-view=\"side\"]').click();"
+        "  const r = state.face_renderer;"
+        "  const yaw = r ? r.yaw : null;"
+        "  if (r) { r.reset(); }"
+        "  select_face_shape(null);"
+        "  return JSON.stringify({yaw, selected: state.face_selected});"
+        "})()"))
+    print(f"3D 视角：{face_view}")
+
+    # SteamVR 卡片（ADR-0020）：只读检测，探针绝不切换真实自启动
+    cdp.evaluate(
+        "document.querySelector('.nav-item[data-page=\"settings\"]').click(); true")
+    steamvr = {}
+    for _ in range(24):
+        steamvr = json.loads(cdp.evaluate(
+            "(() => {"
+            "  const s = state.steamvr || {};"
+            "  return JSON.stringify({"
+            "    available: !!s.available,"
+            "    state: s.state || 'unknown',"
+            "    reason: s.reason || '',"
+            "    busy: !!s.busy,"
+            "    busy_local: !!state.steamvr_busy,"
+            "    registered: !!s.registered,"
+            "    autolaunch: !!s.autolaunch,"
+            "    runtime: s.runtime_dir || '',"
+            "    manifest: s.manifest_path || '',"
+            "    reason_text: document.getElementById('sv-detail').textContent,"
+            "    pill: document.getElementById('sv-state').textContent,"
+            "    toggle_disabled: document.getElementById('sv-autolaunch').disabled,"
+            "    remove_disabled: document.getElementById('sv-remove').disabled"
+            "  });"
+            "})()"))
+        if (steamvr.get("state") not in ("unknown", "")
+                and steamvr.get("reason") not in ("", "not_checked")
+                and not steamvr.get("busy") and not steamvr.get("busy_local")):
+            break
+        time.sleep(0.5)
+    print(f"SteamVR：{steamvr}")
+
+    # 改一条映射 → 立即生效 → 保存 → 读回档案。
+    # 先恢复默认：探针可能在同一份临时档案上跑第二遍，直接写相同值不会变 dirty。
+    cdp.evaluate("send({type:'reset_calibration'}); true")
+    time.sleep(0.4)
     cal_edit = json.loads(cdp.evaluate(
         "(() => {"
         "  send({type:'set_calibration_shape', name:'JawOpen', lo:0.1, hi:0.9, active:true});"
@@ -466,6 +552,60 @@ def main():
         ok = False
     if cal_stopped.get("subscribed") or not cal_stopped.get("seq_stopped"):
         print("FAIL 离开校准页后仍在推预览")
+        ok = False
+    if face.get("mode") not in ("3d", "2d"):
+        print(f"FAIL 3D 预览没有就绪：mode={face.get('mode')} error={face.get('error')}")
+        ok = False
+    if face.get("morphs", 0) < 24 or face.get("regions", 0) < 20:
+        print("FAIL 模型 morph/区域数量不足（检查 .fgbface 与 face_map）")
+        ok = False
+    if face.get("numeric_only", 0) <= 0 or face.get("none_rows") != face.get("numeric_only"):
+        print("FAIL 「仅数值」标记数与 face_map.numeric_only 不一致")
+        ok = False
+    if face.get("mapped_rows", 0) <= 0:
+        print("FAIL 没有任何形状显示模型区域")
+        ok = False
+    if face.get("fallback_regions", 0) <= 10:
+        print("FAIL 2D 降级示意图缺少区域节点")
+        ok = False
+    if face.get("mode") == "3d" and (face.get("vertices", 0) < 1000
+                                     or face.get("target_active", 0) <= 0
+                                     or min(face.get("canvas", [0, 0])) <= 1):
+        print("FAIL 3D 渲染器没有顶点/morph 权重/画布尺寸")
+        ok = False
+    if face_select.get("selected") != "JawOpen" or not face_select.get("highlight"):
+        print("FAIL 选中 JawOpen 没有高亮区域")
+        ok = False
+    if face_select.get("selected_rows") != 1:
+        print("FAIL 选中行数不是 1（行高亮状态重复或丢失）")
+        ok = False
+    if "jaw" not in (face_select.get("detail") or "").lower():
+        print("FAIL 选中 JawOpen 后没有显示区域说明")
+        ok = False
+    if face_view.get("yaw") is None or abs(float(face_view.get("yaw")) - 1.5707963) > 0.01:
+        print("FAIL 侧面预设没有把相机转到 90°")
+        ok = False
+    if face_view.get("selected") is not None:
+        print("FAIL 清除选中没有生效")
+        ok = False
+    if not steamvr.get("available"):
+        print("FAIL 设置页没有提供 SteamVR 控制")
+        ok = False
+    if steamvr.get("state") in ("unknown", "") or steamvr.get("busy") or steamvr.get("busy_local"):
+        print("FAIL SteamVR 检测没有完成（服务线程未回状态）")
+        ok = False
+    if steamvr.get("state") in ("not_installed", "not_running", "error"):
+        if not steamvr.get("toggle_disabled"):
+            print("FAIL SteamVR 不可用时自启动开关没有禁用")
+            ok = False
+    if steamvr.get("state") in ("off", "on") and steamvr.get("toggle_disabled"):
+        print("FAIL SteamVR 可用时自启动开关被禁用")
+        ok = False
+    if steamvr.get("state") != "not_installed" and not steamvr.get("runtime"):
+        print("FAIL SteamVR 运行库路径为空")
+        ok = False
+    if not steamvr.get("manifest") or not steamvr.get("reason_text"):
+        print("FAIL SteamVR 卡片缺少 manifest 或原因文案")
         ok = False
 
     print("PASS" if ok else "FAILED")
