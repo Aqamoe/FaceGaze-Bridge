@@ -61,7 +61,8 @@ target_link_libraries(fgb_params PUBLIC fgb_core fgb_base fgb_capture fgb_vrcft 
 
 # 配置与后处理
 add_library(fgb_config STATIC
-    config/ini.cpp)
+    config/ini.cpp
+    config/outputs.cpp)
 target_link_libraries(fgb_config PUBLIC fgb_base)
 
 # SteamVR 启动项：只 vendor openvr.h，运行时从用户已安装的 SteamVR 目录

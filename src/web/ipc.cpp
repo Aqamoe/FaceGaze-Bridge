@@ -421,12 +421,14 @@ void IpcServer::build_metrics(std::string& out) {
     if (ctx_.ws_out != nullptr) {
         const SinkStats ws_stats = ctx_.ws_out->stats();
         writer.key("enabled").boolean(true);
+        writer.key("listening").boolean(ctx_.ws_out->listening());
         writer.key("target").str("ws://127.0.0.1:" + std::to_string(ctx_.ws_out->port()) + "/ws");
         writer.key("clients").integer(static_cast<long long>(ctx_.ws_out->clients()));
         writer.key("messages").integer(static_cast<long long>(ws_stats.messages));
         writer.key("bytes").integer(static_cast<long long>(ws_stats.bytes));
     } else {
         writer.key("enabled").boolean(false);
+        writer.key("listening").boolean(false);
         writer.key("target").str("");
         writer.key("clients").integer(0);
         writer.key("messages").integer(0);
@@ -448,6 +450,29 @@ void IpcServer::build_metrics(std::string& out) {
         writer.key("messages").integer(0);
         writer.key("bytes").integer(0);
     }
+    writer.obj_end();
+
+    // 保存的输出设置（输出页表单用）。与上面的 *_out 是两回事：
+    // 上面是"这次实际开了什么"，这里是"下次启动会按什么开"。
+    writer.key("outputs");
+    writer.obj_begin();
+    writer.key("vrchat").str(
+        config::format_target(ctx_.outputs.vrchat_host, ctx_.outputs.vrchat_port));
+    writer.key("eye_mode").str(ctx_.outputs.eye_mode);
+    writer.key("params_mode").str(ctx_.outputs.params_mode);
+    writer.key("vmc_enabled").boolean(ctx_.outputs.vmc_enabled);
+    writer.key("vmc_target").str(
+        config::format_target(ctx_.outputs.vmc_host, ctx_.outputs.vmc_port));
+    writer.key("shm_enabled").boolean(ctx_.outputs.shm_enabled);
+    writer.key("shm_name").str(ctx_.outputs.shm_name);
+    writer.key("ws_enabled").boolean(ctx_.outputs.ws_enabled);
+    writer.key("ws_port").integer(static_cast<long long>(ctx_.outputs.ws_port));
+    writer.key("ws_rate").integer(ctx_.outputs.ws_rate_hz);
+    writer.key("ws_all").boolean(ctx_.outputs.ws_all_shapes);
+    writer.key("udp_enabled").boolean(ctx_.outputs.udp_enabled);
+    writer.key("udp_target").str(
+        config::format_target(ctx_.outputs.udp_host, ctx_.outputs.udp_port));
+    writer.key("udp_rate").integer(ctx_.outputs.udp_rate_hz);
     writer.obj_end();
 
     // 每个输入源的贡献：多源合并后，"谁在喂哪一路"必须看得见，
@@ -826,6 +851,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     bool library_touched    = false;
     bool calibration_changed = false;
     bool steamvr_touched     = false;
+    bool outputs_touched     = false;
     std::string modules_message;
     std::string ack_message;
     bool engine_restarting = false;
@@ -847,6 +873,83 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             ctx_.filter->set_enabled(enabled);
             ctx_.filter->set_live_params(static_cast<float>(min_cutoff), static_cast<float>(beta));
             ok = true;
+        }
+    } else if (has_type && type == "set_outputs") {
+        config::OutputOptions next = ctx_.outputs;
+        std::string target;
+        std::string mode;
+        bool flag = false;
+        double number = 0.0;
+
+        if (json::field_string(text, "vrchat", target) &&
+            !config::parse_target(target, next.vrchat_host, next.vrchat_port)) {
+            error = "vrchat 需要 host:port";
+        }
+        if (error.empty() && json::field_string(text, "eye_mode", mode)) {
+            next.eye_mode = mode;
+        }
+        if (error.empty() && json::field_string(text, "params_mode", mode)) {
+            next.params_mode = mode;
+        }
+        if (error.empty() && json::field_bool(text, "vmc_enabled", flag)) {
+            next.vmc_enabled = flag;
+        }
+        if (error.empty() && json::field_string(text, "vmc_target", target) &&
+            !config::parse_target(target, next.vmc_host, next.vmc_port)) {
+            error = "vmc_target 需要 host:port";
+        }
+        if (error.empty() && json::field_bool(text, "shm_enabled", flag)) {
+            next.shm_enabled = flag;
+        }
+        if (error.empty() && json::field_string(text, "shm_name", mode)) {
+            next.shm_name = mode;
+        }
+        if (error.empty() && json::field_bool(text, "ws_enabled", flag)) {
+            next.ws_enabled = flag;
+        }
+        if (error.empty() && json::field_number(text, "ws_port", number)) {
+            if (number < 1 || number > 65535) {
+                error = "ws_port 必须是 1..65535";
+            } else {
+                next.ws_port = static_cast<std::uint16_t>(number);
+            }
+        }
+        if (error.empty() && json::field_number(text, "ws_rate", number)) {
+            if (number < 0 || number > 1000) {
+                error = "ws_rate 必须在 0..1000";
+            } else {
+                next.ws_rate_hz = static_cast<int>(number);
+            }
+        }
+        if (error.empty() && json::field_bool(text, "ws_all", flag)) {
+            next.ws_all_shapes = flag;
+        }
+        if (error.empty() && json::field_bool(text, "udp_enabled", flag)) {
+            next.udp_enabled = flag;
+        }
+        if (error.empty() && json::field_string(text, "udp_target", target) &&
+            !config::parse_target(target, next.udp_host, next.udp_port)) {
+            error = "udp_target 需要 host:port";
+        }
+        if (error.empty() && json::field_number(text, "udp_rate", number)) {
+            if (number < 0 || number > 1000) {
+                error = "udp_rate 必须在 0..1000";
+            } else {
+                next.udp_rate_hz = static_cast<int>(number);
+            }
+        }
+
+        if (error.empty()) {
+            if (ctx_.outputs_path.empty()) {
+                error = "输出设置路径不可用";
+            } else if (!config::save_outputs(ctx_.outputs_path, next, error)) {
+                // save_outputs 已经写好 error
+            } else {
+                ctx_.outputs = next;
+                ok           = true;
+                outputs_touched = true;
+                ack_message  = "输出设置已保存，重启引擎后生效";
+            }
         }
     } else if (has_type && type == "set_preview") {
         bool enabled = false;
@@ -1314,6 +1417,9 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     if (engine_restarting) {
         writer.key("restarting").boolean(true);
     }
+    if (outputs_touched) {
+        writer.key("restart_needed").boolean(true);
+    }
     writer.obj_end();
     server_.send_text(conn, reply);
 
@@ -1329,7 +1435,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         build_library(message);
         server_.broadcast(message);
     }
-    if (ok && type == "set_filter") {
+    if (ok && (type == "set_filter" || type == "set_outputs")) {
         std::string status;
         build_status(status);
         server_.broadcast(status);

@@ -2,6 +2,7 @@
 #include "base/log.hpp"
 #include "engine/engine.hpp"
 #include "capture/capture_file.hpp"
+#include "config/outputs.hpp"
 #include "core/process/one_euro.hpp"
 #include "web/ipc.hpp"
 #include "params/avatar_config.hpp"
@@ -101,6 +102,8 @@ void print_usage() {
                  "  --ws-out-all            发全部 88 个形状（默认只发 > 0.01 的有效形状）\n"
                  "  --udp-out <host:port>   UDP 二进制输出（一帧一个数据报）\n"
                  "  --udp-out-rate <hz>     UDP 二进制帧率，0 = 每 tick (默认 0)\n"
+                 "  --outputs-config <路径> 输出设置文件（默认 %%LOCALAPPDATA%%\\FaceGazeBridge\\outputs.ini）\n"
+                 "  --no-saved-outputs      本次忽略已保存的输出设置（命令行参数仍然生效）\n"
                  "  --eye-mode <模式>       parameters | native | both (默认 parameters)\n"
                  "  --params <参数集>       v2 | v1 | both (默认 v2)\n"
                  "  --param-prefix <前缀>   找不到头像配置时 v2 参数用的地址前缀\n"
@@ -298,6 +301,60 @@ int cmd_run(int argc, char** argv) {
     int duration_sec = 0;
     bool verbose     = false;
 
+    // 输出设置先于命令行加载：命令行永远覆盖保存值。--no-saved-outputs 需要
+    // 在正式解析前就知道，所以这里先扫一遍（值只用于这两个开关）。
+    fgb::config::OutputOptions saved_outputs;
+    std::filesystem::path outputs_path = fgb::config::default_outputs_path();
+    bool apply_saved_outputs           = true;
+    for (int i = 2; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        if (arg == "--no-saved-outputs") {
+            apply_saved_outputs = false;
+        } else if (arg == "--outputs-config" && i + 1 < argc) {
+            outputs_path = argv[++i];
+        }
+    }
+
+    std::string outputs_error;
+    const bool outputs_loaded =
+        !outputs_path.empty() && fgb::config::load_outputs(outputs_path, saved_outputs, outputs_error);
+    if (!outputs_loaded && !outputs_error.empty() && !outputs_path.empty() &&
+        std::filesystem::exists(outputs_path)) {
+        FGB_WARN("cli", "输出设置读取失败（%s），本次使用默认值", outputs_error.c_str());
+    }
+    if (apply_saved_outputs && outputs_loaded) {
+        vrchat_cfg.host = saved_outputs.vrchat_host;
+        vrchat_cfg.port = saved_outputs.vrchat_port;
+        fgb::EyeOutputMode eye_mode;
+        if (fgb::parse_eye_output_mode(saved_outputs.eye_mode, eye_mode)) {
+            vrchat_cfg.eye_mode = eye_mode;
+        }
+        fgb::ParamsMode params_mode;
+        if (fgb::parse_params_mode(saved_outputs.params_mode, params_mode)) {
+            vrchat_cfg.params_mode = params_mode;
+        }
+
+        vmc_out_enabled  = saved_outputs.vmc_enabled;
+        vmc_out_cfg.host = saved_outputs.vmc_host;
+        vmc_out_cfg.port = saved_outputs.vmc_port;
+
+        if (saved_outputs.shm_enabled) {
+            shm_name = saved_outputs.shm_name;
+        }
+
+        ws_out_enabled = saved_outputs.ws_enabled;
+        ws_out_cfg.port = saved_outputs.ws_port;
+        ws_out_cfg.min_interval_ns =
+            saved_outputs.ws_rate_hz == 0 ? 0 : 1'000'000'000ULL / saved_outputs.ws_rate_hz;
+        ws_out_cfg.all_shapes = saved_outputs.ws_all_shapes;
+
+        udp_out_enabled = saved_outputs.udp_enabled;
+        udp_out_cfg.host = saved_outputs.udp_host;
+        udp_out_cfg.port = saved_outputs.udp_port;
+        udp_out_cfg.min_interval_ns =
+            saved_outputs.udp_rate_hz == 0 ? 0 : 1'000'000'000ULL / saved_outputs.udp_rate_hz;
+    }
+
     for (int i = 2; i < argc; ++i) {
         const std::string_view arg = argv[i];
         auto next_value            = [&](std::string_view name) -> std::string_view {
@@ -468,6 +525,12 @@ int cmd_run(int argc, char** argv) {
             vrchat_cfg.discover_avatar = true;
         } else if (arg == "--no-avatar-discovery") {
             vrchat_cfg.discover_avatar = false;
+        } else if (arg == "--no-saved-outputs") {
+            // 预扫描阶段已经处理
+        } else if (arg == "--outputs-config") {
+            if (next_value(arg).empty()) {
+                return 2;
+            }
         } else if (arg == "--no-oscquery") {
             vrchat_cfg.use_oscquery = false;
         } else if (arg == "--oscquery-url") {
@@ -817,9 +880,11 @@ int cmd_run(int argc, char** argv) {
         ctx.ws_out      = ws_out_raw;
         ctx.udp_out     = udp_out_raw;
         ctx.filter      = filter_raw;
-        ctx.source_name = join_names(source_names);
-        ctx.params_mode = fgb::to_string(vrchat_cfg.params_mode);
-        ctx.eye_mode    = fgb::to_string(vrchat_cfg.eye_mode);
+        ctx.source_name  = join_names(source_names);
+        ctx.params_mode  = fgb::to_string(vrchat_cfg.params_mode);
+        ctx.eye_mode     = fgb::to_string(vrchat_cfg.eye_mode);
+        ctx.outputs      = saved_outputs;
+        ctx.outputs_path = outputs_path;
         ctx.ui_dir      = ui_dir;
         ctx.exe_dir     = executable_dir();
         ctx.quit        = &g_stop;

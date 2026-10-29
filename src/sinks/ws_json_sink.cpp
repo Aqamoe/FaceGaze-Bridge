@@ -28,11 +28,13 @@ bool WsJsonSink::start() {
     };
 
     std::string error;
-    if (!server_.listen(config_.port, error)) {
-        FGB_ERROR(kTag, "WebSocket JSON 监听失败：%s", error.c_str());
-        return false;
+    if (!server_.listen(config_.port, error, true)) {
+        // 端口被占只关这一路：不能因为一个可选输出让整个引擎起不来
+        FGB_ERROR(kTag, "WebSocket JSON 监听失败：%s（引擎继续运行，WS 输出关闭）",
+                  error.c_str());
+        return true;
     }
-    started_ = true;
+    started_.store(true);
     if (config_.min_interval_ns == 0) {
         FGB_INFO(kTag, "WebSocket JSON 输出 → ws://127.0.0.1:%u/ws（每 tick，%s）",
                  static_cast<unsigned>(server_.port()),
@@ -47,7 +49,7 @@ bool WsJsonSink::start() {
 }
 
 void WsJsonSink::stop() noexcept {
-    started_ = false;
+    started_.store(false);
     server_.close();
 }
 
@@ -114,7 +116,7 @@ std::string WsJsonSink::build_json(const FaceFrame& frame, const GazeState& gaze
 }
 
 void WsJsonSink::submit(const FaceFrame& frame, const GazeState& gaze, std::uint64_t now_ns) {
-    if (!started_) {
+    if (!started_.load()) {
         return;
     }
 

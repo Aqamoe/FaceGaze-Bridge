@@ -7,12 +7,13 @@ catalog 到了、WebSocket 连上了、参数格子上有非零值、翻页正�
 
 用法：
     fgb-cli run --source replay --replay x.fgbrec --panel 8787 \
-        --calibration %TEMP%\fgb-probe-calibration.ini
+        --calibration %TEMP%\fgb-probe-calibration.ini \
+        --outputs-config %TEMP%\fgb-probe-outputs.ini
     fgb-ui --port 8787 --debug-port 9222
     python tools/probe_ui.py 9222 8787
 
-注意：校准页会真的保存档案。一定要用 --calibration 指到临时文件，
-否则探针会覆盖用户默认的 %LOCALAPPDATA%\FaceGazeBridge\calibration.ini。
+注意：校准页和输出设置页都会真的保存。一定要用 --calibration / --outputs-config
+指到临时文件，否则探针会覆盖用户默认的 calibration.ini / outputs.ini。
 
 只依赖标准库：CDP 本身就是 WebSocket + JSON，帧编解码与 probe_ipc.py 同一套写法。
 """
@@ -295,6 +296,32 @@ def main():
         "})()"))
     print(f"输出页：{output}")
 
+    # 输出设置表单：改 WS 端口/帧率 → 保存 → 状态回读（不触发重启）
+    # 引擎必须用 --outputs-config 指向临时文件，否则会写用户的 outputs.ini。
+    outputs_form = json.loads(cdp.evaluate(
+        "(() => {"
+        "  if (!state.status || !state.status.outputs) return JSON.stringify({ready: false});"
+        "  const set = (id, value) => { const el = document.getElementById(id);"
+        "    el.value = value; el.dispatchEvent(new Event('input', { bubbles: true })); };"
+        "  const check = (id, value) => { const el = document.getElementById(id);"
+        "    el.checked = value; el.dispatchEvent(new Event('change', { bubbles: true })); };"
+        "  set('o-ws-port', '9113');"
+        "  set('o-ws-rate', '25');"
+        "  check('o-ws-on', true);"
+        "  const dirty = state.outputs_dirty;"
+        "  document.getElementById('o-save').click();"
+        "  return JSON.stringify({ ready: true, dirty_after_edit: dirty });"
+        "})()"))
+    time.sleep(1.0)
+    outputs_saved = json.loads(cdp.evaluate(
+        "JSON.stringify({"
+        "  dirty: state.outputs_dirty,"
+        "  ws: !!(state.status && state.status.outputs && state.status.outputs.ws_enabled),"
+        "  port: state.status && state.status.outputs ? state.status.outputs.ws_port : -1,"
+        "  rate: state.status && state.status.outputs ? state.status.outputs.ws_rate : -1"
+        "})"))
+    print(f"输出表单：{outputs_form} → {outputs_saved}")
+
     # 校准页（ADR-0021 P1/P2）：档案列表、30 Hz 预览、改动实时生效、保存/重载
     cal_page = json.loads(cdp.evaluate(
         "(() => {"
@@ -521,6 +548,19 @@ def main():
         ok = False
     if output.get("udp_enabled") and output.get("udp_target") not in (output.get("udp_text") or ""):
         print("FAIL UDP 输出行没显示目标地址")
+        ok = False
+    if not outputs_form.get("ready"):
+        print("FAIL 输出设置表单没有拿到 status.outputs")
+        ok = False
+    elif not outputs_form.get("dirty_after_edit"):
+        print("FAIL 改输出表单后没有标记未保存")
+        ok = False
+    elif outputs_saved.get("dirty"):
+        print("FAIL 保存输出设置后 dirty 仍为真")
+        ok = False
+    elif not outputs_saved.get("ws") or outputs_saved.get("port") != 9113 \
+            or outputs_saved.get("rate") != 25:
+        print(f"FAIL 保存的输出设置没有回读成功：{outputs_saved}")
         ok = False
     if sources.get("rows") != sources.get("expected"):
         print("FAIL 输入源卡片行数与 status.sources 不一致")

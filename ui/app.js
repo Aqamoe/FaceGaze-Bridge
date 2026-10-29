@@ -193,6 +193,8 @@ const state = {
   expanded_modules: new Set(),
   library_tab: "vrcft",
   restarting: false,
+  outputs_dirty: false,
+  pending_outputs_restart: false,
   status: null,
   source_rows: [],
   running_rows: [],
@@ -369,6 +371,16 @@ function handle(message) {
           state.steamvr_busy = false;
           render_steamvr();
         }
+        if (message.command === "set_outputs") {
+          state.pending_outputs_restart = false;
+        }
+      } else if (message.command === "set_outputs") {
+        state.outputs_dirty = false;
+        show_toast(t("output.saved"));
+        if (state.pending_outputs_restart) {
+          state.pending_outputs_restart = false;
+          send({ type: "restart_engine" });
+        }
       } else if (message.ok && message.message) {
         show_toast(message.message);
         if (message.command === "import_modules") {
@@ -385,8 +397,73 @@ function handle(message) {
 
 // ---------- 渲染：状态 ----------
 
+function sync_output_form() {
+  const vmc = $("o-vmc-on").checked;
+  const shm = $("o-shm-on").checked;
+  const ws = $("o-ws-on").checked;
+  const udp = $("o-udp-on").checked;
+  $("o-vmc-target").disabled = !vmc;
+  $("o-shm-name").disabled = !shm;
+  $("o-ws-port").disabled = !ws;
+  $("o-ws-rate").disabled = !ws;
+  $("o-ws-all").disabled = !ws;
+  $("o-udp-target").disabled = !udp;
+  $("o-udp-rate").disabled = !udp;
+}
+
+function apply_outputs(outputs) {
+  if (!outputs) {
+    return;
+  }
+  // 用户正在改表单时不要拿 10 Hz 的状态推送覆盖输入
+  if (!state.outputs_dirty) {
+    $("o-vrchat").value = outputs.vrchat || "";
+    $("o-eye-mode").value = outputs.eye_mode || "parameters";
+    $("o-params-mode").value = outputs.params_mode || "v2";
+    $("o-vmc-on").checked = !!outputs.vmc_enabled;
+    $("o-vmc-target").value = outputs.vmc_target || "";
+    $("o-shm-on").checked = !!outputs.shm_enabled;
+    $("o-shm-name").value = outputs.shm_name || "";
+    $("o-ws-on").checked = !!outputs.ws_enabled;
+    $("o-ws-port").value = outputs.ws_port || 9101;
+    $("o-ws-rate").value = outputs.ws_rate ?? 30;
+    $("o-ws-all").checked = !!outputs.ws_all;
+    $("o-udp-on").checked = !!outputs.udp_enabled;
+    $("o-udp-target").value = outputs.udp_target || "";
+    $("o-udp-rate").value = outputs.udp_rate ?? 0;
+  }
+  sync_output_form();
+}
+
+function collect_outputs() {
+  return {
+    type: "set_outputs",
+    vrchat: $("o-vrchat").value.trim(),
+    eye_mode: $("o-eye-mode").value,
+    params_mode: $("o-params-mode").value,
+    vmc_enabled: $("o-vmc-on").checked,
+    vmc_target: $("o-vmc-target").value.trim(),
+    shm_enabled: $("o-shm-on").checked,
+    shm_name: $("o-shm-name").value.trim(),
+    ws_enabled: $("o-ws-on").checked,
+    ws_port: Number($("o-ws-port").value),
+    ws_rate: Number($("o-ws-rate").value),
+    ws_all: $("o-ws-all").checked,
+    udp_enabled: $("o-udp-on").checked,
+    udp_target: $("o-udp-target").value.trim(),
+    udp_rate: Number($("o-udp-rate").value),
+  };
+}
+
+function save_outputs(restart) {
+  state.pending_outputs_restart = !!restart;
+  state.outputs_dirty = true;
+  send(collect_outputs());
+}
+
 function render_status(status) {
   state.status = status; // 留给调试与探针读最新一帧
+  apply_outputs(status.outputs);
   $("m-fps").textContent = (status.fps || 0).toFixed(1);
   $("m-frames").textContent = fmt_int(status.frames_in);
   $("m-ticks").textContent = fmt_int(status.ticks);
@@ -428,7 +505,9 @@ function render_status(status) {
     : t("output.shm.off");
   const ws_out = status.ws_out || {};
   $("o-ws").textContent = ws_out.enabled
-    ? `${ws_out.target} · ${fmt_int(ws_out.messages)} · ${ws_out.clients || 0} ${t("output.clients")}`
+    ? (ws_out.listening === false
+        ? `${ws_out.target} · ${t("output.ws.failed")}`
+        : `${ws_out.target} · ${fmt_int(ws_out.messages)} · ${ws_out.clients || 0} ${t("output.clients")}`)
     : t("output.ws.off");
   const udp_out = status.udp_out || {};
   $("o-udp").textContent = udp_out.enabled
@@ -1969,6 +2048,30 @@ function wire() {
 
   $("o-reload").addEventListener("click", () => {
     send({ type: "reload_avatar" });
+  });
+  for (const id of [
+    "o-vrchat", "o-eye-mode", "o-params-mode", "o-vmc-on", "o-vmc-target",
+    "o-shm-on", "o-shm-name", "o-ws-on", "o-ws-port", "o-ws-rate", "o-ws-all",
+    "o-udp-on", "o-udp-target", "o-udp-rate",
+  ]) {
+    const element = $(id);
+    element.addEventListener("input", () => {
+      state.outputs_dirty = true;
+    });
+    element.addEventListener("change", () => {
+      state.outputs_dirty = true;
+      sync_output_form();
+    });
+  }
+  $("o-save").addEventListener("click", () => save_outputs(false));
+  $("o-save-restart").addEventListener("click", async () => {
+    if (await ask_confirm({
+      title: t("output.save_restart"),
+      message: t("output.save_restart_confirm"),
+      danger: false,
+    })) {
+      save_outputs(true);
+    }
   });
 
   $("mod-rescan").addEventListener("click", () => {

@@ -81,7 +81,7 @@
 cmake -S . -B build/test -G "Visual Studio 16 2019" -A x64
 cmake --build build/test --config Debug --parallel
 
-# 单测（当前 139 个用例）
+# 单测（当前 144 个用例）
 ./build/test/bin/Debug/fgb-tests.exe
 # 或
 ctest --test-dir build/test -C Debug --output-on-failure
@@ -164,8 +164,8 @@ python tools/probe_ipc.py 8787
 
 # 界面：通过 WebView2 远程调试端口跑 JS，验证页面真的渲染了数据
 # 包含 3D 模型加载、morph、区域高亮、SteamVR 卡片（只读检测，不切换真实自启动）
-# 校准页会真的保存档案：引擎启动时加 --calibration %TEMP%\fgb-probe\calibration.ini，
-# 别让探针写用户默认的 %LOCALAPPDATA%\FaceGazeBridge\calibration.ini
+# 校准页/输出设置页会真的保存：引擎启动时加 --calibration 与 --outputs-config 指到临时文件，
+# 别让探针写用户默认的 calibration.ini / outputs.ini
 # 已经有别的实例在跑时，必须给测试实例单独的 user-data，否则 CDP 端口不会监听；
 # 带 --debug-port 的实例不参与单实例检查，可以故意多开（ADR-0022 §4）
 "FaceGaze Bridge.exe" --user-data %TEMP%
@@ -248,6 +248,7 @@ gh run watch <id> --exit-status
 | SteamVR 开关一直是灰的 | 状态是 `not_running`/`not_installed`，或缺失 manifest | 卡片会写原因；`/api/steamvr` 可 curl；真实注册必须 SteamVR 正在运行 |
 | OSCQuery 找不到或误判 | 启动回退本地 JSON；同机 OVRToolkit 也广播 `_oscjson._tcp` | mDNS 收满 150 ms 窗口再选，只认实例名以 VRChat 开头；HTTP 端口动态，别探 9001；`python tools/probe_oscquery.py` 先确认 |
 | 输出帧率比设定低 | 90 Hz 实际 60、30 Hz 实际 24 | `now-last >= interval` 在 120 Hz tick 下会被量化；用 `sinks/throttle.hpp` 的 `SinkThrottle` 按截止时间调度 |
+| 输出页保存了但没生效 | 运行态仍是旧目标/开关 | 保存只写 `outputs.ini`，要点「保存并重启引擎」；`status.outputs` 是保存值，`*_out` 是运行态（ADR-0025） |
 
 ## 6. 代码地图
 
@@ -256,6 +257,7 @@ src/base/      日志（含订阅回调）、时钟、极简 JSON
 src/core/      数据模型、无锁容器（SPSC ring / seqlock）、滤波与校准
 src/osc/       OSC 编解码（零分配写入器）
 src/net/       UDP / TCP / WebSocket 服务端（自写 RFC 6455 子集）、WinHTTP 下载、mDNS 发现
+src/config/    INI 与输出设置（outputs.ini：目标/开关/帧率，命令行可覆盖）
 src/vrcft/     VRCFT 协议、沙箱、模块进程托管、模块仓（module_registry）、模块库（module_library）
 src/vmc/       VMC blendshape 名字表（输入/输出共用，只有这一份）
 src/params/    参数目录、v2/v1 派生、地址路由、OSCQuery 头像发现、校准（含预览取样 preview_tap）

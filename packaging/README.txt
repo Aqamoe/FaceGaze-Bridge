@@ -64,6 +64,9 @@ VRCFT 运行时
 
     "FaceGaze Bridge.exe" --source vmc --ws-out 9101 --udp-out 127.0.0.1:9102
 
+输出的目标/开关也可以在界面「输出」页保存；命令行参数优先于保存值，
+某次启动想忽略保存值可加 --no-saved-outputs。
+
 其它可用的引擎参数：--vrchat host:port、--vmc-port、--eye-mode、--params、
 --filter、--module-id ...（完整列表在命令行跑 fgb-cli.exe run --help）。
 
@@ -72,7 +75,9 @@ VRCFT 运行时
   状态：帧率 / 累计帧 / tick 抖动 / OSC 条数 / 当前头像 / 输入源
   模块：本机导入、zip 安装、启停、删除、设为启动、模块库一键安装、运行时状态
   参数：365 个参数的热力图（只显示已绑定的），搜索过滤
-  输出：参数集 / 眼追模式 / 绑定条数 / VMC / 共享内存 / WebSocket / UDP，重新读取头像参数表
+  输出：参数集 / 眼追模式 / 绑定条数 / VMC / 共享内存 / WebSocket / UDP，
+        可编辑所有输出目标与开关（保存到 outputs.ini，保存并重启引擎后生效），
+        重新读取头像参数表
   日志：引擎与模块日志，可过滤级别
   设置：One Euro 滤波开关与滑杆，SteamVR 启动项（状态/自启动/重新检测/移除注册），
         日志级别，界面语言，停止引擎

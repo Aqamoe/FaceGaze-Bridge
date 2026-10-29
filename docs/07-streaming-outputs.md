@@ -22,6 +22,12 @@ fgb-cli run --source vrcft --ws-out 9101 --ws-out-rate 60 --ws-out-all
 两者都是**全量帧**：即使某个形状这一帧没变也会带上（UDP 由 `shape_valid` 标记，
 WS 默认只发有效且 > 0.01 的形状）。接收端不需要维护上一帧状态。
 
+**设置可以持久化**：界面「输出」页可以直接改这些目标/开关，保存到
+`%LOCALAPPDATA%\FaceGazeBridge\outputs.ini`，点「保存并重启引擎」生效。
+优先级是 **命令行参数 > outputs.ini > 默认值**；某次启动想忽略保存值就加
+`--no-saved-outputs`，想用另一份文件就加 `--outputs-config <路径>`。
+详见 [ADR-0025](adr/0025-output-settings-persistence.md)。
+
 ---
 
 ## 1. WebSocket JSON
@@ -72,6 +78,8 @@ ws://127.0.0.1:<port>/ws
 - 支持多个客户端同时连接；每帧向所有客户端广播。
 - 某个客户端不读、出站缓冲超过 512 KB 时会被断开；重连即可，服务端不保留历史。
 - 没有客户端时不做 JSON 编码，也不计入 `messages`。
+- 端口被占用时只关闭 WS 这一路，引擎继续运行；状态里 `ws_out.listening=false`，
+  输出页会显示「未监听（端口被占用？）」。
 
 ### 最小客户端（Python）
 

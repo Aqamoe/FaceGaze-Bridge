@@ -13,6 +13,7 @@
 #include "sinks/sink.hpp"
 #include "sinks/throttle.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -40,6 +41,8 @@ public:
 
     std::uint16_t port() const noexcept { return server_.port(); }
     std::size_t clients() const noexcept { return server_.ready_count(); }
+    // 端口被占时 start() 仍返回 true（不拖垮引擎），但这里为 false
+    bool listening() const noexcept { return started_.load(); }
 
     // 供测试/探针对照：生成一帧 JSON 文本
     static std::string build_json(const FaceFrame& frame, const GazeState& gaze,
@@ -52,7 +55,7 @@ private:
     SinkStats stats_{};
     SinkThrottle throttle_;
     std::uint64_t seq_ = 0;
-    bool started_      = false;
+    std::atomic<bool> started_{false};
 };
 
 } // namespace fgb

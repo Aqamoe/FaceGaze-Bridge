@@ -32,8 +32,10 @@ public:
     WsServer(const WsServer&)            = delete;
     WsServer& operator=(const WsServer&) = delete;
 
-    // port == 0 时由系统分配，port() 返回真实端口
-    bool listen(std::uint16_t port, std::string& error);
+    // port == 0 时由系统分配，port() 返回真实端口。
+    // exclusive：Windows 上用 SO_EXCLUSIVEADDRUSE，端口被占时 bind 直接失败；
+    // 数据流输出需要这个语义，控制面保持原来的快速重启行为。
+    bool listen(std::uint16_t port, std::string& error, bool exclusive = false);
     void close();
 
     bool is_open() const noexcept { return handle_ >= 0; }

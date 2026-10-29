@@ -14,6 +14,7 @@
 // 省掉 https 页面连 ws:// 回环时的 mixed-content 麻烦）。
 #pragma once
 
+#include "config/outputs.hpp"
 #include "core/process/one_euro.hpp"
 #include "engine/engine.hpp"
 #include "net/ws_server.hpp"
@@ -68,6 +69,11 @@ struct IpcContext {
     std::string source_name;
     std::string params_mode;
     std::string eye_mode;
+
+    // 输出页保存的目标：启动时加载/应用，set_outputs 写回文件；下次启动生效
+    config::OutputOptions outputs;
+    std::filesystem::path outputs_path;
+
     std::filesystem::path ui_dir;    // 静态页面根目录，空表示不发页面
     std::filesystem::path exe_dir;   // 产品 exe 所在目录；app.vrmanifest 在它旁边
 

@@ -331,9 +331,59 @@
               <li><b data-i18n="output.chain.derive">派生</b><span data-i18n="output.chain.derive.desc">88 形状 → v2 / v1 参数</span></li>
               <li><b data-i18n="output.chain.out">输出</b><span>OSC /avatar/parameters/*</span></li>
             </ol>
-            <p class="hint" data-i18n="output.chain.note">引擎由窗口拉起：关闭本窗口会同时停止追踪输出。</p>
+            <p class="hint" data-i18n="output.chain.note">关闭窗口只是收进托盘，追踪继续；托盘「退出」才停引擎。</p>
           </article>
         </div>
+
+        <article class="card" style="margin-top:14px">
+          <h2 data-i18n="output.settings.title">输出设置</h2>
+          <p class="hint" data-i18n="output.settings.hint">
+            保存后重启引擎生效。WebSocket 只绑本机回环；UDP/WS 默认关闭。
+          </p>
+          <div class="out-grid">
+            <label class="out-row"><span data-i18n="output.vrchat">VRChat 目标</span>
+              <input type="text" id="o-vrchat" placeholder="127.0.0.1:9000"></label>
+            <label class="out-row"><span data-i18n="output.eye_mode">眼追模式</span>
+              <select id="o-eye-mode">
+                <option value="parameters">parameters</option>
+                <option value="native">native</option>
+                <option value="both">both</option>
+              </select></label>
+            <label class="out-row"><span data-i18n="output.params_mode">参数集</span>
+              <select id="o-params-mode">
+                <option value="v2">v2</option>
+                <option value="v1">v1</option>
+                <option value="both">both</option>
+              </select></label>
+            <label class="out-row"><span data-i18n="output.vmc.enable">启用 VMC</span>
+              <input type="checkbox" id="o-vmc-on"></label>
+            <label class="out-row"><span data-i18n="output.vmc.target">VMC 目标</span>
+              <input type="text" id="o-vmc-target" placeholder="127.0.0.1:39539"></label>
+            <label class="out-row"><span data-i18n="output.shm.enable">启用共享内存</span>
+              <input type="checkbox" id="o-shm-on"></label>
+            <label class="out-row"><span data-i18n="output.shm.name">映射名</span>
+              <input type="text" id="o-shm-name" placeholder="default"></label>
+            <label class="out-row"><span data-i18n="output.ws.enable">启用 WebSocket JSON</span>
+              <input type="checkbox" id="o-ws-on"></label>
+            <label class="out-row"><span data-i18n="output.ws.port">WS 端口</span>
+              <input type="number" id="o-ws-port" min="1" max="65535"></label>
+            <label class="out-row"><span data-i18n="output.ws.rate">WS 帧率</span>
+              <input type="number" id="o-ws-rate" min="0" max="1000"></label>
+            <label class="out-row"><span data-i18n="output.ws.all">发送全部形状</span>
+              <input type="checkbox" id="o-ws-all"></label>
+            <label class="out-row"><span data-i18n="output.udp.enable">启用 UDP 二进制</span>
+              <input type="checkbox" id="o-udp-on"></label>
+            <label class="out-row"><span data-i18n="output.udp.target">UDP 目标</span>
+              <input type="text" id="o-udp-target" placeholder="127.0.0.1:9102"></label>
+            <label class="out-row"><span data-i18n="output.udp.rate">UDP 帧率</span>
+              <input type="number" id="o-udp-rate" min="0" max="1000"></label>
+          </div>
+          <div class="out-actions">
+            <button class="btn" id="o-save" data-i18n="output.save">保存</button>
+            <button class="btn" id="o-save-restart" data-i18n="output.save_restart">保存并重启引擎</button>
+          </div>
+          <p class="hint" data-i18n="output.settings.rate_hint">帧率 0 = 每个引擎 tick；UDP/WS 的改动需要重启引擎。</p>
+        </article>
       </section>
 
       <!-- 日志 -->

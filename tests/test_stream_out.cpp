@@ -184,5 +184,25 @@ FGB_TEST(ws_json_sink_listens_on_requested_port) {
     WsJsonSink sink{config};
     FGB_CHECK(sink.start());
     FGB_CHECK(sink.port() != 0);
+    FGB_CHECK(sink.listening());
     sink.stop();
+}
+
+FGB_TEST(ws_json_sink_port_conflict_does_not_kill_engine) {
+    WsJsonConfig first_config;
+    first_config.port = 0;
+    WsJsonSink first{first_config};
+    FGB_CHECK(first.start());
+    FGB_CHECK(first.listening());
+
+    // 第二个实例占用同一端口：start 仍返回 true（可选输出失败不拖垮追踪），
+    // 但 listening=false，状态页会显示"未监听"。
+    WsJsonConfig second_config;
+    second_config.port = first.port();
+    WsJsonSink second{second_config};
+    FGB_CHECK(second.start());
+    FGB_CHECK(!second.listening());
+
+    first.stop();
+    second.stop();
 }

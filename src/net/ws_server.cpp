@@ -62,7 +62,7 @@ NativeSocket native(std::intptr_t handle) noexcept { return static_cast<NativeSo
 
 WsServer::~WsServer() { close(); }
 
-bool WsServer::listen(std::uint16_t port, std::string& error) {
+bool WsServer::listen(std::uint16_t port, std::string& error, bool exclusive) {
     if (!ensure_wsa()) {
         error = "Winsock 初始化失败";
         return false;
@@ -76,7 +76,15 @@ bool WsServer::listen(std::uint16_t port, std::string& error) {
     }
 
     int yes = 1;
-    ::setsockopt(s, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&yes), sizeof(yes));
+#ifdef _WIN32
+    // 控制面需要快速重启（SO_REUSEADDR）；数据流输出用独占绑定，
+    // 否则 Windows 允许两个进程绑同一端口，后绑的那个静默收不到连接。
+    const int option = exclusive ? SO_EXCLUSIVEADDRUSE : SO_REUSEADDR;
+#else
+    const int option = SO_REUSEADDR;
+    (void)exclusive;
+#endif
+    ::setsockopt(s, SOL_SOCKET, option, reinterpret_cast<const char*>(&yes), sizeof(yes));
 
     sockaddr_in addr{};
     addr.sin_family      = AF_INET;
