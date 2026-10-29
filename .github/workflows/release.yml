@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "要打包的 tag（例如 v1.0.0）"
+        description: "要打包的 tag（例如 v1.0.1）"
         required: true
       runtime_url:
         description: "可选：VRCFT 运行时压缩包 URL（覆盖仓库变量）"

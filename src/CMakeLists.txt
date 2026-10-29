@@ -227,7 +227,18 @@ if(WIN32)
     install(FILES
         "${CMAKE_SOURCE_DIR}/packaging/app.vrmanifest"
         "${CMAKE_SOURCE_DIR}/NOTICE"
+        "${CMAKE_SOURCE_DIR}/LICENSE"
         DESTINATION .)
     install(FILES "${CMAKE_SOURCE_DIR}/third_party/openvr/LICENSE"
         DESTINATION licenses RENAME openvr-LICENSE.txt)
+    install(FILES "${CMAKE_SOURCE_DIR}/third_party/dotnet/LICENSE.txt"
+        DESTINATION licenses RENAME dotnet-LICENSE.txt)
+    if(FGB_WEBVIEW2_SDK_DIR AND EXISTS "${FGB_WEBVIEW2_SDK_DIR}/LICENSE.txt")
+        install(FILES "${FGB_WEBVIEW2_SDK_DIR}/LICENSE.txt"
+            DESTINATION licenses RENAME webview2-LICENSE.txt)
+    endif()
+    if(FGB_WEBVIEW2_SDK_DIR AND EXISTS "${FGB_WEBVIEW2_SDK_DIR}/NOTICE.txt")
+        install(FILES "${FGB_WEBVIEW2_SDK_DIR}/NOTICE.txt"
+            DESTINATION licenses RENAME webview2-NOTICE.txt)
+    endif()
 endif()

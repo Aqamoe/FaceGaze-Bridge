@@ -6,7 +6,7 @@
 
 ## 背景
 
-面捕头像很少把参数声明成 Float。实测本机 `Eku-FT2-S` 的 156 个 v2 参数里，
+面捕头像很少把参数声明成 Float。实测本机 `Avatar-A` 的 156 个 v2 参数里，
 绝大多数是 `FT/v2/JawOpen1`、`FT/v2/JawOpen2`、`FT/v2/JawOpen4`… 这种 bool 组，
 外加一个 `FT/v2/JawOpenNegative`。这是 VRCFT 的"二进制参数"：一个 0..1 的浮点值
 被拆成若干 bool，头像侧再按位拼回一个整数。
@@ -35,7 +35,7 @@
 
 ## 验证
 
-真实头像 `Eku-FT2-S`，VMC 输入 `jawOpen = 0.5`，该头像声明了 5 位（1/2/4/8/16）：
+真实头像 `Avatar-A`，VMC 输入 `jawOpen = 0.5`，该头像声明了 5 位（1/2/4/8/16）：
 
 ```
 FT/v2/JawOpen     0.5

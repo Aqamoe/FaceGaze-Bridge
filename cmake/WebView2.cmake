@@ -48,6 +48,9 @@ function(fgb_webview2_target out_target)
         endif()
     endif()
 
+    # 供安装规则复制 SDK 的 LICENSE/NOTICE（发布包 licenses/ 里要带）
+    set(FGB_WEBVIEW2_SDK_DIR "${root}" PARENT_SCOPE)
+
     set(include_dir "${root}/build/native/include")
     set(loader "${root}/build/native/${arch}/WebView2LoaderStatic.lib")
     if(NOT EXISTS "${include_dir}/WebView2.h" OR NOT EXISTS "${loader}")

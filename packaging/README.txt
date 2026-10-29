@@ -173,3 +173,10 @@ VRCFT 运行时
   校准档案：%LOCALAPPDATA%\FaceGazeBridge\calibration.ini（上一版自动留成 .bak）
   输出预设：%LOCALAPPDATA%\FaceGazeBridge\outputs-profiles\*.ini
   配置：%APPDATA%\FaceGazeBridge\fgb.ini
+
+作者与许可证
+------------
+  FaceGaze Bridge 由 Aqamoe（光水）开发，以 Apache-2.0 许可发布。
+  https://github.com/Aqamoe/FaceGaze-Bridge
+  许可证全文与第三方组件声明见本目录的 LICENSE、NOTICE 与 licenses\。
+

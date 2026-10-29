@@ -17,8 +17,8 @@
 namespace fgb::net {
 
 struct MdnsService {
-    std::string instance;   // VRChat-Client-31CE03._oscjson._tcp.local
-    std::string host;       // VRChat-Client-31CE03.oscjson.local
+    std::string instance;   // VRChat-Client-XXXXXX._oscjson._tcp.local
+    std::string host;       // VRChat-Client-XXXXXX.oscjson.local
     std::string address;    // IPv4，点分十进制
     std::uint16_t port = 0; // OSCQuery HTTP 端口
     std::vector<std::string> txt;

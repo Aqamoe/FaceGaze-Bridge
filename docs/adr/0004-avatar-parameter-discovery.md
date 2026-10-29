@@ -73,7 +73,7 @@ VRChat 每次换头像都会写一份配置。但**加载头像不会更新 `con
 ### 第二版：最近 8 份里挑 `v2/` 参数最多的 —— 仍然不够
 
 面捕头像动辄上百个 v2 参数，普通头像通常是 0，因此"参数多"是个还行的信号。
-但真机验收时它挑中了 `Eku-FT2-S`，而用户身上穿的是 `Eku-FT2-SD`——
+但真机验收时它挑中了 `Avatar-A`，而用户身上穿的是 `Avatar-B`——
 两个 FT 变体参数数量接近，靠数量永远分不出来。
 
 ### 定稿：读 VRChat 日志确认"当前穿着"
@@ -81,7 +81,7 @@ VRChat 每次换头像都会写一份配置。但**加载头像不会更新 `con
 `output_log_*.txt` 里有一条只针对本地玩家自己头像的记录：
 
 ```
-2026.10.29 01:47:51 Debug -  Saving Avatar Data:avtr_6ce1b451-cc77-43db-ac3e-eec2f3258ec6
+2026.10.29 01:47:51 Debug -  Saving Avatar Data:avtr_a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d
 ```
 
 该日志里 142 条 `Saving Avatar Data` 全部指向同一个 ID，正是身上那件。

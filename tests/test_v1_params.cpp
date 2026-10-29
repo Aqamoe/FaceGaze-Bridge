@@ -389,12 +389,12 @@ FGB_TEST(parse_avatar_id_from_log_takes_the_last) {
     const char* log =
         "2026.10.29 01:00:00 Debug - [Behaviour] Loading avatar for someone\r\n"
         "2026.10.29 01:00:05 Debug -  Saving Avatar Data:avtr_11111111-1111-1111-1111-111111111111\r\n"
-        "2026.10.29 01:05:00 Debug -  Saving Avatar Data:avtr_6ce1b451-cc77-43db-ac3e-eec2f3258ec6\r\n";
+        "2026.10.29 01:05:00 Debug -  Saving Avatar Data:avtr_a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d\r\n";
 
     std::string id;
     FGB_CHECK(parse_avatar_id_from_log(log, id));
     // 头像换过之后，只有最后一条代表当下
-    FGB_CHECK(id == "avtr_6ce1b451-cc77-43db-ac3e-eec2f3258ec6");
+    FGB_CHECK(id == "avtr_a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d");
 }
 
 FGB_TEST(parse_avatar_id_from_log_rejects_junk) {

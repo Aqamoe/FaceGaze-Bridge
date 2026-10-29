@@ -336,10 +336,10 @@ diagnostic-20261028-2310/
 
 ### 8.1 本项目
 
-建议 **Apache-2.0**：
+采用 **Apache-2.0**（根目录 `LICENSE`；版权与第三方声明见 `NOTICE`，安装包随附 `licenses/`）：
 - 与 VRCFT 生态一致，社区接受度高
 - 含专利授权条款，对大公司集成友好
-- 允许闭源商业集成（如果你未来想做付费版）
+- 允许闭源商业集成
 
 ### 8.2 使用 VRCFT 资产时的义务
 
@@ -350,7 +350,9 @@ diagnostic-20261028-2310/
 | 再分发其二进制（`ModuleProcess.exe` 等） | 必须随包附带 `LICENSE`、`NOTICE`，并在"关于"页列出 |
 | 使用 "VRCFT" / "VRCFaceTracking" 名称 | **不得作为产品名/商标使用**；只能作事实性描述（"兼容 VRCFaceTracking 模块"） |
 
-**建议做法**：核心 clean-room，`vrcft-host` 组件以"再分发官方二进制"方式集成，附带完整许可证文件与来源说明。这样法律风险最低，且工程成本最低。
+**本项目做法**：核心 clean-room，`runtime/vrcft` 组件以"再分发官方二进制"方式集成，随包附带
+`runtime/vrcft/LICENSE`、`runtime/vrcft/NOTICE-VRCFaceTracking.txt` 与根目录 `NOTICE`；
+设置页「关于」卡片给出摘要和入口。
 
 ### 8.3 厂商 SDK 的红线
 

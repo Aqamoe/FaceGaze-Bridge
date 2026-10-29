@@ -1,240 +1,246 @@
+<div align="right">
+  <img src="ui/logo.png" width="96" alt="FaceGaze Bridge">
+</div>
+
 # FaceGaze Bridge
 
-> 眼追 / 面捕 / 注视点数据的统一桥接层 —— 把任何来源的追踪数据，送到任何需要它的地方。
+[![CI](https://github.com/Aqamoe/FaceGaze-Bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/Aqamoe/FaceGaze-Bridge/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Aqamoe/FaceGaze-Bridge)](https://github.com/Aqamoe/FaceGaze-Bridge/releases)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-FaceGaze Bridge（下称 FGB）是一个用 C++ 重写的追踪数据中间件。它在功能上完整覆盖 [VRCFaceTracking (VRCFT)](https://github.com/benaclejames/VRCFaceTracking) 的能力，并在此之上提供 VRCFT 没有的东西：**多目标输出、注视点数据服务、以及给串流软件/游戏引擎用的低延迟数据通道**。
+**把眼追 / 面捕 / 注视点数据，送到任何需要它的地方。**
 
----
+FaceGaze Bridge（FGB）是一个 Windows 上的开源追踪数据桥接层。它兼容 VRCFT 模块生态，
+把表情、眼追和头姿同时输出给 VRChat OSC、VMC、共享内存、WebSocket 和 UDP，
+并提供本机注视点 API。核心是 C++，界面是本地 WebView2 页面，不依赖云服务。
 
-## 一句话定位
+> **English:** FaceGaze Bridge is an open-source Windows bridge for eye, face and gaze
+> tracking. It loads VRCFT-compatible modules and streams the merged result to VRChat OSC,
+> VMC, shared memory, WebSocket and UDP, with a local WebView2 UI and a loopback gaze API.
+> Licensed under Apache-2.0. Author: [Aqamoe (光水)](https://github.com/Aqamoe).
 
-VRCFT 解决的问题是「我的面捕硬件怎么驱动 VRChat 头像」。
-FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像、双耳音频、注视点渲染、串流编码和第三方应用」。
+## 为什么需要它
 
----
+VRCFT 解决的是「我的面捕硬件怎么驱动 VRChat 头像」。FGB 解决的是
+「同一份追踪数据，怎么同时驱动头像、Unity 场景、串流软件和自研应用」。
 
-## 文档索引
+- 模块兼容：直接驱动官方 `VRCFaceTracking.ModuleProcess.exe`，现有 .NET 模块零改动可用
+- 多目标：一张脸可以同时写 VRChat、VMC、共享内存、WebSocket 和 UDP
+- 可集成：原生 C ABI、共享内存布局、JSON/UDP 二进制协议都有文档和示例
+- 本地优先：控制面只绑回环，无遥测、无账号、无云端依赖
 
-| 文档 | 内容 | 读者 |
-|---|---|---|
-| [docs/01-architecture.md](docs/01-architecture.md) | VRCFT 技术解剖、C++ 重构边界、进程/线程模型、数据模型、模块系统、输出系统 | 架构 / 核心开发 |
-| [docs/02-features.md](docs/02-features.md) | 功能规格书：VRCFT 对等功能清单 + 增值功能（注视点渲染 / VRSS / 串流） | 产品 / 开发 |
-| [docs/03-roadmap.md](docs/03-roadmap.md) | 里程碑 M0–M6、任务分解、验收标准、工作量估算 | 项目管理 |
-| [docs/04-engineering.md](docs/04-engineering.md) | 技术栈、构建、测试、CI、发布、可观测性、许可证合规、风险登记册 | 工程 |
-| [docs/05-native-module-guide.md](docs/05-native-module-guide.md) | 原生模块 C ABI v1：生命周期、帧提交、编译、打包安装与排障 | 模块开发者 |
-| [docs/06-shared-memory.md](docs/06-shared-memory.md) | 共享内存输出的开启、读取协议与字段速查 | 集成开发者 |
-| [docs/07-streaming-outputs.md](docs/07-streaming-outputs.md) | WebSocket JSON 与 UDP 二进制的协议、字段表和读取示例 | 集成开发者 |
-| [docs/08-gaze-service.md](docs/08-gaze-service.md) | `/api/gaze` 与 WS `gaze` 的字段、注视判定和能力边界 | 集成开发者 |
-| [docs/09-user-guide.md](docs/09-user-guide.md) | 安装、界面、输出/预设、校准、兼容表、FAQ、故障排查 | 最终用户 |
-| [docs/10-security-review.md](docs/10-security-review.md) | 控制面/静态文件/模块安装/配置/诊断的安全审查 | 维护者 |
-| [docs/11-regression-2026-10-30.md](docs/11-regression-2026-10-30.md) | v1.0 回归证据与尚未通过的门禁 | 维护者/发布 |
+> FGB 是独立实现，与 VRCFaceTracking 项目没有隶属或背书关系。
+> “VRCFaceTracking / VRCFT” 仅用于事实性描述兼容性。
 
----
+## 特性
+
+| 能力 | 说明 |
+|---|---|
+| VRCFT 模块兼容 | 自带精简模块宿主运行时，卸载 VRCFT 后仍可加载模块；支持导入本机模块、`.zip` 安装、启停 |
+| 原生 C ABI | 单导出符号、POD 结构、共享内存传帧；附带不需要硬件的示例模块 |
+| 多源合并 | 表情 / 眼追 / 头姿可分别选择提供者，支持 VMC、模块、抓包回放同时输入 |
+| 多路输出 | VRChat OSC、VMC、命名共享内存、WebSocket JSON、UDP 二进制 |
+| 注视点服务 | `GET /api/gaze` 与 30 Hz WS 推送：注视方向、扫视/注视状态、聚散、头姿 |
+| 头像发现 | OSCQuery（mDNS）自动读取当前头像参数表，换头像自动重绑；可回退本地配置 |
+| 校准与滤波 | 88 个形状的 lo/hi、视线 gain/center、3D 预览、One Euro 滤波、命名输出预设 |
+| 桌面体验 | 单入口 exe、托盘常驻、关窗继续追踪、可选随 SteamVR 启动、三语界面 |
+| 诊断 | tick 延迟/CPU/内存/句柄、日志、崩溃转储、一键诊断包、手动检查更新 |
 
 ## 当前状态
 
-| 阶段 | 状态 |
-|---|---|
-| 方案设计 | ✅ 完成（本文档集） |
-| 技术预研（M0） | ✅ 协议已实测跑通（[ADR-0003](docs/adr/0003-vrcft-ipc-protocol.md)） |
-| 核心骨架（M1） | ✅ VMC → OSC 端到端 |
-| 模块兼容层（M2） | ✅ **核心跑通**：C++ 直接驱动官方 ModuleProcess，拿到真实 PICO 数据 |
-| 参数层（M3） | ✅ v2 + v1 legacy + 地址发现 + binary；**真机验收通过**（[ADR-0006](docs/adr/0006-hardware-acceptance.md)） |
-| 录制回放（M4 之一） | ✅ 录原始包 + 回放 + 参数导出 CSV（[ADR-0007](docs/adr/0007-capture-replay.md)） |
-| 校准与滤波（M3 剩余） | ✅ 逐形状校准（从两份抓包推导）+ One Euro 滤波（[ADR-0008](docs/adr/0008-calibration-and-filtering.md)） |
-| 界面（WebView2） | ✅ 单入口 `FaceGaze Bridge.exe`（窗口自己拉起引擎）+ WebSocket IPC：状态 / 模块 / 参数热力图 / 输出 / 日志 / 设置（[ADR-0010](docs/adr/0010-webview2-ui-and-websocket-ipc.md)、[ADR-0016](docs/adr/0016-single-entry-desktop-app.md)） |
-| 界面本地化 | ✅ 简中 / 英 / 日三语，界面内切换并记住选择（[ADR-0012](docs/adr/0012-ui-localization.md)） |
-| 模块管理 | ✅ 独立模块仓（导入 / .zip 安装 / 启停 / 删除）+ 模块库一键安装 + 内置精简 VRCFT 运行时；VRCFT 目录只作为导入来源（[ADR-0017](docs/adr/0017-module-store-library-runtime.md)） |
-| 多源合并（M4） | ✅ 表情 / 眼追 / 头姿三通道分别选提供者，可重复 `--source`（[ADR-0013](docs/adr/0013-source-merging.md)） |
-| 头像发现与切换（M3） | ✅ OSCQuery（mDNS 找动态 HTTP 端口，2 s 轮询 `/avatar/change` 热重绑）+ 本地 JSON 回退；状态页显示参数来源（[ADR-0023](docs/adr/0023-oscquery-avatar-discovery.md)） |
-| 原生 C ABI（M4/M5 基础） | ✅ 进程内 C ABI v1 + 无硬件示例模块（[ADR-0018](docs/adr/0018-native-c-abi-v1.md)） |
-| Unity 示例包（M4） | ✅ `samples/unity-face-gaze/`：UPM 包，读共享内存并驱动 SkinnedMeshRenderer blendshape；C# 经 Roslyn 桩编译 + .NET 读取端对真实引擎验证（未在 Unity 编辑器内实机验收） |
-| 共享内存输出（M4） | ✅ 命名映射 + 双缓冲 seqlock，`--shm <name>` 显式开启（[ADR-0019](docs/adr/0019-shared-memory-output.md)） |
-| 多输出（M4） | ✅ VRChat OSC + VMC（`--vmc-out`）+ 共享内存（`--shm`）+ WebSocket JSON（`--ws-out`）+ UDP 二进制（`--udp-out`）；5 个 sink 独立节流，状态页可见目标/计数；五路并发压测达标（[ADR-0024](docs/adr/0024-streaming-outputs.md)） |
-| 输出设置 | ✅ 输出页可改 VRChat/眼追模式/参数集/VMC/共享内存/WS/UDP，保存到 `%LOCALAPPDATA%\FaceGazeBridge\outputs.ini`，保存并重启引擎生效；命名预设可保存/应用/删除（`outputs-profiles/`），应用即快速切换；命令行参数优先（[ADR-0025](docs/adr/0025-output-settings-persistence.md)、[ADR-0027](docs/adr/0027-named-output-profiles.md)） |
-| 注视点服务（M5） | ✅ `/api/gaze` + 控制面 30 Hz `gaze` 推送；扫视/注视估计、聚散、头姿；状态页有注视卡片（[ADR-0026](docs/adr/0026-gaze-estimator-and-api.md)） |
-| 托盘常驻 + 关窗语义 | ✅ 托盘图标与菜单（显示窗口 / 启动·停止引擎 / 重启引擎 / 退出）、`--tray` 无窗口启动、单实例恢复、关窗收托盘（[ADR-0022](docs/adr/0022-tray-shell-and-close-semantics.md)） |
-| 校准（P1/P2） | ✅ 「校准」页：88 个形状的 lo/hi 与视线 gain/center，拖动实时生效、原子保存 + `.bak`、默认档案自动加载（[ADR-0021](docs/adr/0021-calibration-workbench-3d-preview.md)） |
-| 校准 3D 预览 | ✅ `.fgbface` 模型 + 原生 WebGL2 渲染（旋转/缩放/预设）、32 morph、选中形状区域高亮、2D SVG 降级；模型为程序化占位头，正式美术待补（[ADR-0021](docs/adr/0021-calibration-workbench-3d-preview.md)） |
-| 随 SteamVR 启动 | ✅ OpenVR `IVRApplications` 注册/移除/自启动读写 + 设置页卡片；`not_running` 分支已实测，真实注册待 SteamVR 运行环境验收（[ADR-0020](docs/adr/0020-steamvr-autostart.md)） |
-| 性能与稳定性（M6） | ✅ 状态页 tick 耗时 P50/P95、CPU/工作集/句柄、休眠恢复计数；`tools/soak.py` 长跑探针；Release 回放 avg 57 µs / P95 103 µs / late 0 |
-| 崩溃与诊断（M6） | ✅ Windows MiniDump（无第三方）+ `fgb-cli diag bundle` + 设置页一键导出（[ADR-0028](docs/adr/0028-crash-dumps-and-diagnostics.md)） |
-| 文档与审查（M6） | ✅ [用户手册](docs/09-user-guide.md)（含兼容表/FAQ/排障）、[安全审查](docs/10-security-review.md) |
-| 安装包（M6） | ✅ 1.0.0 用户级安装器（`packaging/build_installer.ps1`，31.7 MB，含 106 MB 运行时与 VC 运行库），静默安装/卸载已实测；默认目录安装与 SteamVR 真实注册仍待真机 |
-| 更新检查（M6） | ✅ 设置页读取 GitHub Releases latest 并提示手动下载（`fgb-cli update-check`），不自动替换 |
+最新版本 **1.0.1**。Windows 10/11 x64 上已完成构建、单测、端到端探针、
+安装/卸载和真机 PICO 链路验证；发布门禁与未完成项记录在
+[docs/11-regression-2026-10-30.md](docs/11-regression-2026-10-30.md)。
 
-**已经能跑的**（M1 + M2 核心）：
+已知限制：
 
-- **VRCFT 模块兼容**：C++ 直接驱动官方 `ModuleProcess.exe`，握手 → Init → 状态同步 →
-  100 Hz 拉取 → 432 字节解码，实测从 PICO 模块拿到 1672 帧真实数据
-- **v2 参数派生**：协议层 88 个肌肉形状 → 88 个基础参数 + 88 个简化/合成/眼追参数，
-  规则逐条对齐 VRCFT（`JawX = JawRight - JawLeft`、`EyeLid = Openness*0.75 + EyeWide*0.25` 等）
-- VMC (UDP 39539) 输入 → 统一形状映射 → VRChat OSC 输出
-- OSC 编解码：bundle、分片、零分配写入器、容错解析
-- 无锁核心：SPSC ring、seqlock 快照
-- VRChat 输出端：死区过滤、bundle 聚合、1200 字节主动分包、1 Hz 心跳
-- 眼追参数派生（`EyeLeftX/Y`、`EyeLidLeft/Right`），`parameters` / `native` / `both` 三模式
-- 界面：`FaceGaze Bridge.exe` 双击即用（窗口拉起隐藏引擎；关窗收进托盘、追踪继续，
-  托盘「退出」才停引擎），↔ 引擎走本机 WebSocket，10 Hz 推送状态与 365 个参数值，
-  滤波滑杆/重新读取头像/日志实时回传
-- 模块管理：自己的模块仓（`%LOCALAPPDATA%\FaceGazeBridge\modules`），本机 VRCFT 模块只作为
-  "检测到，是否导入"；支持 .zip/.dll 安装、启用/停用、删除；模块库（registry.vrcft.io，
-  与 VRCFT 同源）浏览、搜索、一键安装/更新，下载后校验 MD5
-- 独立运行时：发布包带精简的 VRCFT 宿主（`runtime/vrcft`，约 106 MB），
-  卸载 VRCFT 后模块仍可加载；界面显示当前用的是内置/本机副本/VRCFT 安装
-- 头像发现：OSCQuery 自动找 VRChat 的 OSCQuery 端点（mDNS `_oscjson._tcp`，HTTP 端口动态），
-  直接读当前头像名/ID/参数表；换头像后约 2 s 内自动重绑，不用再点「重新读取」。
-  OSCQuery 不可用时回退"日志头像 ID + 本地 JSON"；界面「参数来源」显示当前走哪条路
-- 多源合并：多个输入可同时工作（如模块给眼追、VMC 给表情），
-  按通道选提供者并有过期回退；状态页能看见每个源在喂哪一路
-- 多输出：VRChat OSC 与 VMC 同时输出（`--vmc-out 127.0.0.1:9100`），
-  同一张脸可以既驱动 VRChat 模型又驱动 Unity 场景
-- 流式输出：`--ws-out 9101` 给网页/脚本广播 JSON（默认 30 Hz，多客户端），
-  `--udp-out 127.0.0.1:9102` 给串流软件/自研客户端发 592 字节固定布局帧；
-  两者默认关闭，格式见 [docs/07-streaming-outputs.md](docs/07-streaming-outputs.md)
-- 输出设置：输出页可以直接改目标/开关，保存到 `outputs.ini`，点「保存并重启引擎」
-  生效；命令行参数优先，`--no-saved-outputs` 可让某次启动忽略保存值
-- 注视点服务：`GET /api/gaze` 或控制面 WS 的 `gaze` 消息（30 Hz）能拿到合并注视方向、
-  俯仰/偏航、聚散、置信度和注视/扫视状态；状态页有实时注视卡片与小圆点
-- 托盘常驻：`--tray` 不弹窗口只驻留托盘（SteamVR 自启动形态）；关窗进托盘、
-  托盘「退出」才停引擎；已有实例时再启动只恢复现有窗口
-- 校准页：88 个形状的 lo/hi 与视线中心可拖可存，实时生效，保存到
-  `%LOCALAPPDATA%\FaceGazeBridge\calibration.ini`（上一版留 `.bak`），下次启动自动加载
-- 3D 校准预览：左侧通用风格化人头随输出值实时变形，可拖动旋转/滚轮缩放/切换正面、45°、
-  侧面；选中形状高亮对应部位；没有模型映射的 17 个形状标"仅数值"；WebGL2 不可用时自动
-  降级为 2D SVG 示意图
-- SteamVR 启动项：设置页显式开关 + 状态/原因；只在 SteamVR 运行时可用，绝不自动注册，
-  移除注册后不残留启动项（真实注册待 SteamVR 运行环境验收）
-- 界面三语（简中 / 英 / 日）+ 双击即用的发布包（`cmake --install` 到 `dist/`）
-- 147 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面/VMC/WS/UDP/OSCQuery 探针
-  （`tools/probe_ipc.py`、`tools/probe_ui.py`）
+- 真机只验证过 PICO + PICO Connect；Quest / iPhone 等模块缺硬件验证
+- 3D 校准预览目前是程序化占位头模，正式美术资产待补
+- SteamVR 自启动的注册分支已实现，真实 SteamVR 环境验收待补
+- 8 小时长跑、休眠唤醒、设备热插拔仍属于发布前门禁
 
-```bash
-# 用 FGB 接管 VRCFT 的模块（需先关闭 VRCFT，模块端口是独占的）
-fgb-cli run --source vrcft --vrchat 127.0.0.1:9000 --verbose
+## 安装
 
-# 带界面：拉起 WebView2 窗口（隐含 --panel 8787）
-fgb-cli run --source vrcft --ui
+### 安装版（推荐）
 
-# 模块：仓里有什么、本机有什么可导入、运行时来自哪里
-fgb-cli modules
-fgb-cli modules import-all            # 把本机 VRCFT 模块复制进自己的模块仓
-fgb-cli modules install module.zip    # 手动安装 .zip / .dll
-fgb-cli modules use VRCFTPicoModule   # 启动模块，重启引擎后生效
+从 [Releases](https://github.com/Aqamoe/FaceGaze-Bridge/releases) 下载
+`FaceGazeBridge-Setup-<版本>.exe`：
+
+- 用户级安装，**不需要管理员**，默认装到 `%LOCALAPPDATA%\Programs\FaceGazeBridge`
+- 创建开始菜单快捷方式，可选桌面图标
+- 静默安装：`FaceGazeBridge-Setup-<版本>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`
+- 卸载：Windows 设置 → 应用 → FaceGaze Bridge；交互式卸载会询问是否删除用户数据
+
+### 绿色版
+
+发布包目录即绿色版，解压到**固定目录**后双击 `FaceGaze Bridge.exe`：
+
+```
+FaceGaze Bridge.exe    唯一入口（窗口 + 拉起引擎）
+fgb-cli.exe            引擎与命令行工具
+runtime\vrcft\         VRCFT 模块宿主运行时
+ui\                    界面资源
+sdk\                   集成文档与示例
+NOTICE, LICENSE        许可证与第三方声明
 ```
 
-**还没做的**：
+移动目录后需要重新注册 SteamVR 启动项。
 
-- 校准 3D 的正式美术头模（渲染器/格式/映射已完成，当前是程序化占位头；
-  换资产保持 `.fgbface` v1 与 morph/区域名即可，见 ADR-0021）
-- 输出设置的命名预设 / 快速切换（当前只有一套保存值，见 ADR-0025）
-- Unity C# 示例包与 5 个 Sink 的并发压力测试（输出协议已就绪，见 ADR-0024）
-- 自动启用 VRChat OSC（实测 `config.json` 里没有 OSC 字段，开关在游戏内 Options > OSC，
-  写入位置未确认；暂不动用户配置）
-- 注视点预测（M5.4）与世界坐标（需要头姿 + 场景深度/平面；当前只给 HMD 局部方向）
-- OpenXR API Layer / 眼追注入（共享内存与 VMC 输出已做）
-- 随 SteamVR 启动的真实注册验收（代码与设置页已完成，`not_running` 已实测；见 ADR-0020）
-- 与 VRCFT 输出的逐参数对齐（量化"替代"的最后一道关口）
+### 前置条件
 
-**已验证的关键事实**（M0，详见 [ADR-0003](docs/adr/0003-vrcft-ipc-protocol.md)）：
+- Windows 10 1809+ / Windows 11，x64
+- **WebView2 Runtime**（Win10/11 通常随 Edge 预装）
+- 用 VRChat OSC 输出时，需要在游戏内 `Options → OSC` 打开开关
+- 使用 VRCFT 模块时，先完全退出 VRCFT（模块沙箱端口是独占的）
+- VC++ 运行库已随安装包提供，无需另装
 
-- 可以脱离 VRCFT 主程序，自带端口驱动官方 `ModuleProcess.exe`
-- 数据是**拉模式**：每发一个 `EventUpdate` 才回一个 `ReplyUpdatePacket`
-- 数据包 432 字节，`structSize=420` = 16 个眼球/头部 float + 89 个形状 float
-- 协议层形状是 **88 个肌肉层形状**（`BrowLowererLeft`、`JawRight`），
-  v2 参数（`BrowDownLeft`、`JawX`）是 Core 侧派生出来的另一层
+### 第一次运行
 
----
+1. 双击 `FaceGaze Bridge.exe`，窗口会自动拉起引擎
+2. 到「模块」页导入本机 VRCFT 模块，或从「模块库」安装一个
+3. 到「输出」页确认 VRChat OSC / VMC / 共享内存等目标
+4. 关窗只是收进托盘，追踪继续；托盘菜单「退出」才停止引擎
+
+安装包的 SHA256 在 Release 的 `SHA256SUMS.txt` 中。
 
 ## 快速开始
 
-```bash
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Debug
+界面之外，引擎也可以直接用：
 
-./build/bin/Debug/fgb-cli.exe shapes     # 列出 86 个统一形状
-./build/bin/Debug/fgb-cli.exe run --help
+```powershell
+# 用模块作为输入，输出 VRChat OSC，并启动控制面
+fgb-cli run --source vrcft --vrchat 127.0.0.1:9000 --panel 8787
 
-# 端到端冒烟：VMC 输入 -> OSC 输出（用 9100，不碰 VRChat 的 9000）
-python tools/smoke_vmc.py
+# 纯 VMC 输入（VSeeFace 等），同时再输出一路 VMC 给 Unity
+fgb-cli run --source vmc --vmc-out 127.0.0.1:9100
+
+# 给网页/脚本的 WebSocket JSON，给串流软件的 UDP 二进制
+fgb-cli run --source vmc --ws-out 9101 --udp-out 127.0.0.1:9102
+
+# 模块管理
+fgb-cli modules
+fgb-cli modules import-all
+fgb-cli modules install module.zip
+fgb-cli modules use VRCFTPicoModule
 ```
 
-跑真实链路时：
+全部参数：`fgb-cli run --help`。
 
-```bash
-fgb-cli run --vmc-port 39539 --vrchat 127.0.0.1:9000 --eye-mode parameters
-```
+## 输出与集成
 
-界面的依赖只有 **WebView2 Runtime**（Win10/11 随 Edge 预装）。SDK 在 configure 时从 NuGet 拉一次到
-`build/_deps`；内网环境可以自己解压好再 `-DFGB_WEBVIEW2_DIR=<目录>`，或者 `-DFGB_BUILD_UI=OFF` 只编引擎。
-页面资源在 `ui/`，构建时复制到 `fgb-cli.exe` 旁边；改 UI 不用重编。
-
-发布包（`cmake --install build/release --prefix dist`）里只有一个入口：
-双击 `dist/FaceGaze Bridge.exe`，窗口会自己拉起引擎；关闭窗口只是收进托盘
-（追踪继续），托盘菜单「退出」才停引擎。想在后台常驻就加 `--tray`：
-`dist\FaceGaze Bridge.exe --tray` 不弹窗口，只留托盘图标。
-想用命令行/自动化测试时仍可直接跑 `fgb-cli run --source vmc --panel 8787`。
-
----
-
-## 关键设计摘要
-
-**1. 三层模块系统，而不是一刀切**
-
-VRCFT 的模块是 .NET 程序集（`ExtTrackingModule` 子类），纯 C++ 进程无法直接加载。FGB 用三层并存解决：
-
-- **A 层 · VRCFT 兼容**：复刻 VRCFT v5 的沙箱 UDP 协议，直接驱动官方 `VRCFaceTracking.ModuleProcess.exe`。现有模块**零改动**可用。
-- **B 层 · 原生 C ABI**：新的高性能模块接口，单导出符号、POD 结构、共享内存传帧。给愿意重写模块的开发者。
-- **C 层 · 协议直连**：VMC / OSC / LiveLink / ALVR / VD / PICO / OpenXR 眼追。**不用装模块，填个 IP 就能用**。
-
-**2. 核心引擎与 UI 解耦**
-
-`fgb-core` 是无 UI 的 C++ 服务，所有能力通过本地 IPC 暴露。UI 只是第一个消费者，CLI、Unity 插件、OBS 插件、Stream Deck 插件都是同等消费者。
-
-**3. 眼追默认走 avatar 参数，原生通道作为可选模式**
-
-VRCFT 生态的现实是：绝大多数模型只把 `FT/v2/EyeLeftX`、`EyeLidLeft` 这类 **avatar 参数**绑到了表情控制器上。若改走 VRChat 原生的 `/tracking/eye/*`，这些模型的眼睛会完全不动——这不是"更优的路径"，是"更少的模型能用"。
-
-所以 FGB 与 VRCFT 保持行为一致：**眼追和表情都写 avatar 参数**，这是默认路径。`/tracking/eye/*` 作为可切换的**输出模式**，保留给明确知道自己需要它的人（原生眼追头像、需要绕过 Animator 叠加层的场景、参数数量吃紧的极端情况）。两种模式可独立开关，也可以同时开。
-
-**4. 注视点能力是分层的，而且要说清楚边界**
-
-| 层级 | 能力 | 可行性 |
+| 输出 | 默认 | 协议 / 文档 |
 |---|---|---|
-| L1 | 注视点数据服务（输出给串流软件 / 第三方应用） | ✅ 确定可做 |
-| L2 | OpenXR API Layer + 引擎侧 ETFR | ⚠️ 依赖游戏支持，需逐游戏验证 |
-| L3 | D3D/Vulkan 钩子 + VRS 强制注入 | ❌ 与 VRChat EAC 冲突，仅限单机 VR 游戏，作为实验特性 |
+| VRChat OSC | 开 | `/avatar/parameters/*`，地址来自当前头像参数表 |
+| VMC | 关 | `/VMC/Ext/Blend/Val` + `Apply`，`--vmc-out host:port` |
+| 共享内存 | 关 | `Local\FGB_Shm_<name>`，[docs/06](docs/06-shared-memory.md) |
+| WebSocket JSON | 关 | `ws://127.0.0.1:<port>/ws`，[docs/07](docs/07-streaming-outputs.md) |
+| UDP 二进制 | 关 | 固定 592 字节帧，[docs/07](docs/07-streaming-outputs.md) |
+| 注视点 | 开 | `GET /api/gaze` + WS `gaze`，[docs/08](docs/08-gaze-service.md) |
 
-详见 [docs/02-features.md](docs/02-features.md#65-注视点渲染能力边界)。
+原生模块接口见 [docs/05](docs/05-native-module-guide.md)，
+Unity 读取示例见 [samples/unity-face-gaze](samples/unity-face-gaze)。
 
----
+## 从源码构建
 
-## 许可证立场
+### 依赖
 
-- VRCFT 为 **Apache-2.0**。FGB 采用 **clean-room 重写 + 协议兼容**策略：只依据公开的 Unified Expressions 规范、VRChat OSC 文档和模块 ABI 行为实现，不搬运其源码。
-- 若必须再分发官方二进制（如 `ModuleProcess.exe`），保留其 `LICENSE` 与 `NOTICE`，并在关于页面标注。
-- **不使用 "VRCFT" / "VRCFaceTracking" 作为产品名或商标**，仅以「兼容 VRCFT 模块」的事实性描述出现。
-- FGB 自身建议 **Apache-2.0**（与生态一致，允许商业闭源集成）。
+- Windows 10/11 x64
+- CMake 3.24+
+- Visual Studio 2019 或 2022，含「使用 C++ 的桌面开发」和 Windows SDK
+- Python 3（可选：抽取 VRCFT 运行时、跑探针）
+- Inno Setup 6（可选：生成安装包）
 
----
+WebView2 SDK 会在 configure 时从 NuGet 下载一次；也可用
+`-DFGB_WEBVIEW2_DIR=<已解压目录>` 指向本地副本，或 `-DFGB_BUILD_UI=OFF` 只编引擎。
 
-## 仓库结构
+### 构建与测试
+
+```powershell
+cmake -S . -B build/release -G "Visual Studio 17 2022" -A x64 -DFGB_WARNINGS_AS_ERRORS=ON
+cmake --build build/release --config Release --parallel
+ctest --test-dir build/release -C Release --output-on-failure
+```
+
+产物在 `build/release/bin/Release/`。Debug 构建把 `--config` 换成 `Debug` 即可。
+
+### 打包
+
+```powershell
+# 完整发布：构建 → 单测 → dist → VRCFT 运行时 → VC 运行库 → Setup → 校验和
+powershell -ExecutionPolicy Bypass -File packaging\release.ps1
+
+# 同时创建 draft Release（需要 gh 已登录）
+powershell -ExecutionPolicy Bypass -File packaging\release.ps1 -Publish
+```
+
+`release.ps1` 默认从本机已安装的 VRCFT 抽取运行时；CI 用 `-RuntimeZip` 或
+`VRCFT_RUNTIME_URL` 提供运行时包。说明见
+[docs/04-engineering.md](docs/04-engineering.md#61-实际发布流水线)。
+
+## 项目结构
 
 ```
-src/base      日志（含订阅回调）、时钟        零依赖
-src/core      数据模型、无锁容器、滤波/校准   零 I/O，纯计算
-src/osc       OSC 编解码                     零分配写入器
-src/net       UDP / TCP / WebSocket 服务端、WinHTTP 下载
-src/sources   输入（VMC / VRCFT 模块 / 原生 C ABI 模块 / 抓包回放）
-src/sinks     输出（VRChat / 待接入 VMC、共享内存）
+src/base      日志、时钟、崩溃与诊断
+src/core      数据模型、无锁容器、滤波/校准
+src/osc       OSC 编解码
+src/net       UDP/TCP/WebSocket 服务端、HTTP 下载
+src/sources   输入：VMC / VRCFT 模块 / 原生模块 / 回放
+src/sinks     输出：VRChat / VMC / 共享内存 / WS / UDP
 src/engine    合并、快照发布、扇出
-src/web       控制面 IPC：WS 协议、状态/参数/日志推送、静态页面
-src/ui        FaceGaze Bridge.exe：桌面入口（WebView2 窗口 + 拉起/回收引擎）
+src/web       控制面 IPC 与静态页面
+src/ui        FaceGaze Bridge.exe（WebView2 外壳 + 引擎生命周期）
 src/cli       fgb-cli
-ui/           界面资源（index.html / app.js / style.css，无构建步骤）
-tests         单元测试 + 金样测试
-tools         抓包、冒烟、探针，以及 build_vrcft_runtime.py（出精简运行时）
-sdk/          原生模块 ABI 头（只分发这一个头文件）
-samples/      native-sine：不需要硬件的原生模块示例
-docs          方案、ADR、路线图
+ui/           界面资源（无构建步骤）
+sdk/          原生模块 ABI 与集成文档
+samples/      原生模块与 Unity 示例
+packaging/    安装包、发布脚本、Windows 资源
+tools/        冒烟、探针、运行时抽取等辅助脚本
+docs/         架构、ADR、路线图、用户手册、安全审查
+tests/        单元测试与金样测试
 ```
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [用户手册](docs/09-user-guide.md) | 安装、界面、输出、校准、FAQ、排障 |
+| [架构](docs/01-architecture.md) | 进程/线程模型、模块系统、数据流 |
+| [功能规格](docs/02-features.md) | 对等功能与增值能力边界 |
+| [路线图](docs/03-roadmap.md) | 里程碑、验收标准、发布门禁 |
+| [工程手册](docs/04-engineering.md) | 构建、测试、CI、发布、许可证合规 |
+| [原生模块](docs/05-native-module-guide.md) | C ABI 生命周期与打包 |
+| [共享内存](docs/06-shared-memory.md) / [流式输出](docs/07-streaming-outputs.md) / [注视服务](docs/08-gaze-service.md) | 集成协议 |
+| [安全审查](docs/10-security-review.md) | 控制面、模块、配置的威胁模型 |
+| [ADR](docs/adr/) | 关键决策记录 |
+
+## 安全与隐私
+
+- 不收集遥测，不联网（检查更新需要你手动点击；模块库和模块下载走你选择的来源）
+- 控制面默认只绑 `127.0.0.1`，没有账号体系；本机进程都可以调用
+- 模块 DLL 是可执行代码，只安装你信任来源的模块
+- 诊断包含本机路径与日志，分享前请检查
+- 发现安全问题请通过 GitHub 私下联系维护者，避免先公开可利用细节
+
+## 贡献
+
+欢迎 issue 和 pull request。提交前请：
+
+1. 保持 `FGB_WARNINGS_AS_ERRORS=ON` 下构建通过
+2. 跑 `ctest`，新增行为补测试
+3. 界面文案三语齐全（简中 / 英 / 日）
+4. 不提交 `build/`、`dist/`、`.workbuddy/` 等本地产物
+
+## 许可证与致谢
+
+本项目以 **Apache-2.0** 许可发布，见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
+第三方组件、再分发的 VRCFT 运行时、.NET 运行时、WebView2 SDK、OpenVR 头文件和
+Microsoft VC++ 运行库的说明都在 NOTICE 中；安装包的 `licenses/` 目录附带完整许可证文本。
+
+感谢 [VRCFaceTracking](https://github.com/benaclejames/VRCFaceTracking) 及其贡献者
+在模块生态和 Unified Expressions 规范上的工作。
+
+## 作者
+
+**Aqamoe（光水）** · [GitHub](https://github.com/Aqamoe) · 其他贡献者见 [AUTHORS.md](AUTHORS.md)
+
+如果这个项目对你有帮助，欢迎在 GitHub 上点一个 Star。

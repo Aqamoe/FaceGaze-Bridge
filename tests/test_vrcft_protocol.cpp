@@ -74,7 +74,7 @@ FGB_TEST(vrcft_status_packet_layout) {
 
 FGB_TEST(vrcft_handshake_parse) {
     // magic(4) type(4) challenge(5) pid(4) pathLen(4) path
-    const char* path = R"(C:\Users\x\AppData\Roaming\VRCFaceTracking\CustomLibs\VRCFTPicoModule.dll)";
+    const char* path = R"(C:\Users\example\AppData\Roaming\VRCFaceTracking\CustomLibs\VRCFTPicoModule.dll)";
     const std::size_t path_len = std::strlen(path);
 
     std::array<std::byte, 21 + 128> buf{};

@@ -27,12 +27,12 @@ VRCFT 本体全程关闭，由 `fgb-cli run --source vrcft` 直接驱动官方 `
 
 - 握手 → GetSupported → Init → Status(Active) → 100 Hz 拉取，全程零告警
 - 约 115 fps 稳定拉流，`late=0`
-- 头像解析：`Eku-FT2-SD`，546 个声明参数中命中 52 个，30 个走二进制编码，156 条 OSC 目标
+- 头像解析：`Avatar-B`，546 个声明参数中命中 52 个，30 个走二进制编码，156 条 OSC 目标
 - **用户目视确认：眨眼、张嘴、笑、抬眉均随动**
 
 ## 过程中暴露的问题
 
-第一次跑绑错了头像（`Eku-FT2-S` 而非 `Eku-FT2-SD`）。原因是当时用"最近修改的
+第一次跑绑错了头像（`Avatar-A` 而非 `Avatar-B`）。原因是当时用"最近修改的
 配置文件"判断当前头像，而**加载头像不更新 mtime**。改读 VRChat 日志的
 `Saving Avatar Data:` 后修正，详见 ADR-0004 的"两次踩坑后定稿"。
 

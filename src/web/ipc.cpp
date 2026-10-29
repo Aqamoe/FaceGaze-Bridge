@@ -1677,9 +1677,12 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     } else if (has_type && type == "open_update_page") {
         std::string url;
         json::field_string(text, "url", url);
-        constexpr std::string_view kAllowed = "https://github.com/Aqamoe/FaceGaze-Bridge/";
-        if (url.size() < kAllowed.size() || url.compare(0, kAllowed.size(), kAllowed) != 0) {
-            error = "只允许打开本项目的 GitHub 页面";
+        constexpr std::string_view kAuthor = "https://github.com/Aqamoe";
+        const bool allowed = url == kAuthor ||
+            (url.size() > kAuthor.size() &&
+             url.compare(0, kAuthor.size(), kAuthor) == 0 && url[kAuthor.size()] == '/');
+        if (!allowed) {
+            error = "只允许打开 Aqamoe 的 GitHub 页面";
         } else {
             const int length = ::MultiByteToWideChar(CP_UTF8, 0, url.data(),
                                                      static_cast<int>(url.size()), nullptr, 0);

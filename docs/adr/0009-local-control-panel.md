@@ -61,7 +61,7 @@ fgb-cli run --source vrcft --panel 8787
 ## 验证
 
 - `curl /` → 200，5079 字节 HTML
-- `curl /api/status` → 真实数据（`Eku-FT2-SD`、45 参数、156 目标、滤波状态）
+- `curl /api/status` → 真实数据（`Avatar-B`、45 参数、156 目标、滤波状态）
 - `curl /api/params` → 365 项
 - `POST /api/filter {"enabled":true,"min_cutoff":2.5,"beta":0.8}` → 再查 status 确认生效
 - 未知路径 → 404；页面 JS 用 `node --check` 过了语法

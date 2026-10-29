@@ -18,9 +18,9 @@ constexpr char kTree[] = R"({
       "FULL_PATH":"/avatar","ACCESS":0,
       "CONTENTS":{
         "change":{"DESCRIPTION":"Avatar ID","FULL_PATH":"/avatar/change",
-                  "ACCESS":3,"TYPE":"s","VALUE":["avtr_6ce1b451-cc77-43db-ac3e-eec2f3258ec6"]},
+                  "ACCESS":3,"TYPE":"s","VALUE":["avtr_a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"]},
         "name":{"DESCRIPTION":"Avatar name","FULL_PATH":"/avatar/name",
-                "ACCESS":1,"TYPE":"s","VALUE":["Eku-FT2-SD"]},
+                "ACCESS":1,"TYPE":"s","VALUE":["Example Avatar"]},
         "parameters":{
           "FULL_PATH":"/avatar/parameters","ACCESS":0,
           "CONTENTS":{
@@ -104,8 +104,8 @@ FGB_TEST(oscquery_parses_avatar_and_writable_params) {
     std::string error;
     FGB_CHECK(params::parse_oscquery_tree(kTree, config, error));
     FGB_CHECK(error.empty());
-    FGB_CHECK(config.id == "avtr_6ce1b451-cc77-43db-ac3e-eec2f3258ec6");
-    FGB_CHECK(config.name == "Eku-FT2-SD");
+    FGB_CHECK(config.id == "avtr_a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d");
+    FGB_CHECK(config.name == "Example Avatar");
     FGB_CHECK(config.params.size() == 3); // 读只读 VelocityX、int、vector 都不算
 
     bool jaw_float = false;

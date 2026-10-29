@@ -16,7 +16,7 @@
 namespace fgb::params {
 
 struct OscQueryEndpoint {
-    std::string instance; // VRChat-Client-31CE03._oscjson._tcp.local
+    std::string instance; // VRChat-Client-XXXXXX._oscjson._tcp.local
     std::string address;  // 127.0.0.1
     std::uint16_t port = 0;
 

@@ -1,45 +1,136 @@
 FaceGaze Bridge
-Copyright 2026 FaceGaze Bridge contributors
+Copyright 2026 Aqamoe (光水)
+https://github.com/Aqamoe/FaceGaze-Bridge
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This distribution includes or links against the third-party components listed
+below. Full license texts for components that require one ship next to this
+file in the `licenses/` directory, or in `runtime/vrcft/` for the module host.
 
 ---
 
 ## Third-party notices
 
-### VRCFaceTracking
-The module compatibility layer of this software interoperates with, and may
-redistribute, components of VRCFaceTracking.
+### VRCFaceTracking — Apache-2.0
+
+The module compatibility layer interoperates with, and this distribution
+redistributes, components of VRCFaceTracking inside `runtime/vrcft/`.
 
     VRCFaceTracking
     Copyright 2021-2026 benaclejames and contributors
     Licensed under the Apache License, Version 2.0
     https://github.com/benaclejames/VRCFaceTracking
 
+The redistributed files are copied unmodified from a VRCFaceTracking
+installation; the full license is in `runtime/vrcft/LICENSE` and the source
+note in `runtime/vrcft/NOTICE-VRCFaceTracking.txt`.
+
 This software is an independent implementation. It is not affiliated with,
 endorsed by, or sponsored by the VRCFaceTracking project. "VRCFaceTracking"
 and "VRCFT" are used only in factual, descriptive statements of
 interoperability and are not used as trademarks of this product.
 
-### Unity Expressions parameter naming
+### Unified Expressions v2
+
 Parameter names follow the Unified Expressions v2 specification published by
 the VRCFaceTracking project, which is licensed under Apache-2.0.
 
-### OpenXR
-The OpenXR API layer component, when built, links against the OpenXR loader.
+### Microsoft .NET Runtime — MIT
 
-    Copyright (c) 2017-2026 The Khronos Group Inc.
-    Licensed under the Apache License, Version 2.0
+The self-contained module host in `runtime/vrcft/` includes
+Microsoft.NETCore.App 10.0.7 (coreclr, hostfxr and framework assemblies).
 
-### OpenVR
+    Copyright (c) .NET Foundation and contributors
+    Licensed under the MIT License
+    https://github.com/dotnet/runtime
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+### Bundled VRCFT module host dependencies
+
+`runtime/vrcft/` also contains the packages pulled in by
+VRCFaceTracking.ModuleProcess. The authoritative inventory with exact versions
+is `runtime/vrcft/VRCFaceTracking.ModuleProcess.deps.json`.
+
+    VRCFaceTracking.Core / SDK / ModuleProcess   Apache-2.0
+    Microsoft.NETCore.App 10.0.7                MIT
+    CommunityToolkit.Mvvm 8.4.0                 MIT
+    Gameloop.Vdf 0.6.2                          MIT
+    Microsoft.Extensions.* 10.0.1               MIT
+    Newtonsoft.Json 13.0.4                      MIT
+    Sentry 6.0.0                                MIT
+    System.CommandLine 2.0.1                    MIT
+    Microsoft.Windows.SDK.NET 10.0.22621.57     MIT
+    msquic                                      MIT
+
+These assemblies are redistributed unmodified; their copyright notices remain
+in the assemblies. Full license texts are available from the upstream NuGet
+packages and the VRCFaceTracking project.
+
+### Microsoft WebView2 SDK — BSD-3-Clause
+
+The desktop shell is built with the Microsoft WebView2 SDK (1.0.4314.35) and
+statically links `WebView2LoaderStatic.lib`.
+
+    Copyright (c) Microsoft Corporation. All rights reserved.
+    Licensed under the BSD 3-Clause License.
+
+The full license is in `licenses/webview2-LICENSE.txt`; additional third-party
+notices for the SDK are in `licenses/webview2-NOTICE.txt`. The WebView2
+Runtime itself (Evergreen) is installed by Windows/Edge and is not bundled.
+
+### OpenVR — BSD-3-Clause
+
 The SteamVR autostart integration vendors only the `openvr.h` header from
-Valve's OpenVR SDK (BSD-3-Clause). `openvr_api.dll` is not redistributed; it is
-loaded at runtime from the user's installed SteamVR.
+Valve's OpenVR SDK. `openvr_api.dll` is not redistributed; it is loaded at
+runtime from the user's installed SteamVR.
 
     Copyright (c) 2015, Valve Corporation
     All rights reserved.
     Licensed under the BSD 3-Clause License.
     https://github.com/ValveSoftware/openvr
+
+The full license is in `third_party/openvr/LICENSE` and
+`licenses/openvr-LICENSE.txt`.
+
+### Microsoft Visual C++ Redistributable
+
+The installer and portable package include `msvcp140.dll`, `vcruntime140.dll`
+and `vcruntime140_1.dll` so the application runs without a separate
+redistributable install.
+
+    Copyright (c) Microsoft Corporation.
+    Redistributed under the Microsoft Visual Studio license terms.
+    https://visualstudio.microsoft.com/license-terms/
+
+### Inno Setup
+
+Windows installers are built with Inno Setup 6.
+
+    Copyright (C) 1997-2026 Jordan Russell
+    https://jrsoftware.org/isinfo.php
+
+### OpenXR
+
+Coordinate conventions follow the OpenXR specification, but no OpenXR loader
+or runtime is bundled or redistributed by this project.
 
 ---
 

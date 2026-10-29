@@ -85,10 +85,10 @@ OSCQuery 拿到的参数表与本地 JSON 等价时优先用 OSCQuery：它是"�
 ## 实测证据（2026-10-30，VRChat 正在运行）
 
 ```
-mDNS：VRChat-Client-31CE03._oscjson._tcp.local → 127.0.0.1:65393
+mDNS：VRChat-Client-XXXXXX._oscjson._tcp.local → 127.0.0.1:65393
 HOST_INFO：OSC_IP=127.0.0.1 OSC_PORT=9000 OSC_TRANSPORT=UDP
-头像：Eku-FT2-SD  avtr_6ce1b451-cc77-43db-ac3e-eec2f3258ec6
-fgb-cli：OSCQuery 已绑定头像「Eku-FT2-SD」：45 个参数 / 156 条 OSC 目标
+头像：Avatar-B  avtr_a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d
+fgb-cli：OSCQuery 已绑定头像「Avatar-B」：45 个参数 / 156 条 OSC 目标
 本地 JSON 对照：45 个参数 / 156 条目标（30 个二进制编码），完全一致
 界面状态页：参数来源 = OSCQuery（mDNS）
 ```

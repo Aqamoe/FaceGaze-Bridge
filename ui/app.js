@@ -126,6 +126,7 @@ function apply_l10n() {
     node.placeholder = t(node.dataset.i18nPlaceholder);
   });
   $("brand-version").textContent = state.version ? `v${state.version}` : t("app.subtitle");
+  $("about-version").textContent = state.version ? `v${state.version}` : "—";
 
   // 页面标题、pill、模块卡片等都是动态生成的，切语言后要重画一遍
   update_page_header();
@@ -306,6 +307,7 @@ function handle(message) {
     case "hello":
       state.version = message.version || "";
       $("brand-version").textContent = state.version ? `v${state.version}` : t("app.subtitle");
+      $("about-version").textContent = state.version ? `v${state.version}` : "—";
       $("u-current").textContent = state.version || "—";
       break;
     case "catalog":
@@ -2304,6 +2306,12 @@ function wire() {
     if (state.update_info && state.update_info.url) {
       send({ type: "open_update_page", url: state.update_info.url });
     }
+  });
+  // 关于卡片的外链：引擎侧只放行作者的 GitHub 页面，外部站点不会被内嵌打开
+  document.querySelectorAll("[data-open-url]").forEach((button) => {
+    button.addEventListener("click", () => {
+      send({ type: "open_update_page", url: button.dataset.openUrl });
+    });
   });
   $("diag-export").addEventListener("click", () => {
     $("diag-busy").hidden = false;

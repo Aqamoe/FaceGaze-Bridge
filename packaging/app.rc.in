@@ -17,14 +17,15 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "CompanyName", "FaceGaze Bridge"
+            VALUE "CompanyName", "Aqamoe"
             VALUE "FileDescription", "@FGB_RC_DESCRIPTION@"
             VALUE "FileVersion", "@PROJECT_VERSION@"
             VALUE "InternalName", "@FGB_RC_INTERNAL_NAME@"
             VALUE "OriginalFilename", "@FGB_RC_FILENAME@"
             VALUE "ProductName", "FaceGaze Bridge"
             VALUE "ProductVersion", "@PROJECT_VERSION@"
-            VALUE "LegalCopyright", "Apache-2.0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 Aqamoe. Licensed under Apache-2.0."
+            VALUE "Comments", "https://github.com/Aqamoe/FaceGaze-Bridge"
         END
     END
     BLOCK "VarFileInfo"
