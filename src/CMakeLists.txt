@@ -94,14 +94,21 @@ if(WIN32)
 endif()
 target_compile_definitions(fgb_web PRIVATE FGB_VERSION="${PROJECT_VERSION}")
 
-# 版本信息 + 图标：两个 exe 共用一份模板，内部名/原始文件名各自填
-function(fgb_add_windows_resources target internal_name original_filename)
+# 版本信息 + 图标：两个 exe 共用一份模板，内部名/原始文件名/说明各自填。
+# 图标只给产品入口：fgb-cli 长得和界面入口一样，用户会双击错程序。
+function(fgb_add_windows_resources target internal_name original_filename description)
     if(NOT WIN32)
         return()
     endif()
-    set(FGB_RC_ICON_PATH "${CMAKE_SOURCE_DIR}/packaging/icon.ico")
+    cmake_parse_arguments(ARG "NO_ICON" "" "" ${ARGN})
+    set(FGB_RC_ICON_LINE "")
+    if(NOT ARG_NO_ICON)
+        set(FGB_RC_ICON_LINE
+            "101 ICON \"${CMAKE_SOURCE_DIR}/packaging/icon.ico\"")
+    endif()
     set(FGB_RC_INTERNAL_NAME "${internal_name}")
     set(FGB_RC_FILENAME "${original_filename}")
+    set(FGB_RC_DESCRIPTION "${description}")
     configure_file("${CMAKE_SOURCE_DIR}/packaging/app.rc.in"
                    "${CMAKE_CURRENT_BINARY_DIR}/res/${target}.rc" @ONLY)
     target_sources(${target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/res/${target}.rc")
@@ -112,7 +119,8 @@ if(FGB_BUILD_CLI)
     target_link_libraries(fgb-cli PRIVATE fgb_engine fgb_web)
     target_compile_definitions(fgb-cli PRIVATE FGB_VERSION="${PROJECT_VERSION}")
     set_target_properties(fgb-cli PROPERTIES OUTPUT_NAME "fgb-cli")
-    fgb_add_windows_resources(fgb-cli "fgb-cli" "fgb-cli.exe")
+    fgb_add_windows_resources(fgb-cli "fgb-cli" "fgb-cli.exe"
+        "FaceGaze Bridge Engine (command line)" NO_ICON)
 
     # 页面资源随可执行文件走：fgb-cli 是发页面的那一侧，fgb-ui 只是外壳
     add_custom_command(TARGET fgb-cli POST_BUILD
@@ -132,7 +140,7 @@ if(WIN32 AND FGB_BUILD_UI)
         target_link_libraries(fgb-ui PRIVATE ${FGB_WEBVIEW2_TARGET} fgb_options ws2_32)
         # 用户双击的那个文件就叫产品名；命令行/探针里仍可按 fgb-ui 目标名引用
         set_target_properties(fgb-ui PROPERTIES OUTPUT_NAME "FaceGaze Bridge")
-        fgb_add_windows_resources(fgb-ui "fgb-ui" "FaceGaze Bridge.exe")
+        fgb_add_windows_resources(fgb-ui "fgb-ui" "FaceGaze Bridge.exe" "FaceGaze Bridge")
     endif()
 endif()
 

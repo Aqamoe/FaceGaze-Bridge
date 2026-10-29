@@ -125,7 +125,8 @@ cmake --install build/release --config Release --prefix dist
 
 ```
 dist/FaceGaze Bridge.exe   唯一入口：界面窗口 + 拉起引擎（图标/版本信息在资源里）
-dist/fgb-cli.exe           引擎（命令行用；外壳启动时会调用它）
+dist/fgb-cli.exe           引擎（命令行用；外壳启动时会调用它）。不带产品图标，
+                           免得在资源管理器里被当成第二个启动入口
 dist/runtime/vrcft/        精简 VRCFT 宿主运行时（约 106 MB，卸载 VRCFT 也能跑模块）
 dist/sdk/fgb_module_api.h  原生模块 ABI 头（给模块开发者）
 dist/ui/                   页面资源（index.html / app.js / style.css / i18n.js / logo.png）
@@ -206,6 +207,7 @@ gh run watch <id> --exit-status
 | 页面连不上 `ws://` | https 页面被 mixed-content/PNA 拦 | 页面必须由引擎的 `http://127.0.0.1:<port>/` 提供（同源同端口） |
 | 模块 sandbox socket | 模块报 `SocketException (10048)` | 上一个模块进程/VRCFT 本体占着端口；先关掉再试 |
 | 后台进程 | 命令返回后进程被杀 | 启动→验证→收尾写在**同一条命令**里 |
+| 端口探测 | 首次启动要多等 2–3 s | 有的机器（防火墙/安全软件）对未监听端口的 SYN 静默丢弃，逐个 `/healthz` 会等满超时。先用 bind 判断有没有人监听，只对有人听的端口做健康检查 |
 | 截图偏移/尺寸不对 | 截出来的窗口错位 | PowerShell 先 `SetProcessDpiAwarenessContext(-4)` 再量窗口 |
 | `fgb.ini` 写盘 | 整份重写 | 加新键时必须**先读再写**，否则盖掉用户手改的内容 |
 | zip 安装 | 解压后目录结构不对/越界 | 用系统 `tar.exe` 解压，再校验路径/符号链接/体积；不要自己拼 zip 解析 |

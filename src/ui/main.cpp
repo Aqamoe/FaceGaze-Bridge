@@ -41,8 +41,11 @@ constexpr wchar_t kWindowTitle[]  = L"FaceGaze Bridge";
 constexpr UINT_PTR kRetryTimer    = 1;
 constexpr UINT_PTR kEngineTimer   = 2;
 constexpr UINT_PTR kRestartTimer  = 3;
-constexpr UINT kRetryIntervalMs   = 1500;
+constexpr UINT_PTR kLoadingTimer  = 4;
+// 引擎拉起后通常 100 ms 内就能响应 /healthz；等 1.5 s 再试只是让首屏白等
+constexpr UINT kRetryIntervalMs   = 250;
 constexpr UINT kEnginePollMs      = 1000;
+constexpr UINT kLoadingTickMs     = 400;
 constexpr int kIconResource       = 101;
 // 引擎在收到 restart_engine 时用这个退出码结束，外壳据此原地重启而不是关窗
 constexpr DWORD kEngineRestartExit = 3;
@@ -54,7 +57,8 @@ constexpr int kMinWidthDip      = 1100;
 constexpr int kMinHeightDip     = 700;
 
 struct Host {
-    HWND hwnd                        = nullptr;
+    HWND hwnd = nullptr;
+    ComPtr<ICoreWebView2Environment> environment;
     ComPtr<ICoreWebView2Controller> controller;
     ComPtr<ICoreWebView2> webview;
     std::wstring url;
@@ -62,8 +66,17 @@ struct Host {
     // 非空时把 --remote-debugging-port 传给 WebView2：自动化验证和现场排障都靠它
     std::wstring browser_args;
     std::uint16_t port = 8787;
-    bool navigated_ok  = false;
-    bool engine_owned  = false;
+    bool navigated_ok       = false;
+    bool engine_owned       = false;
+    // 自己拉起的引擎：页面要等 /healthz 应答再导航，免得先吃一个错误页
+    bool expect_engine      = false;
+    bool controller_started = false;
+    // WebView2 就绪后它自己的子窗口会盖住客户区，加载画面就到此为止
+    bool webview_ready = false;
+    // WebView2 冷启动一两秒是常态，这段空窗期先画加载状态，不要给用户一块死板的黑屏
+    std::wstring status      = L"正在启动";
+    unsigned loading_tick    = 0;
+    ULONGLONG started_ms     = 0;
 
     HANDLE engine_process = nullptr;
     HANDLE engine_job     = nullptr;
@@ -73,6 +86,8 @@ struct Host {
 };
 
 Host g_host;
+
+bool engine_present(std::uint16_t port);
 
 void set_title(const wchar_t* suffix) {
     if (g_host.hwnd == nullptr) {
@@ -101,6 +116,35 @@ std::wstring default_user_data_dir() {
     return dir;
 }
 
+// 启动各阶段耗时写进 engine.log：用户报"启动慢"时先看这几行，
+// 一眼分清是外壳、WebView2 运行时还是引擎花的时间。
+void trace_startup(const wchar_t* phase) {
+    if (g_host.engine_log.empty()) {
+        return;
+    }
+    wchar_t line[256];
+    std::swprintf(line, 256, L"[shell] +%llums %s\r\n",
+                  static_cast<unsigned long long>(::GetTickCount64() - g_host.started_ms), phase);
+    const int bytes = ::WideCharToMultiByte(CP_UTF8, 0, line, -1, nullptr, 0, nullptr, nullptr);
+    if (bytes <= 0) {
+        return;
+    }
+    std::string utf8(static_cast<std::size_t>(bytes), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, line, -1, utf8.data(), bytes, nullptr, nullptr);
+
+    // 引擎同时也在往这个文件追加（继承的句柄），双方都用 FILE_APPEND_DATA，
+    // 每次写落在当时的文件尾，不会互相覆盖。
+    HANDLE log = ::CreateFileW(g_host.engine_log.c_str(), FILE_APPEND_DATA,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+                               FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (log == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    DWORD written = 0;
+    ::WriteFile(log, utf8.data(), static_cast<DWORD>(utf8.size() - 1), &written, nullptr);
+    ::CloseHandle(log);
+}
+
 UINT window_dpi() {
     using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
     static const auto get_dpi = reinterpret_cast<GetDpiForWindowFn>(
@@ -114,12 +158,56 @@ UINT window_dpi() {
     return 96;
 }
 
+// 加载画面用 GDI 自己画：WebView2 的窗口挂在客户区上，controller 一就绪就盖住这里。
+// 一屏静态字看着像卡死，所以状态行按 400 ms 追加圆点表示还在动。
+void paint_loading(HDC dc, const RECT& client) {
+    const UINT dpi     = window_dpi();
+    const int center_y = (client.top + client.bottom) / 2;
+
+    HFONT title_font = CreateFontW(-::MulDiv(30, static_cast<int>(dpi), 96), 0, 0, 0, FW_SEMIBOLD,
+                                   FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                                   CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH,
+                                   L"Segoe UI");
+    HFONT status_font = CreateFontW(-::MulDiv(15, static_cast<int>(dpi), 96), 0, 0, 0, FW_NORMAL,
+                                    FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                                    CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH,
+                                    L"Segoe UI");
+
+    SetBkMode(dc, TRANSPARENT);
+    HGDIOBJ previous = SelectObject(dc, title_font);
+    SetTextColor(dc, RGB(0xe6, 0xed, 0xfb));
+    RECT title_rect{client.left, center_y - ::MulDiv(44, static_cast<int>(dpi), 96), client.right,
+                    center_y};
+    DrawTextW(dc, L"FaceGaze Bridge", -1, &title_rect,
+              DT_CENTER | DT_BOTTOM | DT_SINGLELINE | DT_NOPREFIX);
+
+    static const wchar_t* const kDots[] = {L"", L".", L"..", L"..."};
+    std::wstring status = g_host.status;
+    status.append(kDots[g_host.loading_tick % 4]);
+    SelectObject(dc, status_font);
+    SetTextColor(dc, RGB(0x8f, 0xa3, 0xc2));
+    RECT status_rect{client.left, center_y + ::MulDiv(10, static_cast<int>(dpi), 96), client.right,
+                     center_y + ::MulDiv(36, static_cast<int>(dpi), 96)};
+    DrawTextW(dc, status.c_str(), -1, &status_rect,
+              DT_CENTER | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+
+    SelectObject(dc, previous);
+    DeleteObject(title_font);
+    DeleteObject(status_font);
+}
+
 void navigate_once() {
     if (!g_host.webview) {
         return;
     }
+    // 引擎没应答就不导航：错误页会闪一下，而且原来的重试间隔让首屏白等 1.5 s
+    if (g_host.expect_engine && !engine_present(g_host.port)) {
+        set_title(L"等待引擎…");
+        g_host.status = L"正在等待引擎";
+        SetTimer(g_host.hwnd, kRetryTimer, kRetryIntervalMs, nullptr);
+        return;
+    }
     g_host.navigated_ok = false;
-    set_title(L"连接引擎…");
     g_host.webview->Navigate(g_host.url.c_str());
 }
 
@@ -135,7 +223,10 @@ void on_controller_ready(HRESULT result, ICoreWebView2Controller* controller) {
         return;
     }
 
-    g_host.controller = controller;
+    g_host.controller    = controller;
+    g_host.webview_ready = true;
+    KillTimer(g_host.hwnd, kLoadingTimer);
+    trace_startup(L"WebView2 控制器就绪（加载画面让位给页面）");
 
     ComPtr<ICoreWebView2Controller2> controller2;
     if (SUCCEEDED(controller->QueryInterface(IID_PPV_ARGS(&controller2)))) {
@@ -170,9 +261,11 @@ void on_controller_ready(HRESULT result, ICoreWebView2Controller* controller) {
                     g_host.navigated_ok = true;
                     set_title(L"");
                     KillTimer(g_host.hwnd, kRetryTimer);
+                    trace_startup(L"页面已加载");
                 } else {
                     // 引擎还没起来是最常见的原因：隔一会儿重试，而不是让用户看白屏
                     set_title(L"等待引擎…");
+                    g_host.status = L"正在等待引擎";
                     SetTimer(g_host.hwnd, kRetryTimer, kRetryIntervalMs, nullptr);
                 }
                 return S_OK;
@@ -183,14 +276,31 @@ void on_controller_ready(HRESULT result, ICoreWebView2Controller* controller) {
     navigate_once();
 }
 
-void create_webview() {
+void attach_webview() {
+    if (!g_host.environment || g_host.controller_started || g_host.hwnd == nullptr) {
+        return;
+    }
+    g_host.controller_started = true;
+    g_host.environment->CreateCoreWebView2Controller(
+        g_host.hwnd,
+        Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+            [](HRESULT controller_result, ICoreWebView2Controller* controller) -> HRESULT {
+                on_controller_ready(controller_result, controller);
+                return S_OK;
+            })
+            .Get());
+}
+
+// 环境创建不依赖窗口，所以尽早发起：WebView2 运行时冷启动是首屏最大的一段耗时，
+// 让它和窗口创建、引擎拉起并行，而不是等这些都做完才开始。
+HRESULT create_environment() {
     ComPtr<CoreWebView2EnvironmentOptions> environment_options;
     if (!g_host.browser_args.empty()) {
         environment_options = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
         environment_options->put_AdditionalBrowserArguments(g_host.browser_args.c_str());
     }
 
-    const HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
+    return CreateCoreWebView2EnvironmentWithOptions(
         nullptr, g_host.user_data_dir.c_str(),
         environment_options ? environment_options.Get() : nullptr,
         Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
@@ -201,29 +311,22 @@ void create_webview() {
                                   L"无法创建 WebView2 环境（0x%08lX）。\n\n"
                                   L"通常是缺少 Microsoft Edge WebView2 Runtime。",
                                   static_cast<unsigned long>(result));
-                    MessageBoxW(g_host.hwnd, message, kWindowTitle, MB_ICONERROR | MB_OK);
-                    PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
+                    if (g_host.hwnd != nullptr) {
+                        MessageBoxW(g_host.hwnd, message, kWindowTitle, MB_ICONERROR | MB_OK);
+                        PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
+                    } else {
+                        // 窗口还没建起来就失败：直接退出，别让进程留在后台
+                        MessageBoxW(nullptr, message, kWindowTitle, MB_ICONERROR | MB_OK);
+                        PostQuitMessage(0);
+                    }
                     return result;
                 }
-                env->CreateCoreWebView2Controller(
-                    g_host.hwnd,
-                    Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-                        [](HRESULT controller_result, ICoreWebView2Controller* controller) -> HRESULT {
-                            on_controller_ready(controller_result, controller);
-                            return S_OK;
-                        })
-                        .Get());
+                g_host.environment = env;
+                trace_startup(L"WebView2 环境就绪");
+                attach_webview();
                 return S_OK;
             })
             .Get());
-
-    if (FAILED(hr)) {
-        wchar_t message[256];
-        std::swprintf(message, 256, L"WebView2 加载器调用失败（0x%08lX）。",
-                      static_cast<unsigned long>(hr));
-        MessageBoxW(g_host.hwnd, message, kWindowTitle, MB_ICONERROR | MB_OK);
-        PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
-    }
 }
 
 // ---------- 引擎：探测 / 拉起 / 生命周期 ----------
@@ -331,26 +434,38 @@ struct PortChoice {
     bool ok            = false;
 };
 
-// 从 base 起扫 10 个端口：先找已有引擎（可以附着），再找空闲端口（可以新建）
+// 从 base 起扫 10 个端口：先找已有引擎（可以附着），再找空闲端口（可以新建）。
+//
+// 顺序很关键：先用 bind 判断"有没有人在听"，只对有人听的端口才发 /healthz。
+// 反过来先探测会踩坑——不少机器（防火墙/安全软件）对未监听端口的 SYN 是静默丢弃，
+// 每个端口都要等满 connect 超时，10 个端口白等两秒，用户看到的都是"启动慢"。
 PortChoice choose_engine_port(std::uint16_t base) {
     PortChoice choice;
-    for (unsigned candidate = base; candidate < static_cast<unsigned>(base) + 10; ++candidate) {
+    constexpr unsigned kSpan = 10;
+    std::uint16_t candidates[kSpan]{};
+    bool free_flags[kSpan]{};
+    unsigned count = 0;
+    for (unsigned candidate = base; candidate < static_cast<unsigned>(base) + kSpan; ++candidate) {
         if (candidate > 65535) {
             break;
         }
-        if (engine_present(static_cast<std::uint16_t>(candidate))) {
-            choice.port     = static_cast<std::uint16_t>(candidate);
+        candidates[count] = static_cast<std::uint16_t>(candidate);
+        // 空闲 = 没人监听 = 不可能是自家引擎，省掉一次健康检查
+        free_flags[count] = port_is_free(candidates[count]);
+        ++count;
+    }
+
+    for (unsigned i = 0; i < count; ++i) {
+        if (!free_flags[i] && engine_present(candidates[i])) {
+            choice.port     = candidates[i];
             choice.attached = true;
             choice.ok       = true;
             return choice;
         }
     }
-    for (unsigned candidate = base; candidate < static_cast<unsigned>(base) + 10; ++candidate) {
-        if (candidate > 65535) {
-            break;
-        }
-        if (port_is_free(static_cast<std::uint16_t>(candidate))) {
-            choice.port = static_cast<std::uint16_t>(candidate);
+    for (unsigned i = 0; i < count; ++i) {
+        if (free_flags[i]) {
+            choice.port = candidates[i];
             choice.ok   = true;
             return choice;
         }
@@ -416,7 +531,6 @@ bool spawn_engine(const std::wstring& source) {
         command.append(quote(arg));
     }
 
-    g_host.engine_log = local_app_data() + L"\\FaceGazeBridge\\engine.log";
     std::filesystem::create_directories(std::filesystem::path{g_host.engine_log}.parent_path(), ec);
 
     SECURITY_ATTRIBUTES inherit{};
@@ -469,6 +583,7 @@ bool spawn_engine(const std::wstring& source) {
 
     g_host.engine_process = process.hProcess;
     g_host.engine_owned   = true;
+    trace_startup(L"引擎已拉起（fgb-cli）");
     ::SetTimer(g_host.hwnd, kEngineTimer, kEnginePollMs, nullptr);
     return true;
 }
@@ -565,8 +680,33 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
                 set_title(L"");
                 KillTimer(hwnd, kRestartTimer);
             }
+        } else if (wparam == kLoadingTimer) {
+            if (g_host.webview_ready) {
+                KillTimer(hwnd, kLoadingTimer);
+            } else {
+                ++g_host.loading_tick;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
         }
         return 0;
+
+    case WM_PAINT: {
+        PAINTSTRUCT paint{};
+        HDC dc = BeginPaint(hwnd, &paint);
+        RECT client{};
+        GetClientRect(hwnd, &client);
+        HBRUSH background = CreateSolidBrush(RGB(0x07, 0x0d, 0x1c));
+        FillRect(dc, &client, background);
+        DeleteObject(background);
+        if (!g_host.webview_ready) {
+            paint_loading(dc, client);
+        }
+        EndPaint(hwnd, &paint);
+        return 0;
+    }
+
+    case WM_ERASEBKGND:
+        return 1; // WM_PAINT 里整块重画，擦除只会闪一下
 
     case WM_GETMINMAXINFO: {
         auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
@@ -653,6 +793,13 @@ Options parse_options(int argc, wchar_t** argv) {
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
+    g_host.started_ms = ::GetTickCount64();
+    g_host.engine_log = local_app_data() + L"\\FaceGazeBridge\\engine.log";
+    std::error_code log_dir_ec;
+    std::filesystem::create_directories(std::filesystem::path{g_host.engine_log}.parent_path(),
+                                        log_dir_ec);
+    trace_startup(L"进程启动");
+
     enable_dpi_awareness();
 
     int argc       = 0;
@@ -668,6 +815,31 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(com)) {
         MessageBoxW(nullptr, L"COM 初始化失败。", kWindowTitle, MB_ICONERROR | MB_OK);
+        if (wsa_ok) {
+            ::WSACleanup();
+        }
+        return 1;
+    }
+
+    g_host.user_data_dir = options.user_data_dir;
+    g_host.port          = options.port;
+    g_host.engine_args   = options.engine_args;
+    // 产品默认走 VRCFT 模块；没模块时失败弹窗可以一键切 VMC
+    g_host.default_source = L"vrcft";
+    if (options.debug_port > 0) {
+        g_host.browser_args = L"--remote-debugging-port=" +
+                              std::to_wstring(options.debug_port);
+    }
+
+    // 先把 WebView2 运行时叫醒：窗口、引擎都很快，剩下的等待几乎全在它身上
+    const HRESULT environment_hr = create_environment();
+    if (FAILED(environment_hr)) {
+        trace_startup(L"WebView2 加载器调用失败");
+        wchar_t message[256];
+        std::swprintf(message, 256, L"WebView2 加载器调用失败（0x%08lX）。",
+                      static_cast<unsigned long>(environment_hr));
+        MessageBoxW(nullptr, message, kWindowTitle, MB_ICONERROR | MB_OK);
+        CoUninitialize();
         if (wsa_ok) {
             ::WSACleanup();
         }
@@ -693,16 +865,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
             ::WSACleanup();
         }
         return 1;
-    }
-
-    g_host.user_data_dir = options.user_data_dir;
-    g_host.port          = options.port;
-    g_host.engine_args   = options.engine_args;
-    // 产品默认走 VRCFT 模块；没模块时失败弹窗可以一键切 VMC
-    g_host.default_source = L"vrcft";
-    if (options.debug_port > 0) {
-        g_host.browser_args = L"--remote-debugging-port=" +
-                              std::to_wstring(options.debug_port);
     }
 
     // 默认尺寸按 DPI 放大后再收进工作区：高分屏上 1180x780 的物理像素只有 ~940 DIP
@@ -741,6 +903,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     apply_dark_title_bar(g_host.hwnd);
     ShowWindow(g_host.hwnd, show_command == 0 ? SW_SHOWNORMAL : show_command);
     UpdateWindow(g_host.hwnd);
+    g_host.status = L"正在加载界面";
+    SetTimer(g_host.hwnd, kLoadingTimer, kLoadingTickMs, nullptr);
+    trace_startup(L"窗口已显示");
 
     // 先看有没有自家引擎（可能在新端口上），没有再挑一个空闲端口新建。
     // 8787 被别的程序占用时自动用 8788/8789…，界面地址跟着变。
@@ -760,6 +925,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
         }
         g_host.port = choice.port;
         attached    = choice.attached;
+        trace_startup(L"引擎端口已选定");
         wchar_t buffer[128];
         std::swprintf(buffer, 128, L"http://127.0.0.1:%u/",
                       static_cast<unsigned>(g_host.port));
@@ -770,11 +936,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     }
 
     // 已有引擎（例如命令行起的）就只连不动；否则拉一个，藏在后台。
-    if (!attached) {
-        spawn_engine(g_host.default_source);
+    if (attached) {
+        trace_startup(L"已有引擎在跑，直接连接");
+    } else if (!spawn_engine(g_host.default_source)) {
+        // 拉不起来就别留一块永远转圈的窗口；spawn_engine 已经弹过原因
+        PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
+    } else {
+        // 只有页面在我们自己的端口上时才等引擎应答；--url 指到别处就照旧直接导航
+        g_host.expect_engine = options.url.empty();
     }
 
-    create_webview();
+    // 环境可能已就绪，也可能还在起；两条路都会走到 attach_webview
+    attach_webview();
 
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0) > 0) {

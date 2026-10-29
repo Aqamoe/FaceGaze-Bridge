@@ -1,7 +1,8 @@
 // 版本信息与图标。由 CMake configure_file 生成（版本号跟着 project() 走）。
+// 图标行由 CMake 传进来：只有产品入口带图标，命令行引擎留空（见 src/CMakeLists.txt）。
 #include <windows.h>
 
-101 ICON "@FGB_RC_ICON_PATH@"
+@FGB_RC_ICON_LINE@
 
 1 VERSIONINFO
  FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
@@ -17,7 +18,7 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", "FaceGaze Bridge"
-            VALUE "FileDescription", "FaceGaze Bridge"
+            VALUE "FileDescription", "@FGB_RC_DESCRIPTION@"
             VALUE "FileVersion", "@PROJECT_VERSION@"
             VALUE "InternalName", "@FGB_RC_INTERNAL_NAME@"
             VALUE "OriginalFilename", "@FGB_RC_FILENAME@"
