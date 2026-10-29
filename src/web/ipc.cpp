@@ -3,7 +3,9 @@
 #include "base/json.hpp"
 #include "base/log.hpp"
 #include "params/avatar_config.hpp"
+#include "params/calibration.hpp"
 #include "params/catalog.hpp"
+#include "params/preview_tap.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -37,6 +39,8 @@ constexpr char kTag[] = "ipc";
 // 又远低于引擎 120 Hz，不会把主循环的时间预算吃掉。
 constexpr auto kStatusPeriod = std::chrono::milliseconds(100);
 constexpr auto kParamsPeriod = std::chrono::milliseconds(100);
+// 校准页的面部动画需要比热力图更顺：100 ms 台阶在动态表情上肉眼可见（ADR-0021）
+constexpr auto kPreviewPeriod = std::chrono::milliseconds(33);
 
 // 日志积压上限：UI 没连上时日志不该无限吃内存
 constexpr std::size_t kMaxLogBacklog = 256;
@@ -157,6 +161,12 @@ IpcServer::IpcServer(IpcContext context) : ctx_(std::move(context)) {
         library_->refresh_if_stale(std::chrono::hours(6));
     }
 
+    // 启动时读到的档案就是"磁盘上的版本"：界面据此判断哪些改动还没保存
+    if (ctx_.calib != nullptr) {
+        saved_profile_ = ctx_.calib->profile();
+        calib_loaded_  = ctx_.calib_loaded;
+    }
+
     server_.on_open = [this](std::intptr_t conn) {
         FGB_DEBUG(kTag, "UI 已连接");
         std::string message;
@@ -180,10 +190,21 @@ IpcServer::IpcServer(IpcContext context) : ctx_(std::move(context)) {
         server_.send_text(conn, message);
         build_params(message);
         server_.send_text(conn, message);
+        build_calibration(message);
+        server_.send_text(conn, message);
         send_backlog(conn);
     };
 
-    server_.on_close = [](std::intptr_t) { FGB_DEBUG(kTag, "UI 已断开"); };
+    server_.on_close = [this](std::intptr_t) {
+        FGB_DEBUG(kTag, "UI 已断开");
+        // 页面走了就停取样：可能还有人连着（第二个页面/探针），所以只看连接数
+        if (server_.ready_count() == 0) {
+            preview_wanted_ = false;
+            if (ctx_.preview != nullptr) {
+                ctx_.preview->set_enabled(false);
+            }
+        }
+    };
 
     server_.on_text = [this](std::intptr_t conn, std::string_view text) {
         handle_text(conn, text);
@@ -453,6 +474,92 @@ void IpcServer::build_params(std::string& out) {
     writer.obj_end();
 }
 
+// 校准档案全量。88 个形状一次给全（约 4 KB），页面自己在本地过滤/搜索：
+// 按需分页会让"拖动滑杆的下一帧"多一次往返，实时感就没了。
+void IpcServer::build_calibration(std::string& out) {
+    out.clear();
+    const params::CalibrationProfile profile =
+        ctx_.calib != nullptr ? ctx_.calib->profile() : params::CalibrationProfile{};
+    const bool available = ctx_.calib != nullptr;
+
+    JsonWriter writer{out};
+    writer.obj_begin();
+    writer.key("type").str("calibration");
+    writer.key("available").boolean(available);
+    writer.key("path").str(ctx_.calib_path.string());
+    writer.key("default_path").str(params::default_calibration_path().string());
+    // dirty 是"内存里的档案和磁盘上的不一样"：界面据此决定要不要提示未保存
+    writer.key("dirty").boolean(available && profile != saved_profile_);
+    writer.key("loaded").boolean(calib_loaded_);
+    writer.key("active").integer(static_cast<long long>(profile.active_shape_count()));
+
+    writer.key("shapes").arr_begin();
+    for (std::size_t i = 0; i < kShapeCount; ++i) {
+        const params::ShapeRange& range = profile.shapes[i];
+        writer.obj_begin();
+        writer.key("name").str(shape_name(static_cast<Shape>(i)));
+        writer.key("lo").num(static_cast<double>(range.lo), 4);
+        writer.key("hi").num(static_cast<double>(range.hi), 4);
+        writer.key("active").boolean(range.active);
+        writer.obj_end();
+    }
+    writer.arr_end();
+
+    writer.key("eye").obj_begin();
+    writer.key("active").boolean(profile.has_eye);
+    writer.key("gain_x").num(static_cast<double>(profile.eye_gain_x), 3);
+    writer.key("gain_y").num(static_cast<double>(profile.eye_gain_y), 3);
+    writer.key("center_x").num(static_cast<double>(profile.eye_center_x), 3);
+    writer.key("center_y").num(static_cast<double>(profile.eye_center_y), 3);
+    writer.obj_end();
+
+    writer.obj_end();
+}
+
+// 校准页的 30 Hz 预览：raw 是校准前的原始值，out 是校准+滤波之后真正发出去的值。
+// 两个都给，是为了让用户看清"我这一条 lo/hi 把原始值压到了哪里"，
+// 只给一个的话，滑杆调错时页面和 VRChat 里的差别没人能解释。
+void IpcServer::build_preview(std::string& out) {
+    out.clear();
+    params::PreviewFrame raw;
+    const bool have_raw = ctx_.preview != nullptr && ctx_.preview->latest(raw);
+    const FaceFrame frame = ctx_.engine != nullptr ? ctx_.engine->latest() : FaceFrame::neutral();
+
+    JsonWriter writer{out};
+    writer.obj_begin();
+    writer.key("type").str("preview");
+    writer.key("seq").integer(static_cast<long long>(have_raw ? raw.sequence : frame.sequence));
+    writer.key("raw_valid").boolean(have_raw && raw.valid);
+
+    writer.key("raw").arr_begin();
+    for (std::size_t i = 0; i < kShapeCount; ++i) {
+        writer.num(static_cast<double>(have_raw ? raw.shapes[i] : 0.0f), 4);
+    }
+    writer.arr_end();
+
+    writer.key("out").arr_begin();
+    for (std::size_t i = 0; i < kShapeCount; ++i) {
+        writer.num(static_cast<double>(frame.shapes[i]), 4);
+    }
+    writer.arr_end();
+
+    writer.key("eye").obj_begin();
+    writer.key("valid").boolean(have_raw && raw.eyes_valid);
+    writer.key("open_l").num(static_cast<double>(have_raw ? raw.openness_l : 1.0f), 3);
+    writer.key("open_r").num(static_cast<double>(have_raw ? raw.openness_r : 1.0f), 3);
+    writer.key("x").num(static_cast<double>(have_raw ? raw.gaze_x_deg : 0.0f), 2);
+    writer.key("y").num(static_cast<double>(have_raw ? raw.gaze_y_deg : 0.0f), 2);
+    writer.obj_end();
+
+    writer.obj_end();
+}
+
+void IpcServer::broadcast_calibration() {
+    std::string message;
+    build_calibration(message);
+    server_.broadcast(message);
+}
+
 // 单个实例的运行态。界面上的红点必须配一句人话，
 // 所以这里只回有限几种状态，细节靠 modules[].error。
 const char* IpcServer::module_state(const RunningModule& module) const noexcept {
@@ -648,6 +755,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     bool modules_touched    = false;
     bool modules_dirty_only = false;
     bool library_touched    = false;
+    bool calibration_changed = false;
     std::string modules_message;
     std::string ack_message;
     bool engine_restarting = false;
@@ -669,6 +777,187 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             ctx_.filter->set_enabled(enabled);
             ctx_.filter->set_live_params(static_cast<float>(min_cutoff), static_cast<float>(beta));
             ok = true;
+        }
+    } else if (has_type && type == "set_preview") {
+        bool enabled = false;
+        json::field_bool(text, "enabled", enabled);
+        if (ctx_.preview == nullptr) {
+            error = "preview not available";
+        } else {
+            preview_wanted_ = enabled;
+            ctx_.preview->set_enabled(enabled);
+            if (enabled) {
+                // 立刻回一帧：页面切过来时滑杆和数值不该先空白 33 ms
+                last_preview_ = std::chrono::steady_clock::time_point{};
+            }
+            ok = true;
+        }
+    } else if (has_type && type == "set_calibration_shape") {
+        std::string name;
+        json::field_string(text, "name", name);
+        Shape shape{};
+        if (ctx_.calib == nullptr) {
+            error = "calibration not available";
+        } else if (!shape_from_name(name, shape)) {
+            error = "unknown shape: " + name;
+        } else {
+            params::CalibrationProfile profile = ctx_.calib->profile();
+            params::ShapeRange& range          = profile.shapes[index_of(shape)];
+            double value                       = 0.0;
+            if (json::field_number(text, "lo", value)) {
+                range.lo = clamp01(static_cast<float>(value));
+            }
+            if (json::field_number(text, "hi", value)) {
+                range.hi = clamp01(static_cast<float>(value));
+            }
+            if (range.lo > range.hi) {
+                std::swap(range.lo, range.hi); // 拖过头就交换，而不是让用户猜为什么没反应
+            }
+            bool active = range.active;
+            if (json::field_bool(text, "active", active)) {
+                range.active = active;
+                // 刚启用的形状如果区间是"没调过"的状态（跨度近 0），给一个能用的默认：
+                // 否则用户勾了启用、拖滑杆，输出却一点没变
+                if (active && range.hi - range.lo < 0.02f) {
+                    range.lo = 0.0f;
+                    range.hi = 1.0f;
+                }
+            }
+            ctx_.calib->set_profile(profile); // 实时生效：预览与实际输出同时变
+            calibration_changed = true;
+            ok                  = true;
+        }
+    } else if (has_type && type == "set_calibration_eye") {
+        if (ctx_.calib == nullptr) {
+            error = "calibration not available";
+        } else {
+            params::CalibrationProfile profile = ctx_.calib->profile();
+            double value                       = 0.0;
+            if (json::field_number(text, "gain_x", value)) {
+                profile.eye_gain_x = static_cast<float>(std::clamp(value, 0.1, 5.0));
+            }
+            if (json::field_number(text, "gain_y", value)) {
+                profile.eye_gain_y = static_cast<float>(std::clamp(value, 0.1, 5.0));
+            }
+            if (json::field_number(text, "center_x", value)) {
+                profile.eye_center_x = static_cast<float>(std::clamp(value, -60.0, 60.0));
+            }
+            if (json::field_number(text, "center_y", value)) {
+                profile.eye_center_y = static_cast<float>(std::clamp(value, -60.0, 60.0));
+            }
+            bool active = profile.has_eye;
+            if (json::field_bool(text, "active", active)) {
+                profile.has_eye = active;
+            }
+            ctx_.calib->set_profile(profile);
+            calibration_changed = true;
+            ok                  = true;
+        }
+    } else if (has_type && type == "capture_calibration") {
+        std::string name;
+        std::string which = "lo";
+        json::field_string(text, "shape", name);
+        json::field_string(text, "which", which);
+        params::PreviewFrame raw;
+        if (ctx_.calib == nullptr) {
+            error = "calibration not available";
+        } else if (ctx_.preview == nullptr || !ctx_.preview->latest(raw) || !raw.valid) {
+            error = "没有实时数据：请先打开校准页（预览取样只在校准页打开时开启）";
+        } else {
+            params::CalibrationProfile profile = ctx_.calib->profile();
+            bool apply                         = false;
+            if (name.empty()) {
+                // 空 shape = 取当前视线角度作为中心：用户平视前方时点一下
+                if (!raw.eyes_valid) {
+                    error = "输入源没有眼追数据";
+                } else {
+                    profile.eye_center_x = raw.gaze_x_deg;
+                    profile.eye_center_y = raw.gaze_y_deg;
+                    profile.has_eye      = true;
+                    apply                = true;
+                    ack_message          = "已把当前视线角度设为中心";
+                }
+            } else {
+                Shape shape{};
+                if (!shape_from_name(name, shape)) {
+                    error = "unknown shape: " + name;
+                } else {
+                    params::ShapeRange& range = profile.shapes[index_of(shape)];
+                    const float current       = clamp01(raw.shapes[index_of(shape)]);
+                    if (which == "hi") {
+                        range.hi = current;
+                    } else {
+                        range.lo = current;
+                    }
+                    if (range.lo > range.hi) {
+                        std::swap(range.lo, range.hi);
+                    }
+                    apply = true;
+                    // 两端几乎一样时不启用，但必须告诉用户为什么——否则就是
+                    // "点了取当前，什么都没发生"的黑箱
+                    if (range.hi - range.lo >= 0.02f) {
+                        range.active = true;
+                        ack_message  = "已取当前值为 " + which;
+                    } else {
+                        range.active = false;
+                        error        = "当前值与该形状的另一端几乎相同，跨度太小，未启用";
+                    }
+                }
+            }
+            if (apply) {
+                ctx_.calib->set_profile(profile);
+                calibration_changed = true;
+                // 跨度太小不算成功：页面要弹提示，而不是静静地把启用勾去掉
+                ok = error.empty();
+            }
+        }
+    } else if (has_type && type == "save_calibration") {
+        if (ctx_.calib == nullptr) {
+            error = "calibration not available";
+        } else if (ctx_.calib_path.empty()) {
+            error = "no calibration path";
+        } else {
+            const params::CalibrationProfile profile = ctx_.calib->profile();
+            std::string save_error;
+            if (params::save_profile_atomic(ctx_.calib_path.string(), profile, save_error)) {
+                saved_profile_      = profile;
+                calib_loaded_       = true;
+                calibration_changed = true;
+                ok                  = true;
+                ack_message         = "校准已保存：" + ctx_.calib_path.string();
+                FGB_INFO(kTag, "校准档案已保存：%s（%zu 个形状）", ctx_.calib_path.string().c_str(),
+                         profile.active_shape_count());
+            } else {
+                error = save_error;
+            }
+        }
+    } else if (has_type && type == "reload_calibration") {
+        if (ctx_.calib == nullptr) {
+            error = "calibration not available";
+        } else if (ctx_.calib_path.empty()) {
+            error = "no calibration path";
+        } else {
+            params::CalibrationProfile profile;
+            if (!params::load_profile(ctx_.calib_path.string(), profile)) {
+                error = "读取失败：" + ctx_.calib_path.string();
+            } else {
+                ctx_.calib->set_profile(profile);
+                saved_profile_      = profile;
+                calib_loaded_       = true;
+                calibration_changed = true;
+                ok                  = true;
+                ack_message         = "已重新加载校准档案";
+            }
+        }
+    } else if (has_type && type == "reset_calibration") {
+        if (ctx_.calib == nullptr) {
+            error = "calibration not available";
+        } else {
+            // 只改内存，不删文件：用户点错了还能「重新加载」拿回来
+            ctx_.calib->set_profile(params::CalibrationProfile{});
+            calibration_changed = true;
+            ok                  = true;
+            ack_message         = "已恢复默认（全部形状透传）";
         }
     } else if (has_type && type == "reload_avatar") {
         if (ctx_.sink == nullptr) {
@@ -944,6 +1233,11 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         build_status(status);
         server_.broadcast(status);
     }
+    if (calibration_changed) {
+        // 无论成功与否都推一次：失败时（例如跨度太小没启用）页面要看到真实状态，
+        // 不能停在用户以为成功的那一版
+        broadcast_calibration();
+    }
 }
 
 bool IpcServer::handle_http(const net::ws::HttpHead& head, std::string& body,
@@ -976,6 +1270,17 @@ bool IpcServer::handle_http(const net::ws::HttpHead& head, std::string& body,
 
     if (head.path == "/api/status") {
         build_metrics(body);
+        return true;
+    }
+
+    if (head.path == "/api/calibration") {
+        build_calibration(body);
+        return true;
+    }
+
+    // 只读预览：探针用 curl 就能断言"原始值/输出值与页面一致"，不必先起 WebSocket
+    if (head.path == "/api/preview") {
+        build_preview(body);
         return true;
     }
 
@@ -1168,10 +1473,24 @@ void IpcServer::pump(int timeout_ms) {
     }
 
     if (server_.ready_count() == 0) {
+        // 页面全走了：停掉取样，引擎热路径回到零额外开销
+        if (preview_wanted_) {
+            preview_wanted_ = false;
+            if (ctx_.preview != nullptr) {
+                ctx_.preview->set_enabled(false);
+            }
+        }
         return;
     }
 
     const auto now = std::chrono::steady_clock::now();
+
+    if (preview_wanted_ && ctx_.preview != nullptr && now - last_preview_ >= kPreviewPeriod) {
+        std::string message;
+        build_preview(message);
+        server_.broadcast(message);
+        last_preview_ = now;
+    }
 
     if (library_ != nullptr && library_->busy() &&
         now - last_library_push_ >= std::chrono::milliseconds(200)) {

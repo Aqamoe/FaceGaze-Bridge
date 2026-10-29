@@ -2,6 +2,7 @@
 #include "config/ini.hpp"
 #include "core/process/one_euro.hpp"
 #include "params/calibration.hpp"
+#include "params/preview_tap.hpp"
 #include "vrcft/update_data.hpp"
 
 #include "test_framework.hpp"
@@ -193,4 +194,117 @@ FGB_TEST(calibration_derive_reports_missing_file) {
     std::string error;
     FGB_CHECK(!derive_profile(temp_path("nope.fgbrec"), temp_path("nope2.fgbrec"), profile, error));
     FGB_CHECK(!error.empty());
+}
+
+// ---------------------------------------------------------------------------
+// 校准预览取样（ADR-0021 P1）
+// ---------------------------------------------------------------------------
+
+FGB_TEST(preview_tap_is_off_until_enabled) {
+    PreviewTap tap;
+    FaceFrame frame;
+    frame.sequence                                  = 42;
+    frame.shapes[index_of(Shape::JawOpen)]          = 0.42f;
+
+    // 校准页没开时不该取样：引擎热路径每次 tick 都跑，白拷一份没有意义
+    tap.process(frame);
+    PreviewFrame snapshot;
+    const bool read_ok = tap.latest(snapshot);
+    FGB_CHECK(!read_ok || !snapshot.valid);
+
+    tap.set_enabled(true);
+    tap.process(frame);
+    FGB_CHECK(tap.latest(snapshot));
+    FGB_CHECK(snapshot.valid);
+    FGB_CHECK(snapshot.sequence == 42);
+    FGB_CHECK(std::fabs(snapshot.shapes[index_of(Shape::JawOpen)] - 0.42f) < 1e-6f);
+}
+
+FGB_TEST(preview_tap_sees_value_before_calibration) {
+    // 校准把 0.20..0.60 拉到 0..1，取样器必须仍看到原始 0.40
+    CalibrationProfile profile;
+    auto& range                                = profile.shapes[index_of(Shape::JawOpen)];
+    range.lo                                   = 0.2f;
+    range.hi                                   = 0.6f;
+    range.active                               = true;
+
+    PreviewTap tap;
+    tap.set_enabled(true);
+    CalibrationApplier applier{profile};
+
+    FaceFrame frame;
+    frame.shapes[index_of(Shape::JawOpen)] = 0.40f;
+    // 顺序与引擎一致：先取样，再校准
+    tap.process(frame);
+    applier.process(frame);
+
+    PreviewFrame snapshot;
+    FGB_CHECK(tap.latest(snapshot));
+    FGB_CHECK(std::fabs(snapshot.shapes[index_of(Shape::JawOpen)] - 0.40f) < 1e-6f);
+    FGB_CHECK(std::fabs(frame.shapes[index_of(Shape::JawOpen)] - 0.50f) < 1e-5f);
+}
+
+FGB_TEST(calibration_hot_swap_takes_effect_next_frame) {
+    CalibrationApplier applier;
+    FaceFrame frame;
+    frame.shapes[index_of(Shape::JawOpen)] = 0.5f;
+    applier.process(frame);
+    FGB_CHECK(std::fabs(frame.shapes[index_of(Shape::JawOpen)] - 0.5f) < 1e-6f); // 默认透传
+
+    // 界面拖滑杆：控制线程 set_profile，下一帧就生效（不重启引擎）
+    CalibrationProfile profile;
+    auto& range   = profile.shapes[index_of(Shape::JawOpen)];
+    range.lo      = 0.5f;
+    range.hi      = 1.0f;
+    range.active  = true;
+    applier.set_profile(profile);
+
+    frame.shapes[index_of(Shape::JawOpen)] = 0.75f;
+    applier.process(frame);
+    FGB_CHECK(std::fabs(frame.shapes[index_of(Shape::JawOpen)] - 0.5f) < 1e-5f);
+    FGB_CHECK(std::fabs(applier.profile().shapes[index_of(Shape::JawOpen)].hi - 1.0f) < 1e-6f);
+}
+
+FGB_TEST(calibration_profile_equality_ignores_inactive_numbers) {
+    CalibrationProfile a;
+    CalibrationProfile b;
+    // 未激活的形状数值不参与比较：取消勾选后再改数值不算"有改动"
+    a.shapes[index_of(Shape::JawOpen)].lo = 0.1f;
+    FGB_CHECK(a == b);
+
+    b.shapes[index_of(Shape::JawOpen)].active = true;
+    FGB_CHECK(a != b);
+}
+
+FGB_TEST(calibration_atomic_save_keeps_previous_as_backup) {
+    const std::string path = temp_path("atomic_calib.ini");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(path + ".bak", ec);
+
+    CalibrationProfile first;
+    first.shapes[index_of(Shape::JawOpen)].lo     = 0.10f;
+    first.shapes[index_of(Shape::JawOpen)].hi     = 0.90f;
+    first.shapes[index_of(Shape::JawOpen)].active = true;
+
+    std::string error;
+    FGB_CHECK(save_profile_atomic(path, first, error));
+    FGB_CHECK(error.empty());
+    FGB_CHECK(std::filesystem::exists(path));
+
+    CalibrationProfile second = first;
+    second.shapes[index_of(Shape::JawOpen)].hi = 0.70f;
+    FGB_CHECK(save_profile_atomic(path, second, error));
+
+    CalibrationProfile loaded;
+    FGB_CHECK(load_profile(path, loaded));
+    FGB_CHECK(std::fabs(loaded.shapes[index_of(Shape::JawOpen)].hi - 0.70f) < 1e-3f);
+
+    // 改错了要能拿回上一版：.bak 是第二道保险（第一道是「重新加载」）
+    CalibrationProfile backup;
+    FGB_CHECK(load_profile(path + ".bak", backup));
+    FGB_CHECK(std::fabs(backup.shapes[index_of(Shape::JawOpen)].hi - 0.90f) < 1e-3f);
+
+    // 临时文件不能留在磁盘上
+    FGB_CHECK(!std::filesystem::exists(path + ".tmp"));
 }

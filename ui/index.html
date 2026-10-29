@@ -35,6 +35,10 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 12h4M12 12h8M4 17h12M20 17h0"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="17" r="2"/></svg>
         <span data-i18n="nav.params">参数</span>
       </button>
+      <button class="nav-item" data-page="calibration">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7"/><path d="M3 19h18"/></svg>
+        <span data-i18n="nav.calibration">校准</span>
+      </button>
       <button class="nav-item" data-page="output">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 8-8M4 12a8 8 0 0 0 8 8M12 4a8 8 0 0 1 0 16"/><circle cx="12" cy="12" r="2.2"/></svg>
         <span data-i18n="nav.output">输出</span>
@@ -198,6 +202,60 @@
         </div>
         <div class="heatmap" id="heatmap"></div>
         <div class="empty" id="param-empty" data-i18n="params.empty" hidden>没有匹配的参数</div>
+      </section>
+
+      <!-- 校准 -->
+      <section class="page" data-page="calibration">
+        <div class="toolbar">
+          <input id="cal-search" type="search" data-i18n-placeholder="calibration.search" placeholder="搜索形状，例如 Jaw / Mouth">
+          <label class="switch"><input type="checkbox" id="cal-only-active"> <span data-i18n="calibration.only_active">只看已校准</span></label>
+          <span class="pill warn" id="cal-dirty" hidden data-i18n="calibration.unsaved">未保存</span>
+          <span class="muted mono" id="cal-path">—</span>
+          <button class="btn" id="cal-save" data-i18n="calibration.save">保存</button>
+          <button class="btn ghost" id="cal-reload" data-i18n="calibration.reload">重新加载</button>
+          <button class="btn ghost" id="cal-reset" data-i18n="calibration.reset">恢复默认</button>
+        </div>
+
+        <article class="card" style="margin-bottom:14px">
+          <h2 data-i18n="calibration.eye.title">视线</h2>
+          <label class="switch"><input type="checkbox" id="cal-eye-active"> <span data-i18n="calibration.eye.enable">启用视线校准</span></label>
+          <div class="grid-2">
+            <div>
+              <div class="slider-row">
+                <span data-i18n="calibration.eye.gain_x">水平增益</span>
+                <input type="range" id="cal-eye-gain-x" min="0.2" max="3" step="0.05">
+                <b id="cal-eye-gain-x-v">—</b>
+              </div>
+              <div class="slider-row">
+                <span data-i18n="calibration.eye.center_x">水平中心 (°)</span>
+                <input type="range" id="cal-eye-center-x" min="-30" max="30" step="0.5">
+                <b id="cal-eye-center-x-v">—</b>
+              </div>
+            </div>
+            <div>
+              <div class="slider-row">
+                <span data-i18n="calibration.eye.gain_y">垂直增益</span>
+                <input type="range" id="cal-eye-gain-y" min="0.2" max="3" step="0.05">
+                <b id="cal-eye-gain-y-v">—</b>
+              </div>
+              <div class="slider-row">
+                <span data-i18n="calibration.eye.center_y">垂直中心 (°)</span>
+                <input type="range" id="cal-eye-center-y" min="-30" max="30" step="0.5">
+                <b id="cal-eye-center-y-v">—</b>
+              </div>
+            </div>
+          </div>
+          <button class="btn small" id="cal-eye-capture" data-i18n="calibration.eye.capture">取当前视线为中心</button>
+          <span class="muted mono" id="cal-eye-live">—</span>
+          <p class="hint" data-i18n="calibration.eye.hint">平视前方时点一下「取当前视线为中心」，眼睛就不会总往一边飘。增益调大能让眼动更明显。</p>
+        </article>
+
+        <div class="cal-list" id="cal-list"></div>
+        <div class="empty" id="cal-empty" hidden data-i18n="calibration.empty">没有匹配的形状</div>
+        <p class="hint" data-i18n="calibration.hint">
+          拖动 lo/hi 立即生效：lo 对应表情为 0，hi 对应表情为 1。原始值是校准前、输出值是实际发出去的值。
+          改动只在点「保存」后写入档案，未保存时离开页面会提示。
+        </p>
       </section>
 
       <!-- 输出 -->

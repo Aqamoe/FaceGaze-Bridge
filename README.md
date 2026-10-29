@@ -44,8 +44,10 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 原生 C ABI（M4/M5 基础） | ✅ 进程内 C ABI v1 + 无硬件示例模块（[ADR-0018](docs/adr/0018-native-c-abi-v1.md)） |
 | 共享内存输出（M4） | ✅ 命名映射 + 双缓冲 seqlock，`--shm <name>` 显式开启（[ADR-0019](docs/adr/0019-shared-memory-output.md)） |
 | 多输出（M4） | ✅ VRChat OSC + VMC 第二路（`--vmc-out`）+ 共享内存（`--shm`），可同时驱动 Unity 场景（[ADR-0014](docs/adr/0014-vmc-output-sink.md)、[ADR-0019](docs/adr/0019-shared-memory-output.md)） |
-| 校准工作台（规划） | 方案已评估、未实施：3D 面部预览 + 范围映射 + 部位高亮（[ADR-0021](docs/adr/0021-calibration-workbench-3d-preview.md)） |
-| 随 SteamVR 启动（规划） | 方案已评估、未实施：OpenVR `IVRApplications` 注册；**前置：托盘常驻壳**（[ADR-0020](docs/adr/0020-steamvr-autostart.md)） |
+| 托盘常驻 + 关窗语义 | ✅ 托盘图标与菜单（显示窗口 / 启动·停止引擎 / 重启引擎 / 退出）、`--tray` 无窗口启动、单实例恢复、关窗收托盘（[ADR-0022](docs/adr/0022-tray-shell-and-close-semantics.md)） |
+| 校准（P1/P2） | ✅ 「校准」页：88 个形状的 lo/hi 与视线 gain/center，拖动实时生效、原子保存 + `.bak`、默认档案自动加载（[ADR-0021](docs/adr/0021-calibration-workbench-3d-preview.md)） |
+| 校准 3D 预览（规划） | 未实施：`.fgbface` 模型 + WebGL2 渲染 + 部位高亮；数据链路已就绪，等模型资产（[ADR-0021](docs/adr/0021-calibration-workbench-3d-preview.md)） |
+| 随 SteamVR 启动（规划） | 方案已评估、未实施：OpenVR `IVRApplications` 注册；托盘前置已完成（[ADR-0020](docs/adr/0020-steamvr-autostart.md)） |
 
 **已经能跑的**（M1 + M2 核心）：
 
@@ -58,8 +60,9 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 - 无锁核心：SPSC ring、seqlock 快照
 - VRChat 输出端：死区过滤、bundle 聚合、1200 字节主动分包、1 Hz 心跳
 - 眼追参数派生（`EyeLeftX/Y`、`EyeLidLeft/Right`），`parameters` / `native` / `both` 三模式
-- 界面：`FaceGaze Bridge.exe` 双击即用（窗口拉起隐藏引擎，关窗即停），↔ 引擎走本机 WebSocket，
-  10 Hz 推送状态与 365 个参数值，滤波滑杆/重新读取头像/日志实时回传
+- 界面：`FaceGaze Bridge.exe` 双击即用（窗口拉起隐藏引擎；关窗收进托盘、追踪继续，
+  托盘「退出」才停引擎），↔ 引擎走本机 WebSocket，10 Hz 推送状态与 365 个参数值，
+  滤波滑杆/重新读取头像/日志实时回传
 - 模块管理：自己的模块仓（`%LOCALAPPDATA%\FaceGazeBridge\modules`），本机 VRCFT 模块只作为
   "检测到，是否导入"；支持 .zip/.dll 安装、启用/停用、删除；模块库（registry.vrcft.io，
   与 VRCFT 同源）浏览、搜索、一键安装/更新，下载后校验 MD5
@@ -69,8 +72,12 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
   按通道选提供者并有过期回退；状态页能看见每个源在喂哪一路
 - 多输出：VRChat OSC 与 VMC 同时输出（`--vmc-out 127.0.0.1:9100`），
   同一张脸可以既驱动 VRChat 模型又驱动 Unity 场景
+- 托盘常驻：`--tray` 不弹窗口只驻留托盘（SteamVR 自启动形态）；关窗进托盘、
+  托盘「退出」才停引擎；已有实例时再启动只恢复现有窗口
+- 校准页：88 个形状的 lo/hi 与视线中心可拖可存，实时生效，保存到
+  `%LOCALAPPDATA%\FaceGazeBridge\calibration.ini`（上一版留 `.bak`），下次启动自动加载
 - 界面三语（简中 / 英 / 日）+ 双击即用的发布包（`cmake --install` 到 `dist/`）
-- 114 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面/VMC 输出探针
+- 119 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面/VMC 输出探针
   （`tools/probe_ipc.py`、`tools/probe_ui.py`）
 
 ```bash
@@ -90,10 +97,11 @@ fgb-cli modules use VRCFTPicoModule   # 启动模块，重启引擎后生效
 **还没做的**：
 
 - 头像切换的实时感知（目前启动时读 VRChat 日志确认，换头像需在界面里点"重新读取"）
-- 托盘常驻壳（SteamVR 自启动的前置；引入托盘后"关窗即停"要改成"关窗进托盘、托盘退出才停"）
-- 界面里还不能改输出目标 / 参数集；校准档案的可视化编辑与热更新是规划项（ADR-0021）
+- 校准的 3D 面部预览与部位高亮（数据链路已做，模型资产与渲染器未开始；
+  现在只有数值与滑杆，见 ADR-0021）
+- 界面里还不能改输出目标 / 参数集
 - OpenXR API Layer / 眼追注入（共享内存与 VMC 输出已做）
-- 随 SteamVR 启动（OpenVR 注册的评估见 ADR-0020，尚未实施）
+- 随 SteamVR 启动（OpenVR 注册的评估见 ADR-0020；托盘前置已完成，注册尚未实施）
 - 与 VRCFT 输出的逐参数对齐（量化"替代"的最后一道关口）
 
 **已验证的关键事实**（M0，详见 [ADR-0003](docs/adr/0003-vrcft-ipc-protocol.md)）：
@@ -130,7 +138,9 @@ fgb-cli run --vmc-port 39539 --vrchat 127.0.0.1:9000 --eye-mode parameters
 页面资源在 `ui/`，构建时复制到 `fgb-cli.exe` 旁边；改 UI 不用重编。
 
 发布包（`cmake --install build/release --prefix dist`）里只有一个入口：
-双击 `dist/FaceGaze Bridge.exe`，窗口会自己拉起引擎，关掉窗口即停止追踪。
+双击 `dist/FaceGaze Bridge.exe`，窗口会自己拉起引擎；关闭窗口只是收进托盘
+（追踪继续），托盘菜单「退出」才停引擎。想在后台常驻就加 `--tray`：
+`dist\FaceGaze Bridge.exe --tray` 不弹窗口，只留托盘图标。
 想用命令行/自动化测试时仍可直接跑 `fgb-cli run --source vmc --panel 8787`。
 
 ---

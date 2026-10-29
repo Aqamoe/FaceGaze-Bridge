@@ -17,6 +17,8 @@
 #include "core/process/one_euro.hpp"
 #include "engine/engine.hpp"
 #include "net/ws_server.hpp"
+#include "params/calibration.hpp"
+#include "params/preview_tap.hpp"
 #include "sinks/shm_sink.hpp"
 #include "sinks/vmc_sink.hpp"
 #include "sinks/vrchat_sink.hpp"
@@ -50,6 +52,13 @@ struct IpcContext {
     VmcSink* vmc_out   = nullptr; // 可能为空（没开 --vmc-out）
     ShmSink* shm_out   = nullptr; // 可能为空（没开 --shm）
     FaceFilter* filter = nullptr; // 可能为空（未启用滤波）
+
+    // 校准：tap 固定挂在校准之前；applier 即使没有档案也会挂一个空的（全透传），
+    // 否则用户打开校准页时没有可写的 profile，只能重启引擎（ADR-0021 §热更新）。
+    params::PreviewTap* preview         = nullptr;
+    params::CalibrationApplier* calib   = nullptr;
+    std::filesystem::path calib_path;   // 保存目标：--calibration 显式档案优先，否则默认档案
+    bool calib_loaded = false;          // 启动时是否真的读到了档案（界面文案用）
 
     std::string source_name;
     std::string params_mode;
@@ -100,6 +109,10 @@ private:
     void build_modules(std::string& out);
     void build_library(std::string& out);
     void build_metrics(std::string& out); // status 的公共部分，HTTP 接口复用
+    void build_calibration(std::string& out);
+    void build_preview(std::string& out);
+    // 校准档案变了就广播：多个页面/探针连上来时各自显示一致的状态
+    void broadcast_calibration();
     // per-instance 运行态；state/error 都来自对应的 VrcftSource
     const char* module_state(const RunningModule& module) const noexcept;
 
@@ -121,8 +134,14 @@ private:
 
     std::chrono::steady_clock::time_point last_status_{};
     std::chrono::steady_clock::time_point last_params_{};
+    std::chrono::steady_clock::time_point last_preview_{};
     std::uint64_t last_frames_  = 0; // fps 用两次推送之间的增量算
     double last_fps_            = 0.0;
+    // 只有校准页打开时才推 preview；页面走了要立刻停，别让引擎白拷 88 个值
+    bool preview_wanted_ = false;
+    // 上次保存/加载的档案：和内存里的比一下就知道有没有未保存改动
+    params::CalibrationProfile saved_profile_{};
+    bool calib_loaded_ = false;
 
     struct PickerState {
         std::atomic<bool> running{true};

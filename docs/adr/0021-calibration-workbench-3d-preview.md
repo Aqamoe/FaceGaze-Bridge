@@ -1,6 +1,6 @@
 # ADR-0021 · 校准工作台：实时 3D 面部预览与范围映射
 
-- 状态：**提议**（2026-10-29 评估；方向已确认，未实施）
+- 状态：**P1/P2 已实施**（2026-10-29；P3–P5 即 3D 渲染与模型资产仍未开始）
 - 日期：2026-10-29
 - 影响：`engine` 新增预览取样、`params/calibration` 支持热更新与持久化、
   `web/ipc` 新增校准命令与 30 Hz 预览消息、`ui/` 新增校准页与 WebGL 渲染器、
@@ -283,16 +283,21 @@ P5 贯穿。**P2 完成就能让用户受益**，3D 是增强而不是前置条�
 
 ## 验证
 
-- [ ] 校准页 1 s 内出现面部；拖动可旋转，侧面能看清下颌/嘴唇；双击复位
-- [ ] 选中 `JawOpen`，模型下颌/下唇/口腔高亮；选中 `BrowInnerUpLeft`，左侧眉区高亮
-- [ ] 拖动 `JawOpen` 的 hi，模型在 100 ms 内变化，同时 VRChat/VMC 输出也变化
-- [ ] 原始值/输出值与 `/api/params` 前 88 项一致（探针断言）
-- [ ] 保存后重启引擎仍生效；`--calibration` 显式档案优先于默认档案
-- [ ] 没有形状映射的参数显示"仅数值"，不出现"调了没反应"的黑箱
-- [ ] WebGL2 不可用时出现 2D 降级，滑杆/保存仍可用，并有明确提示
-- [ ] 校准页关闭后不再推 `preview`；其他页面仍 10 Hz；引擎 tick 抖动无变化
+P1/P2 已实测（`python tools/probe_ui.py`，回放喂数据）：
+
+- [ ] 校准页 1 s 内出现面部；拖动可旋转，侧面能看清下颌/嘴唇；双击复位（P3）
+- [ ] 选中 `JawOpen`，模型下颌/下唇/口腔高亮；选中 `BrowInnerUpLeft`，左侧眉区高亮（P3）
+- [x] 拖动 `JawOpen` 的 hi 后，同一帧的输出值立刻变化（VRChat/VMC 用的是同一个校准后快照）；
+      模型 100 ms 内变化要等 P3
+- [x] 校准页的原始/输出值与 `/api/preview` 的 `raw`/`out` 一致（探针断言）。
+      注意：`/api/params` 是校准之后的 365 个派生地址参数，**不能**拿来与 88 个形状逐项对照
+- [x] 保存后重启引擎仍生效；`--calibration` 显式档案优先于默认档案
+- [ ] 没有形状映射的参数显示"仅数值"，不出现"调了没反应"的黑箱（P3 有映射表之后才有意义）
+- [ ] WebGL2 不可用时出现 2D 降级，滑杆/保存仍可用，并有明确提示（P3）
+- [x] 校准页关闭后不再推 `preview`（探针断言 seq 停住）；`preview` 只在校准页打开时推
 - [ ] `restart_engine` 后页面保持原样，预览自动重订阅，3D 模型不重新加载/不白屏
-- [ ] 探针通过（页面渲染、数值变化、高亮状态、保存/重载）
+      （重订阅逻辑已接在 WebSocket `onopen`，但探针未覆盖重启路径）
+- [x] 探针通过（页面渲染、88 行、预览、改动实时生效、保存/重载/恢复默认、离开停推）
 
 ## 风险
 
@@ -311,3 +316,25 @@ P5 贯穿。**P2 完成就能让用户受益**，3D 是增强而不是前置条�
 2. **生效方式**：默认实时影响输出；"只预览、不生效"的旁路后置。
 3. **自动取 lo/hi**：仍待定。先做「取当前为 lo/hi」；"录制 3 秒自动取统计值"
    作为 P2 之后的增强（复用 `derive_profile` 的中位数/95 分位口径）。
+
+## P1/P2 实施记录（2026-10-29）
+
+P1（数据链路）与 P2（无 3D 的校准页）已落地，3D 渲染（P3）与模型资产（P4）**未开始**，
+所以校准页现在只有数值与滑杆，没有面部预览。
+
+| 设计点 | 落地方式 | 与本文的差异 |
+|---|---|---|
+| PreviewTap | `src/params/preview_tap.cpp`，`SeqLock<PreviewFrame>`，`set_enabled` 控制取样 | 无差异；只在面板模式挂载 |
+| profile 热更新 | `CalibrationApplier` 内部换成 `SeqLock<CalibrationProfile>`；读失败沿用上一帧 | 选了 seqlock 而不是 COW：档案约 1 KB，整块拷贝比 `shared_ptr` 原子交换简单且无分配 |
+| 默认档案 | `default_calibration_path()` = `%LOCALAPPDATA%\FaceGazeBridge\calibration.ini`；`--calibration` 优先 | 无差异 |
+| 保存 | `save_profile_atomic()`：`.tmp` → 旧档案复制成 `.bak` → `MoveFileExW(REPLACE_EXISTING)` | 新增 `.bak` 保留策略（本文只提到"保留 .bak"，这里明确是"保存前的上一版"） |
+| 未保存判定 | 控制面保存一份 `saved_profile_`，与内存中的档案逐字段比较（未激活形状的数值不参与） | 无版本号/脏标记位 |
+| IPC | `preview`（30 Hz）、`calibration`（连接时 + 改动后）；命令 `set_preview`、`set_calibration_shape`、`set_calibration_eye`、`capture_calibration`、`save/reload/reset_calibration` | 与本文一致；`capture_calibration` 的 `shape` 为空时表示"取当前视线为中心" |
+| 只读接口 | 新增 `/api/calibration`、`/api/preview`（探针与 curl 用） | 本文只说"可选"，这里做了 |
+| 页面 | 新「校准」导航项；形状行含原始/输出、lo/hi 滑杆、取当前、启用勾选；视线卡片；搜索与"只看已校准"；未保存 pill 与离开确认 | P3 的"仅数值"标记等 3D 上线再加：现在全部形状都没有模型映射 |
+
+未做（明确留给后续）：
+
+- 3D 预览、区域高亮、`.fgbface`、`face_map.json`、SVG 降级
+- "录制 3 秒自动取 lo/hi"（统计口径复用 `derive_profile`）
+- 5 点注视校准（仍属 M5/后续计划，不混进本页）

@@ -63,6 +63,7 @@
 | 版本比较 | 已安装/有新版本用**语义版本比较**，不要字符串相等；包内版本可能比库条目新 |
 | 边界 | 最小窗口 1100×700 DIP 下布局可用；窄窗口侧栏只留图标；窗口尺寸按 DIP 缩放 |
 | 验证 | 界面改动必须用 `tools/probe_ui.py`（CDP）验证真实数据与交互，不能只靠截图或"看起来对" |
+| 关窗语义 | 关闭窗口 = 收进托盘，追踪继续；托盘「退出」才停引擎（[ADR-0022](docs/adr/0022-tray-shell-and-close-semantics.md)）。页面/文档不要再写"关窗即停" |
 
 
 ## 3. 构建 / 测试 / 发布
@@ -80,7 +81,7 @@
 cmake -S . -B build/test -G "Visual Studio 16 2019" -A x64
 cmake --build build/test --config Debug --parallel
 
-# 单测（当前 114 个用例）
+# 单测（当前 119 个用例）
 ./build/test/bin/Debug/fgb-tests.exe
 # 或
 ctest --test-dir build/test -C Debug --output-on-failure
@@ -142,7 +143,11 @@ python tools/build_vrcft_runtime.py --dest dist/runtime/vrcft
 
 入口只有一个（[ADR-0016](docs/adr/0016-single-entry-desktop-app.md)）：
 外壳探到 8787 没有引擎就隐藏启动 `fgb-cli run --source vrcft --panel 8787`，
-用 Job 对象把引擎绑在窗口生命周期上，关窗即停。不再有 `.cmd`。
+用 Job 对象把引擎绑在**外壳进程**的生命周期上（[ADR-0022](docs/adr/0022-tray-shell-and-close-semantics.md)）：
+关闭窗口 = 收进托盘、追踪继续；托盘「退出」才停引擎。不再有 `.cmd`。
+
+`FaceGaze Bridge.exe --tray` 是自启动形态：不显示窗口、不预建 WebView2，只驻留托盘
+（SteamVR 自启动会用它）。已有实例时再次启动只把现有窗口带到前台，不会开第二个托盘图标。
 
 发布前**必须**真的启动一次 `dist/FaceGaze Bridge.exe`，确认窗口起来、界面连上
 （`tools/probe_ui.py` 可以顶替肉眼）。发布包不随仓库提交（`/dist/` 已忽略）。
@@ -154,7 +159,8 @@ python tools/build_vrcft_runtime.py --dest dist/runtime/vrcft
 python tools/probe_ipc.py 8787
 
 # 界面：通过 WebView2 远程调试端口跑 JS，验证页面真的渲染了数据
-# 已经有别的实例在跑时，必须给测试实例单独的 user-data，否则 CDP 端口不会监听
+# 已经有别的实例在跑时，必须给测试实例单独的 user-data，否则 CDP 端口不会监听；
+# 带 --debug-port 的实例不参与单实例检查，可以故意多开（ADR-0022 §4）
 "FaceGaze Bridge.exe" --user-data %TEMP%
 gb-wv --debug-port 9222
 python tools/probe_ui.py 9222 8787
@@ -217,6 +223,10 @@ gh run watch <id> --exit-status
 | WebView2 调试端口 | 9222 不监听 | 已有实例共用 user-data 时新实例不会开 CDP；测试实例加 `--user-data %TEMP%\...` |
 | `hidden` 不生效 | 弹窗/提示条启动就在，按钮点不动 | 组件 CSS 的 `display:flex/grid` 会压过 UA 的 `[hidden]`；全局加 `[hidden]{display:none!important}` |
 | 页面不能滚动/底部被裁 | 内容超出窗口但没有滚动条 | grid/flex 子项默认 `min-height:auto`；`.main`/`.content` 必须显式 `min-height:0`，否则 `.content` 的 `overflow-y:auto` 不生效 |
+| 托盘图标消失 | 资源管理器重启后图标不再显示 | `Shell_NotifyIcon` 的图标属于 explorer；收到系统广播 `TaskbarCreated` 要重新 `NIM_ADD`（`src/ui/main.cpp` 已接） |
+| `FindWindow` 找不到自家窗口 | 另一个进程里按类名找隐藏窗口返回 0，`EnumWindows` 却能看到 | 不要用 `FindWindow` 做单实例唤醒；用 `PostMessageW(HWND_BROADCAST, 注册消息)`（ADR-0022 §4） |
+| 校准档案写坏 | 保存时断电/被杀，档案变成半截，下次启动校准全丢 | 用 `save_profile_atomic()`：`.tmp` → 旧档案留 `.bak` → `MoveFileExW(REPLACE_EXISTING)` |
+| 校准页滑杆"动了没反应" | 勾了启用但 lo/hi 还是 0..0 | `set_calibration_shape` 在"启用且跨度近 0"时给 0..1 默认；`capture_calibration` 跨度不足会明确回 error |
 
 ## 6. 代码地图
 
@@ -227,12 +237,12 @@ src/osc/       OSC 编解码（零分配写入器）
 src/net/       UDP / TCP / WebSocket 服务端（自写 RFC 6455 子集）、WinHTTP 下载
 src/vrcft/     VRCFT 协议、沙箱、模块进程托管、模块仓（module_registry）、模块库（module_library）
 src/vmc/       VMC blendshape 名字表（输入/输出共用，只有这一份）
-src/params/    参数目录、v2/v1 派生、地址路由、校准
+src/params/    参数目录、v2/v1 派生、地址路由、校准（含预览取样 preview_tap）
 src/sources/   输入（VMC / VRCFT 模块 / 原生 C ABI 模块 / 抓包回放）
 src/sinks/     输出（VRChat OSC / VMC / 共享内存）
 src/engine/    合并、快照发布、扇出
 src/web/       控制面 IPC（WS 消息 + 静态页面）
-src/ui/        FaceGaze Bridge.exe：WebView2 窗口 + 拉起/回收引擎（无业务逻辑）
+src/ui/        FaceGaze Bridge.exe：WebView2 窗口 + 托盘 + 拉起/回收引擎（无业务逻辑）
 sdk/           原生模块 ABI 头（fgb_module_api.h，宿主与模块共用）
 samples/       native-sine：无硬件的原生模块示例
 ui/            页面资源（无构建步骤）
@@ -250,13 +260,18 @@ docs/          方案、ADR、路线图、原生模块指南（05）、共享内
 | →UI | `library`（模块库列表 + 缓存状态 + 下载进度） | 连接时 / 刷新或安装过程中 5 Hz |
 | →UI | `status`（帧率、tick、OSC、头像、滤波、`modules[]` 每实例状态、`sources[]` 每源贡献） | 10 Hz |
 | →UI | `params`（数值数组，顺序同 `catalog`） | 10 Hz |
+| →UI | `calibration`（88 个形状的 lo/hi/active + 视线 + 路径 + 未保存标记） | 连接时 / 任何校准改动后 |
+| →UI | `preview`（校准前 `raw[88]` + 校准后 `out[88]` + 视线 + seq） | 30 Hz，**只在校准页订阅时** |
 | →UI | `log`（级别/tag/正文；连接时补发最近 120 行） | 有日志时 |
 | UI→ | `set_filter` / `set_module` / `set_module_enabled` / `scan_modules` / `reload_avatar` / `set_log_level` / `quit` | 按操作 |
 | UI→ | `import_module` / `import_modules`（逗号分隔 id）/ `import_all` / `install_module_archive` / `delete_module` / `open_modules_dir` | 模块管理 |
 | UI→ | `refresh_library` / `install_library` / `restart_engine` | 模块库与重启（退出码 3） |
+| UI→ | `set_preview` / `set_calibration_shape` / `set_calibration_eye` / `capture_calibration` / `save_calibration` / `reload_calibration` / `reset_calibration` | 校准（实时生效，显式保存） |
 | →UI | `ack`（命令、ok、error） | 每条命令 |
 
-只读 HTTP 接口保留：`/api/status`、`/api/params`、`/healthz`（给 curl 与探针）。
+HTTP（同一端口，只绑回环）：`/healthz`、`/api/status`、`/api/params`、
+`/api/calibration`、`/api/preview` 只读；`/api/quit`、`/api/restart` 是控制动作，
+只给托盘外壳与排障用（外壳不实现 WebSocket 客户端，见 ADR-0022 §5）。
 
 ## 8. 完成的定义（DoD）
 

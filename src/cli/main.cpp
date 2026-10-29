@@ -83,7 +83,7 @@ void print_usage() {
                  "  --panel <端口>          启动控制面 IPC（ws://127.0.0.1:<端口>/ws）\n"
                  "  --ui                    启动时拉起 FaceGaze Bridge 窗口（隐含 --panel 8787）\n"
                  "  --ui-dir <目录>         页面资源目录（默认 <exe>/ui）\n"
-                 "  --calibration <文件>    应用校准档案（见 calibrate 命令）\n"
+                 "  --calibration <文件>    应用校准档案（默认读 %%LOCALAPPDATA%%\\FaceGazeBridge\\calibration.ini）\n"
                  "  --filter <on|off>       一欧元滤波（默认 off，与 VRCFT 一致）\n"
                  "  --filter-cutoff <值>    滤波最小截止频率 (默认 1.0)\n"
                  "  --filter-beta <值>      滤波速度系数 (默认 0.5)\n"
@@ -622,19 +622,53 @@ int cmd_run(int argc, char** argv) {
                  name_or_auto(merge_eye_source).c_str(), name_or_auto(merge_head_source).c_str(),
                  stale_ms);
     }
-    // 后端处理顺序：先校准（把原始值拉到 0..1），再滤波（平滑已经校准过的信号）
-    if (!calibration_path.empty()) {
-        fgb::params::CalibrationProfile profile;
-        if (fgb::params::load_profile(calibration_path, profile)) {
-            FGB_INFO("cli", "校准档案：%s（%zu 个形状参与）", calibration_path.c_str(),
-                     profile.active_shape_count());
-            engine.add_processor(
-                std::make_unique<fgb::params::CalibrationApplier>(std::move(profile)));
-        } else {
-            std::fprintf(stderr, "%s%s\n", "校准档案读取失败，继续但不做校准：",
-                         calibration_path.c_str());
+    // 校准链路的顺序：取样（校准前的原始值）→ 校准 → 滤波。
+    // 取样只服务于界面预览，默认关闭；校准与滤波才是真正改变输出的两步。
+    fgb::params::PreviewTap* preview_raw = nullptr;
+    if (panel_port != 0) {
+        auto preview   = std::make_unique<fgb::params::PreviewTap>();
+        preview_raw    = preview.get();
+        engine.add_processor(std::move(preview));
+    }
+
+    const bool calibration_explicit = !calibration_path.empty();
+    std::string calibration_load_path = calibration_path;
+    if (!calibration_explicit) {
+        // 默认档案：界面保存到这里，下次启动自动生效（--calibration 显式指定时优先）
+        const auto fallback = fgb::params::default_calibration_path();
+        std::error_code ec;
+        if (std::filesystem::exists(fallback, ec)) {
+            calibration_load_path = fallback.string();
         }
     }
+
+    fgb::params::CalibrationProfile calibration_profile;
+    bool calibration_loaded = false;
+    if (!calibration_load_path.empty()) {
+        if (fgb::params::load_profile(calibration_load_path, calibration_profile)) {
+            calibration_loaded = true;
+            FGB_INFO("cli", "校准档案：%s（%zu 个形状参与）", calibration_load_path.c_str(),
+                     calibration_profile.active_shape_count());
+        } else if (calibration_explicit) {
+            std::fprintf(stderr, "%s%s\n", "校准档案读取失败，继续但不做校准：",
+                         calibration_load_path.c_str());
+        } else {
+            FGB_WARN("calib", "默认校准档案读取失败，按不做校准继续：%s",
+                     calibration_load_path.c_str());
+        }
+    }
+
+    // 面板模式下即使没有档案也挂一个（全透传）：否则用户打开校准页时没有可写的 profile，
+    // 只能重启引擎才能开始校准（ADR-0021 §热更新）
+    fgb::params::CalibrationApplier* calibration_raw = nullptr;
+    {
+        auto applier = std::make_unique<fgb::params::CalibrationApplier>(calibration_profile);
+        calibration_raw = applier.get();
+        engine.add_processor(std::move(applier));
+    }
+    // 界面保存的目标：显式 --calibration 优先，否则写默认档案
+    const std::string calibration_save_path =
+        calibration_explicit ? calibration_path : fgb::params::default_calibration_path().string();
     // 滤波器总是挂上，用 enabled 开关：这样面板能在运行时开关，不用重启
     fgb::OneEuroConfig filter_cfg;
     filter_cfg.min_cutoff = filter_min_cutoff;
@@ -691,6 +725,10 @@ int cmd_run(int argc, char** argv) {
         ctx.ui_dir      = ui_dir;
         ctx.quit        = &g_stop;
         ctx.restart_engine = &g_restart;
+        ctx.preview     = preview_raw;
+        ctx.calib       = calibration_raw;
+        ctx.calib_path  = calibration_save_path;
+        ctx.calib_loaded = calibration_loaded;
 
         ctx.modules          = module_registry.get();
         ctx.running_modules  = running_modules;

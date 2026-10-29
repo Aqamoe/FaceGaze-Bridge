@@ -7,8 +7,11 @@ FaceGaze Bridge —— 绿色版
 目录里的 fgb-cli.exe 是引擎本体（窗口会自动调用它），平时不用手动启动。
 
   1. 窗口打开后会自动拉起引擎（没有黑窗口，日志在界面「日志」页）
-  2. 关掉窗口 = 停止追踪，不会留下后台进程
+  2. 关闭窗口 = 收进托盘，追踪继续；要停止追踪请用托盘菜单的「退出」
+     （托盘图标在任务栏右下角，右键有：显示窗口 / 启动或停止引擎 / 重启引擎 / 退出）
   3. 默认使用 VRCFT 模块作为输入
+  4. 校准在界面「校准」页：调每个形状的 lo/hi 与视线中心，拖动立即生效，
+     点「保存」后写入 %LOCALAPPDATA%\FaceGazeBridge\calibration.ini，下次启动自动加载
 
 第一次运行前确认：
   - VRChat 已启动，并在设置里打开了 OSC（默认发到 127.0.0.1:9000）
@@ -107,9 +110,14 @@ VRCFT 运行时
      不是 0 → 检查 VRChat OSC 端口、以及模型是否绑了 FT/v2 参数。
 
   想自己起引擎（比如做自动化测试）
-     fgb-cli.exe run --source vmc --panel 8787
-     然后再开 FaceGaze Bridge.exe 时，它会连接已在运行的引擎，不会重复启动，
-     关闭窗口也不会把那个引擎关掉。
+    fgb-cli.exe run --source vmc --panel 8787
+    然后再开 FaceGaze Bridge.exe 时，它会连接已在运行的引擎，不会重复启动，
+    关闭窗口也不会把那个引擎关掉。
+
+  想让它在后台常驻（例如配合 SteamVR 自启动）
+    "FaceGaze Bridge.exe" --tray
+    不弹窗口，只驻留托盘，引擎照常工作；单击托盘图标可以打开窗口。
+    已经有实例在跑时，再启动一次只会把现有窗口带到前台，不会开第二个托盘图标。
 
 日志与配置
 ----------
@@ -118,4 +126,5 @@ VRCFT 运行时
   引擎日志：%LOCALAPPDATA%\FaceGazeBridge\engine.log
   模块仓：%LOCALAPPDATA%\FaceGazeBridge\modules
   模块库缓存：%LOCALAPPDATA%\FaceGazeBridge\library.json
+  校准档案：%LOCALAPPDATA%\FaceGazeBridge\calibration.ini（上一版自动留成 .bak）
   配置：%APPDATA%\FaceGazeBridge\fgb.ini

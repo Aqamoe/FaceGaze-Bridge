@@ -5,6 +5,8 @@
 //   catalog {names[], sent[], count}   参数名表，连接建立时发一次
 //   status  {...指标, filter{...}}      10 Hz
 //   params  {values[]}                 10 Hz，与 catalog 顺序一一对应
+//   calibration {shapes[], eye, dirty}  连接时 / 任何校准改动后
+//   preview {raw[], out[], eye, seq}   30 Hz，只在校准页打开时推
 //   log     {level, tag, message}
 //   ack     {command, ok, error?}      命令回执
 //
@@ -136,6 +138,9 @@ function apply_l10n() {
   if (state.view === "library") {
     render_library();
   }
+  if (state.view === "calibration") {
+    render_calibration();
+  }
   if (state.view === "logs") {
     rerender_logs();
   }
@@ -167,6 +172,10 @@ const state = {
   logs: [],
   modules: null,
   library: null,
+  calibration: null,
+  preview: null,
+  cal_rows: [],
+  cal_preview_on: false,
   import_selection: new Set(),
   expanded_modules: new Set(),
   library_tab: "vrcft",
@@ -185,6 +194,7 @@ const PAGE_META = {
   modules: ["page.modules.title", "page.modules.sub"],
   library: ["page.library.title", "page.library.sub"],
   params: ["page.params.title", "page.params.sub"],
+  calibration: ["page.calibration.title", "page.calibration.sub"],
   output: ["page.output.title", "page.output.sub"],
   logs: ["page.logs.title", "page.logs.sub"],
   settings: ["page.settings.title", "page.settings.sub"],
@@ -216,6 +226,11 @@ function connect() {
     state.restarting = false;
     set_restarting(false);
     set_link(true, t("link.connected"));
+    // 引擎重启后新连接是干净的：校准页还开着就重新订阅预览
+    if (state.view === "calibration") {
+      state.cal_preview_on = false;
+      set_cal_preview(true);
+    }
   };
 
   socket.onclose = () => {
@@ -308,6 +323,18 @@ function handle(message) {
     }
     case "params":
       render_params(message.values || []);
+      break;
+    case "calibration":
+      state.calibration = message;
+      if (state.view === "calibration") {
+        render_calibration();
+      }
+      break;
+    case "preview":
+      state.preview = message;
+      if (state.view === "calibration") {
+        render_preview(message);
+      }
       break;
     case "log":
       push_log(message);
@@ -1192,6 +1219,238 @@ function running_state_of(module_id) {
   return hit ? hit.state : null;
 }
 
+// ---------- 渲染：校准 ----------
+//
+// 两条消息分工：calibration 是"档案"（低频，连接时与任何改动后），preview 是"实时数值"
+// （30 Hz）。preview 只改数字、不重建 DOM——重建会把正在拖的滑杆从手指底下换掉。
+
+function cal_apply_filter() {
+  const text = ($("cal-search").value || "").trim().toLowerCase();
+  const only_active = $("cal-only-active").checked;
+  let visible = 0;
+  for (const row of state.cal_rows) {
+    const show = (!text || row.element.dataset.name.includes(text)) &&
+      (!only_active || row.check.checked);
+    row.element.hidden = !show;
+    if (show) {
+      visible += 1;
+    }
+  }
+  $("cal-empty").hidden = visible !== 0;
+}
+
+function build_cal_rows(shapes) {
+  const list = $("cal-list");
+  list.textContent = "";
+  state.cal_rows = shapes.map((shape, index) => {
+    const row = el("div", "cal-row");
+    row.dataset.name = shape.name.toLowerCase();
+    row.dataset.index = String(index);
+
+    const head = el("div", "cal-head");
+    const name_label = el("label", "cal-name");
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.checked = !!shape.active;
+    name_label.append(check, el("b", "", shape.name));
+    const raw = el("span", "cal-raw", "—");
+    const out = el("span", "cal-out", "—");
+    head.append(name_label, raw, out);
+    row.append(head);
+
+    let row_ui = null;
+    const make_range = (which) => {
+      const wrap = el("div", "slider-row cal-range");
+      wrap.append(el("span", "", which));
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.min = "0";
+      slider.max = "1";
+      slider.step = "0.005";
+      slider.value = String(shape[which]);
+      const readout = el("b", "", Number(shape[which]).toFixed(3));
+      const capture = el("button", "btn tiny", t("calibration.capture"));
+      capture.addEventListener("click", () => {
+        // 让用户做动作的瞬间点一下，比手填数字靠谱得多
+        send({ type: "capture_calibration", shape: shape.name, which });
+      });
+      slider.addEventListener("input", () => {
+        readout.textContent = Number(slider.value).toFixed(3);
+        queue_cal_shape(row_ui);
+      });
+      slider.addEventListener("change", () => push_cal_shape(row_ui));
+      wrap.append(slider, readout, capture);
+      row.append(wrap);
+      return { slider, readout };
+    };
+
+    const lo = make_range("lo");
+    const hi = make_range("hi");
+    row_ui = {
+      element: row,
+      name: shape.name,
+      check,
+      raw,
+      out,
+      lo: lo.slider,
+      lo_v: lo.readout,
+      hi: hi.slider,
+      hi_v: hi.readout,
+      timer: null,
+    };
+    check.addEventListener("change", () => push_cal_shape(row_ui));
+    list.append(row);
+    return row_ui;
+  });
+}
+
+// 拖动时 60 ms 一次：再快只会让引擎把同一份 4 KB 档案广播十几次，滑杆本身也不会更顺
+function queue_cal_shape(row) {
+  if (!row || row.timer) {
+    return;
+  }
+  row.timer = setTimeout(() => {
+    row.timer = null;
+    push_cal_shape(row);
+  }, 60);
+}
+
+function push_cal_shape(row) {
+  if (!row) {
+    return;
+  }
+  clearTimeout(row.timer);
+  row.timer = null;
+  send({
+    type: "set_calibration_shape",
+    name: row.name,
+    lo: Number(row.lo.value),
+    hi: Number(row.hi.value),
+    active: row.check.checked,
+  });
+}
+
+function sync_slider(id, value, digits) {
+  const node = $(id);
+  if (!node || value === undefined || value === null) {
+    return;
+  }
+  // 用户正在拖这一条时不要把值抢回去，否则滑杆会"弹"
+  if (document.activeElement !== node) {
+    node.value = value;
+  }
+  const label = $(`${id}-v`);
+  if (label) {
+    label.textContent = Number(node.value).toFixed(digits);
+  }
+}
+
+function render_calibration() {
+  const data = state.calibration;
+  if (!data) {
+    return;
+  }
+  const available = !!data.available;
+  for (const id of ["cal-save", "cal-reload", "cal-reset", "cal-eye-active",
+    "cal-eye-gain-x", "cal-eye-gain-y", "cal-eye-center-x", "cal-eye-center-y",
+    "cal-eye-capture"]) {
+    $(id).disabled = !available;
+  }
+
+  $("cal-path").textContent = data.path || "—";
+  $("cal-path").title = data.loaded ? t("calibration.loaded") : t("calibration.not_saved");
+  $("cal-dirty").hidden = !data.dirty;
+
+  const shapes = data.shapes || [];
+  // 语言也进签名：切语言后按钮上的「取当前」得跟着换
+  const signature = `${lang}|${shapes.length}|${shapes.map((s) => s.name).join(",")}`;
+  const list = $("cal-list");
+  if (list.dataset.signature !== signature) {
+    build_cal_rows(shapes);
+    list.dataset.signature = signature;
+  }
+
+  shapes.forEach((shape, index) => {
+    const row = state.cal_rows[index];
+    if (!row) {
+      return;
+    }
+    if (document.activeElement !== row.lo) {
+      row.lo.value = String(shape.lo);
+    }
+    if (document.activeElement !== row.hi) {
+      row.hi.value = String(shape.hi);
+    }
+    row.lo_v.textContent = Number(row.lo.value).toFixed(3);
+    row.hi_v.textContent = Number(row.hi.value).toFixed(3);
+    if (document.activeElement !== row.check) {
+      row.check.checked = !!shape.active;
+    }
+    row.element.classList.toggle("inactive", !shape.active);
+  });
+
+  cal_apply_filter();
+
+  const eye = data.eye || {};
+  if (document.activeElement !== $("cal-eye-active")) {
+    $("cal-eye-active").checked = !!eye.active;
+  }
+  sync_slider("cal-eye-gain-x", eye.gain_x, 2);
+  sync_slider("cal-eye-gain-y", eye.gain_y, 2);
+  sync_slider("cal-eye-center-x", eye.center_x, 1);
+  sync_slider("cal-eye-center-y", eye.center_y, 1);
+  if (state.preview) {
+    render_preview(state.preview);
+  }
+}
+
+function render_preview(message) {
+  const raw = message.raw || [];
+  const out = message.out || [];
+  state.cal_rows.forEach((row, index) => {
+    if (index >= raw.length) {
+      return;
+    }
+    row.raw.textContent = `${t("calibration.raw")} ${Number(raw[index]).toFixed(3)}`;
+    row.out.textContent = `${t("calibration.out")} ${Number(out[index]).toFixed(3)}`;
+  });
+  const eye = message.eye || {};
+  $("cal-eye-live").textContent = eye.valid
+    ? `x ${Number(eye.x).toFixed(1)}°  y ${Number(eye.y).toFixed(1)}°`
+    : t("calibration.eye.no_data");
+}
+
+// 预览是"订阅制"：页面关掉就停，引擎热路径回到零额外开销（ADR-0021）
+function set_cal_preview(on) {
+  if (state.cal_preview_on === on) {
+    return;
+  }
+  state.cal_preview_on = on;
+  send({ type: "set_preview", enabled: on });
+}
+
+function push_cal_eye() {
+  send({
+    type: "set_calibration_eye",
+    active: $("cal-eye-active").checked,
+    gain_x: Number($("cal-eye-gain-x").value),
+    gain_y: Number($("cal-eye-gain-y").value),
+    center_x: Number($("cal-eye-center-x").value),
+    center_y: Number($("cal-eye-center-y").value),
+  });
+}
+
+let cal_eye_timer = null;
+function queue_cal_eye() {
+  if (cal_eye_timer) {
+    return;
+  }
+  cal_eye_timer = setTimeout(() => {
+    cal_eye_timer = null;
+    push_cal_eye();
+  }, 60);
+}
+
 // ---------- 日志 ----------
 
 const LEVEL_ORDER = { trace: 0, debug: 1, info: 2, warn: 3, error: 4 };
@@ -1258,7 +1517,23 @@ function update_page_header() {
   $("page-subtitle").textContent = subtitle_key ? t(subtitle_key) : "";
 }
 
-function switch_page(page) {
+async function switch_page(page) {
+  if (state.view === page) {
+    return;
+  }
+  // 校准是"改了立即生效、保存才落盘"：走之前问一句，别让用户以为已经存下来了
+  if (state.view === "calibration" && state.calibration && state.calibration.dirty) {
+    const leave = await ask_confirm({
+      title: t("calibration.unsaved"),
+      message: t("calibration.leave_confirm"),
+      confirmText: t("calibration.leave_ok"),
+      danger: false,
+    });
+    if (!leave) {
+      return;
+    }
+  }
+
   state.view = page;
   document.querySelectorAll(".nav-item").forEach((item) => {
     item.classList.toggle("active", item.dataset.page === page);
@@ -1267,6 +1542,7 @@ function switch_page(page) {
     item.classList.toggle("active", item.dataset.page === page);
   });
   update_page_header();
+  set_cal_preview(page === "calibration");
 
   if (page === "logs") {
     rerender_logs();
@@ -1277,6 +1553,9 @@ function switch_page(page) {
   if (page === "params") {
     apply_param_filter();
     render_params(state.values);
+  }
+  if (page === "calibration") {
+    render_calibration();
   }
   if (page === "status") {
     render_params(state.values);
@@ -1312,6 +1591,46 @@ function wire() {
   });
   $("f-cutoff").addEventListener("change", push_filter);
   $("f-beta").addEventListener("change", push_filter);
+
+  $("cal-search").addEventListener("input", cal_apply_filter);
+  $("cal-only-active").addEventListener("change", cal_apply_filter);
+
+  $("cal-save").addEventListener("click", () => {
+    send({ type: "save_calibration" });
+  });
+  $("cal-reload").addEventListener("click", async () => {
+    const dirty = state.calibration && state.calibration.dirty;
+    if (dirty && !(await ask_confirm({
+      title: t("calibration.reload"),
+      message: t("calibration.reload_confirm"),
+      danger: true,
+    }))) {
+      return;
+    }
+    send({ type: "reload_calibration" });
+  });
+  $("cal-reset").addEventListener("click", async () => {
+    if (await ask_confirm({
+      title: t("calibration.reset"),
+      message: t("calibration.reset_confirm"),
+      danger: true,
+    })) {
+      send({ type: "reset_calibration" });
+    }
+  });
+
+  for (const id of ["cal-eye-gain-x", "cal-eye-gain-y", "cal-eye-center-x", "cal-eye-center-y"]) {
+    const digits = id.includes("center") ? 1 : 2;
+    $(id).addEventListener("input", () => {
+      $(`${id}-v`).textContent = Number($(id).value).toFixed(digits);
+      queue_cal_eye();
+    });
+    $(id).addEventListener("change", push_cal_eye);
+  }
+  $("cal-eye-active").addEventListener("change", push_cal_eye);
+  $("cal-eye-capture").addEventListener("click", () => {
+    send({ type: "capture_calibration", shape: "", which: "center" });
+  });
 
   $("o-reload").addEventListener("click", () => {
     send({ type: "reload_avatar" });

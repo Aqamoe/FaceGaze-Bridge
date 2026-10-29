@@ -281,6 +281,106 @@ def main():
         "})()"))
     print(f"输出页：{output}")
 
+    # 校准页（ADR-0021 P1/P2）：档案列表、30 Hz 预览、改动实时生效、保存/重载
+    cal_page = json.loads(cdp.evaluate(
+        "(() => {"
+        "  document.querySelector('.nav-item[data-page=\"calibration\"]').click();"
+        "  const c = state.calibration || {};"
+        "  return JSON.stringify({"
+        "    active: document.querySelector('.page.active').dataset.page,"
+        "    rows: document.querySelectorAll('.cal-row').length,"
+        "    expected: c.shapes ? c.shapes.length : -1,"
+        "    path: c.path || '',"
+        "    dirty: !!c.dirty,"
+        "    subscribed: !!state.cal_preview_on"
+        "  });"
+        "})()"))
+    print(f"校准页：{cal_page}")
+
+    time.sleep(1.2)
+    cal_live = json.loads(cdp.evaluate(
+        "(() => {"
+        "  const row = document.querySelector('.cal-row');"
+        "  const preview = state.preview || {};"
+        "  return JSON.stringify({"
+        "    seq: (preview.raw || []).length ? preview.seq : -1,"
+        "    raw_len: (preview.raw || []).length,"
+        "    out_len: (preview.out || []).length,"
+        "    raw_text: row ? row.querySelector('.cal-raw').textContent : '',"
+        "    out_text: row ? row.querySelector('.cal-out').textContent : '',"
+        "    eye: preview.eye ? preview.eye.valid : null"
+        "  });"
+        "})()"))
+    print(f"校准预览：{cal_live}")
+
+    # 改一条映射 → 立即生效 → 保存 → 读回档案
+    cal_edit = json.loads(cdp.evaluate(
+        "(() => {"
+        "  send({type:'set_calibration_shape', name:'JawOpen', lo:0.1, hi:0.9, active:true});"
+        "  return JSON.stringify({sent: true});"
+        "})()"))
+    time.sleep(0.6)
+    cal_applied = json.loads(cdp.evaluate(
+        "(() => {"
+        "  const c = state.calibration || {};"
+        "  const jaw = (c.shapes || []).find((s) => s.name === 'JawOpen') || {};"
+        "  return JSON.stringify({"
+        "    active: !!jaw.active, lo: jaw.lo, hi: jaw.hi, dirty: !!c.dirty,"
+        "    count: c.active"
+        "  });"
+        "})()"))
+    print(f"校准改动：{cal_edit} → {cal_applied}")
+
+    # 「取当前视线为中心」：校准命令与预览取样必须共用同一份原始值
+    cdp.evaluate("send({type:'capture_calibration', shape:'', which:'center'}); true")
+    time.sleep(0.6)
+    cal_eye = json.loads(cdp.evaluate(
+        "(() => { const c = state.calibration || {}; const eye = c.eye || {};"
+        "  return JSON.stringify({active: !!eye.active, cx: eye.center_x, cy: eye.center_y,"
+        "    dirty: !!c.dirty}); })()"))
+    print(f"校准视线：{cal_eye}")
+
+    cdp.evaluate("send({type:'save_calibration'}); true")
+    time.sleep(0.8)
+    cal_saved = json.loads(cdp.evaluate(
+        "(() => {"
+        "  const c = state.calibration || {};"
+        "  return JSON.stringify({dirty: !!c.dirty, loaded: !!c.loaded, path: c.path || '',"
+        "    count: c.active});"
+        "})()"))
+    saved_exists = bool(cal_saved.get("path")) and os.path.exists(cal_saved["path"])
+    print(f"校准保存：{cal_saved} 文件存在={saved_exists}")
+
+    cdp.evaluate("send({type:'reset_calibration'}); true")
+    time.sleep(0.5)
+    cal_reset = json.loads(cdp.evaluate(
+        "(() => { const c = state.calibration || {};"
+        "  return JSON.stringify({dirty: !!c.dirty, count: c.active}); })()"))
+    cdp.evaluate("send({type:'reload_calibration'}); true")
+    time.sleep(0.5)
+    cal_reloaded = json.loads(cdp.evaluate(
+        "(() => { const c = state.calibration || {};"
+        "  return JSON.stringify({dirty: !!c.dirty, count: c.active}); })()"))
+    print(f"校准重置/重载：{cal_reset} → {cal_reloaded}")
+
+    # 离开校准页后必须停推预览（引擎热路径回到零额外开销）
+    cdp.evaluate(
+        "document.querySelector('.nav-item[data-page=\"status\"]').click(); true")
+    time.sleep(0.5)
+    seq_before = json.loads(cdp.evaluate(
+        "JSON.stringify({seq: (state.preview || {}).seq || 0,"
+        " subscribed: !!state.cal_preview_on})"))
+    time.sleep(0.6)
+    seq_after = json.loads(cdp.evaluate(
+        "JSON.stringify({seq: (state.preview || {}).seq || 0,"
+        " subscribed: !!state.cal_preview_on})"))
+    cal_stopped = {
+        "subscribed": seq_after.get("subscribed"),
+        "seq_stopped": seq_before.get("seq") == seq_after.get("seq"),
+        "seq": seq_after.get("seq"),
+    }
+    print(f"校准预览停止：{cal_stopped}")
+
     logs = json.loads(cdp.evaluate(
         "(() => {"
         "  document.querySelector('.nav-item[data-page=\"logs\"]').click();"
@@ -332,6 +432,40 @@ def main():
         ok = False
     if logs.get("active") != "logs" or logs.get("lines", 0) == 0:
         print("FAIL 日志页没有内容（新连接应补发最近日志）")
+        ok = False
+    if cal_page.get("active") != "calibration" or cal_page.get("rows") != cal_page.get("expected"):
+        print("FAIL 校准页形状行数与 calibration.shapes 不一致")
+        ok = False
+    if not cal_page.get("subscribed"):
+        print("FAIL 进入校准页没有订阅预览")
+        ok = False
+    if cal_live.get("seq", -1) < 0 or cal_live.get("raw_len") != 88 or cal_live.get("out_len") != 88:
+        print("FAIL 校准预览没有收到 88 个形状的 raw/out")
+        ok = False
+    if cal_live.get("raw_text") in ("", "—", "-"):
+        print("FAIL 校准行没有显示原始值")
+        ok = False
+    if not cal_applied.get("active") or abs(float(cal_applied.get("lo", 0)) - 0.1) > 0.01 \
+            or abs(float(cal_applied.get("hi", 0)) - 0.9) > 0.01:
+        print("FAIL 校准改动没有实时生效（set_calibration_shape）")
+        ok = False
+    if not cal_applied.get("dirty"):
+        print("FAIL 改动后没有标记未保存")
+        ok = False
+    if not cal_eye.get("active"):
+        print("FAIL 「取当前视线为中心」没有启用视线校准")
+        ok = False
+    if cal_saved.get("dirty") or not saved_exists:
+        print("FAIL 保存后 dirty 仍为真，或档案文件没落盘")
+        ok = False
+    if not cal_reset.get("dirty") or cal_reset.get("count") != 0:
+        print("FAIL 恢复默认没有生效")
+        ok = False
+    if cal_reloaded.get("dirty") or cal_reloaded.get("count") != 1:
+        print("FAIL 重新加载没有回到磁盘上的档案")
+        ok = False
+    if cal_stopped.get("subscribed") or not cal_stopped.get("seq_stopped"):
+        print("FAIL 离开校准页后仍在推预览")
         ok = False
 
     print("PASS" if ok else "FAILED")

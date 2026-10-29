@@ -53,6 +53,7 @@ add_library(fgb_params STATIC
     params/v2_params.cpp
     params/v1_params.cpp
     params/avatar_config.cpp
+    params/preview_tap.cpp
     params/calibration.cpp)
 target_link_libraries(fgb_params PUBLIC fgb_core fgb_base fgb_capture fgb_vrcft)
 
