@@ -2,9 +2,9 @@ add_library(fgb_base STATIC
     base/log.cpp
     base/clock.cpp
     base/json.cpp
+    base/process_stats.cpp
     base/crash.cpp
-    base/diagnostics.cpp
-    base/process_stats.cpp)
+    base/diagnostics.cpp)
 target_include_directories(fgb_base PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(fgb_base PUBLIC fgb_options)
 if(WIN32)
@@ -160,7 +160,8 @@ if(WIN32 AND FGB_BUILD_UI)
     fgb_webview2_target(FGB_WEBVIEW2_TARGET)
     if(FGB_WEBVIEW2_TARGET)
         add_executable(fgb-ui WIN32 ui/main.cpp)
-        target_link_libraries(fgb-ui PRIVATE ${FGB_WEBVIEW2_TARGET} fgb_options ws2_32)
+        target_link_libraries(fgb-ui PRIVATE ${FGB_WEBVIEW2_TARGET} fgb_options fgb_base ws2_32)
+        target_compile_definitions(fgb-ui PRIVATE FGB_VERSION="${PROJECT_VERSION}")
         # 用户双击的那个文件就叫产品名；命令行/探针里仍可按 fgb-ui 目标名引用
         set_target_properties(fgb-ui PROPERTIES OUTPUT_NAME "FaceGaze Bridge")
         fgb_add_windows_resources(fgb-ui "fgb-ui" "FaceGaze Bridge.exe" "FaceGaze Bridge")
@@ -213,14 +214,14 @@ if(WIN32)
         "${CMAKE_SOURCE_DIR}/samples/native-sine/fgb-native.json"
         "${CMAKE_SOURCE_DIR}/samples/native-sine/CMakeLists.txt"
         DESTINATION sdk/sample-native-sine)
+    # Unity 示例包：UPM package.json + Runtime/*.cs，可直接 Add package from disk
+    install(DIRECTORY "${CMAKE_SOURCE_DIR}/samples/unity-face-gaze/"
+        DESTINATION sdk/unity-face-gaze)
     if(TARGET fgb-sample-native)
         install(TARGETS fgb-sample-native
             RUNTIME DESTINATION sdk/sample-native-sine
             LIBRARY DESTINATION sdk/sample-native-sine)
     endif()
-    # Unity 示例包：UPM package.json + Runtime/*.cs，可直接 Add package from disk
-    install(DIRECTORY "${CMAKE_SOURCE_DIR}/samples/unity-face-gaze/"
-        DESTINATION sdk/unity-face-gaze)
     install(FILES "${CMAKE_SOURCE_DIR}/packaging/README.txt" DESTINATION .)
     install(FILES
         "${CMAKE_SOURCE_DIR}/packaging/app.vrmanifest"
