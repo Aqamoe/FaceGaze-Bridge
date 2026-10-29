@@ -305,7 +305,14 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > Quest/iPhone 等仍待硬件（2.10 的 ≥5 模块目标未达）。
 > 6.7：[10-security-review.md](10-security-review.md)（修复静态文件前缀比较、UDP 输入默认
 > 绑回环）。
-> **未做：6.4 安装包、6.5 自动更新、6.8 v1.0 回归**（安装器/更新源需先定方案）。
+> 6.4：Inno Setup 用户级安装包（`packaging/facegazebridge.iss` +
+> `packaging/build_installer.ps1`），支持静默安装/卸载、SteamVR 注册清理；
+> 本机已用临时 dist 编译出 Setup.exe，**安装/卸载未在真实用户数据上执行**。
+> 6.5：设置页「检查更新」读 GitHub Releases latest 并提示手动下载（`fgb-cli update-check`），
+> 不自动下载/替换；IPC/CLI 已有本地 HTTP 探针。
+> 6.8：本机回归见 [11-regression-2026-10-30.md](11-regression-2026-10-30.md)（Debug/Release/`/WX`
+> 构建、159 单测、全部探针通过）；**仍未通过**：8 小时长跑、真实安装/卸载、≥5 模块硬件矩阵、
+> 3 用户盲测、SteamVR 真机注册。
 
 **发布门禁**：
 - [ ] 8 小时长跑零中断

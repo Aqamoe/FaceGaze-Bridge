@@ -81,7 +81,7 @@
 cmake -S . -B build/test -G "Visual Studio 16 2019" -A x64
 cmake --build build/test --config Debug --parallel
 
-# 单测（当前 157 个用例）
+# 单测（当前 159 个用例）
 ./build/test/bin/Debug/fgb-tests.exe
 # 或
 ctest --test-dir build/test -C Debug --output-on-failure
@@ -195,6 +195,11 @@ python tools/probe_crash.py
 
 # 长跑：默认 10 分钟，--duration 28800 为 8 小时
 python tools/soak.py --duration 600
+
+# 更新检查（探针内置本地 HTTP 服务，不走 GitHub）
+python tools/probe_ipc.py 8787
+# 安装包（需要 Inno Setup 6；先 cmake --install 到 dist）
+powershell -ExecutionPolicy Bypass -File packaginguild_installer.ps1
 ```
 
 没有真机数据时用回放跑通链路：
@@ -264,6 +269,8 @@ gh run watch <id> --exit-status
 | 中文预设名让测试 abort | 堆栈在 `std::filesystem::_Convert_narrow_to_wide` | Windows 的 `path(std::string)` 按 ANSI 解释；用户文本路径走 `config::path_from_utf8()`，INI 层用宽字符 API（ADR-0027） |
 | VMC/模块 UDP 收不到局域网包 | 这是刻意加固：输入口默认只绑 `127.0.0.1`；mDNS 显式 `any_interface=true` | 不要把输入口改回 `INADDR_ANY`（docs/10） |
 | 崩溃后找不到转储 | 看 `%LOCALAPPDATA%\FaceGazeBridge\crashes\` 的 `.dmp`+`.txt`；设置页可导出诊断包 | MiniDump 不是全内存 dump；堆损坏严重时可能写失败（ADR-0028） |
+| PowerShell/Inno 脚本中文乱码或解析失败 | `.ps1`/`.iss` 必须保存为 **UTF-8 with BOM**（Windows PowerShell 5.1 按 ANSI 读无 BOM 文件） | 编辑后确认前 3 字节是 EF BB BF |
+| 安装器找不到 ISCC.exe | Inno Setup 可能装在 `%LOCALAPPDATA%\Programs\Inno Setup 6` | `build_installer.ps1` 已覆盖该路径；也可 `winget install JRSoftware.InnoSetup` |
 
 ## 6. 代码地图
 
@@ -271,7 +278,7 @@ gh run watch <id> --exit-status
 src/base/      日志（含订阅回调）、时钟、极简 JSON、进程资源、崩溃转储、诊断包
 src/core/      数据模型（含 GazeState）、无锁容器、滤波、校准与 GazeEstimator
 src/osc/       OSC 编解码（零分配写入器）
-src/net/       UDP / TCP / WebSocket 服务端（自写 RFC 6455 子集）、WinHTTP 下载、mDNS 发现
+src/net/       UDP / TCP / WebSocket 服务端（自写 RFC 6455 子集）、WinHTTP 下载、更新检查、mDNS 发现
 src/config/    INI 与输出设置（outputs.ini + outputs-profiles/ 命名预设；命令行可覆盖）
 src/vrcft/     VRCFT 协议、沙箱、模块进程托管、模块仓（module_registry）、模块库（module_library）
 src/vmc/       VMC blendshape 名字表（输入/输出共用，只有这一份）
@@ -306,6 +313,7 @@ docs/          方案、ADR、路线图、原生模块指南（05）、共享内
 | →UI | `steamvr`（状态/原因/路径/registered/autolaunch/busy） | 连接时快照；每次检测/开关/移除完成后 |
 | →UI | `outputs_profiles`（预设名列表/active/dir） | 连接时 / 任何预设或保存值变更后 |
 | →UI | `diagnostics`（导出结果/路径/错误） | 后台打包完成后 |
+| →UI | `update`（current/latest/tag/name/url/available/error） | 更新检查完成后 |
 | →UI | `log`（级别/tag/正文；连接时补发最近 120 行） | 有日志时 |
 | UI→ | `set_filter` / `set_outputs` / `set_module` / `set_module_enabled` / `scan_modules` / `reload_avatar` / `set_log_level` / `quit` | 按操作 |
 | UI→ | `import_module` / `import_modules`（逗号分隔 id）/ `import_all` / `install_module_archive` / `delete_module` / `open_modules_dir` | 模块管理 |
@@ -314,6 +322,7 @@ docs/          方案、ADR、路线图、原生模块指南（05）、共享内
 | UI→ | `refresh_steamvr` / `set_steamvr_autolaunch` / `remove_steamvr_manifest` | SteamVR（后台线程执行，完成后推 `steamvr`） |
 | UI→ | `save_output_profile` / `apply_output_profile` / `delete_output_profile` | 命名输出预设（应用会写 outputs.ini，界面随后重启引擎） |
 | UI→ | `export_diagnostics`（可选 `out` 路径） | 后台导出诊断包，完成后推 `diagnostics` |
+| UI→ | `check_updates`（可选 `url`，探针用）/ `open_update_page` | 只读检查 GitHub Releases；只允许打开本项目 GitHub 页 |
 | →UI | `ack`（命令、ok、error） | 每条命令 |
 
 HTTP（同一端口，只绑回环）：`/healthz`、`/api/status`、`/api/params`、

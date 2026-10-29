@@ -64,8 +64,10 @@
 ## 6. 网络下载与自动更新
 
 - 模块库走 WinHTTP，下载后按 registry 给的 MD5 校验；
-- **自动更新尚未实现**（roadmap 6.5）。实现时必须校验 HTTPS、哈希与签名/发布者，
-  不能直接运行未校验的下载物。
+- 更新检查（M6.5）只 GET GitHub Releases 的 latest，返回 tag/name/html_url；
+  **不下载、不落盘、不执行**。界面「打开下载页」只允许
+  `https://github.com/Aqamoe/FaceGaze-Bridge/` 前缀，经 ShellExecute 交给默认浏览器。
+- 真正的自动下载/替换仍未实现；若将来做，必须校验 HTTPS、哈希与签名/发布者。
 
 ## 7. 建议（非阻塞）
 
