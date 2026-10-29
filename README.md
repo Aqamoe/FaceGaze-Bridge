@@ -25,6 +25,8 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | [docs/06-shared-memory.md](docs/06-shared-memory.md) | 共享内存输出的开启、读取协议与字段速查 | 集成开发者 |
 | [docs/07-streaming-outputs.md](docs/07-streaming-outputs.md) | WebSocket JSON 与 UDP 二进制的协议、字段表和读取示例 | 集成开发者 |
 | [docs/08-gaze-service.md](docs/08-gaze-service.md) | `/api/gaze` 与 WS `gaze` 的字段、注视判定和能力边界 | 集成开发者 |
+| [docs/09-user-guide.md](docs/09-user-guide.md) | 安装、界面、输出/预设、校准、兼容表、FAQ、故障排查 | 最终用户 |
+| [docs/10-security-review.md](docs/10-security-review.md) | 控制面/静态文件/模块安装/配置/诊断的安全审查 | 维护者 |
 
 ---
 
@@ -45,14 +47,18 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 多源合并（M4） | ✅ 表情 / 眼追 / 头姿三通道分别选提供者，可重复 `--source`（[ADR-0013](docs/adr/0013-source-merging.md)） |
 | 头像发现与切换（M3） | ✅ OSCQuery（mDNS 找动态 HTTP 端口，2 s 轮询 `/avatar/change` 热重绑）+ 本地 JSON 回退；状态页显示参数来源（[ADR-0023](docs/adr/0023-oscquery-avatar-discovery.md)） |
 | 原生 C ABI（M4/M5 基础） | ✅ 进程内 C ABI v1 + 无硬件示例模块（[ADR-0018](docs/adr/0018-native-c-abi-v1.md)） |
+| Unity 示例包（M4） | ✅ `samples/unity-face-gaze/`：UPM 包，读共享内存并驱动 SkinnedMeshRenderer blendshape；C# 经 Roslyn 桩编译 + .NET 读取端对真实引擎验证（未在 Unity 编辑器内实机验收） |
 | 共享内存输出（M4） | ✅ 命名映射 + 双缓冲 seqlock，`--shm <name>` 显式开启（[ADR-0019](docs/adr/0019-shared-memory-output.md)） |
-| 多输出（M4） | ✅ VRChat OSC + VMC（`--vmc-out`）+ 共享内存（`--shm`）+ WebSocket JSON（`--ws-out`）+ UDP 二进制（`--udp-out`）；5 个 sink 独立节流，状态页可见目标/计数（[ADR-0024](docs/adr/0024-streaming-outputs.md)） |
-| 输出设置 | ✅ 输出页可改 VRChat/眼追模式/参数集/VMC/共享内存/WS/UDP，保存到 `%LOCALAPPDATA%\FaceGazeBridge\outputs.ini`，保存并重启引擎生效；命令行参数优先（[ADR-0025](docs/adr/0025-output-settings-persistence.md)） |
+| 多输出（M4） | ✅ VRChat OSC + VMC（`--vmc-out`）+ 共享内存（`--shm`）+ WebSocket JSON（`--ws-out`）+ UDP 二进制（`--udp-out`）；5 个 sink 独立节流，状态页可见目标/计数；五路并发压测达标（[ADR-0024](docs/adr/0024-streaming-outputs.md)） |
+| 输出设置 | ✅ 输出页可改 VRChat/眼追模式/参数集/VMC/共享内存/WS/UDP，保存到 `%LOCALAPPDATA%\FaceGazeBridge\outputs.ini`，保存并重启引擎生效；命名预设可保存/应用/删除（`outputs-profiles/`），应用即快速切换；命令行参数优先（[ADR-0025](docs/adr/0025-output-settings-persistence.md)、[ADR-0027](docs/adr/0027-named-output-profiles.md)） |
 | 注视点服务（M5） | ✅ `/api/gaze` + 控制面 30 Hz `gaze` 推送；扫视/注视估计、聚散、头姿；状态页有注视卡片（[ADR-0026](docs/adr/0026-gaze-estimator-and-api.md)） |
 | 托盘常驻 + 关窗语义 | ✅ 托盘图标与菜单（显示窗口 / 启动·停止引擎 / 重启引擎 / 退出）、`--tray` 无窗口启动、单实例恢复、关窗收托盘（[ADR-0022](docs/adr/0022-tray-shell-and-close-semantics.md)） |
 | 校准（P1/P2） | ✅ 「校准」页：88 个形状的 lo/hi 与视线 gain/center，拖动实时生效、原子保存 + `.bak`、默认档案自动加载（[ADR-0021](docs/adr/0021-calibration-workbench-3d-preview.md)） |
 | 校准 3D 预览 | ✅ `.fgbface` 模型 + 原生 WebGL2 渲染（旋转/缩放/预设）、32 morph、选中形状区域高亮、2D SVG 降级；模型为程序化占位头，正式美术待补（[ADR-0021](docs/adr/0021-calibration-workbench-3d-preview.md)） |
 | 随 SteamVR 启动 | ✅ OpenVR `IVRApplications` 注册/移除/自启动读写 + 设置页卡片；`not_running` 分支已实测，真实注册待 SteamVR 运行环境验收（[ADR-0020](docs/adr/0020-steamvr-autostart.md)） |
+| 性能与稳定性（M6） | ✅ 状态页 tick 耗时 P50/P95、CPU/工作集/句柄、休眠恢复计数；`tools/soak.py` 长跑探针；Release 回放 avg 57 µs / P95 103 µs / late 0 |
+| 崩溃与诊断（M6） | ✅ Windows MiniDump（无第三方）+ `fgb-cli diag bundle` + 设置页一键导出（[ADR-0028](docs/adr/0028-crash-dumps-and-diagnostics.md)） |
+| 文档与审查（M6） | ✅ [用户手册](docs/09-user-guide.md)（含兼容表/FAQ/排障）、[安全审查](docs/10-security-review.md) |
 
 **已经能跑的**（M1 + M2 核心）：
 

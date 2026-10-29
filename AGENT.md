@@ -81,7 +81,7 @@
 cmake -S . -B build/test -G "Visual Studio 16 2019" -A x64
 cmake --build build/test --config Debug --parallel
 
-# 单测（当前 147 个用例）
+# 单测（当前 157 个用例）
 ./build/test/bin/Debug/fgb-tests.exe
 # 或
 ctest --test-dir build/test -C Debug --output-on-failure
@@ -183,6 +183,18 @@ python tools/probe_udp_out.py 9102 5
 # VMC 第二路输出：按接收端视角收包，检查 Blend/Val + Apply + 头姿
 fgb-cli.exe run --source replay --replay <抓包> --replay-loop --vmc-out 127.0.0.1:9100
 python tools/probe_vmc_out.py 9100 5
+
+# 五路 Sink 并发压测：VRChat/VMC/SHM/WS/UDP 同时开，报帧率与延迟增量
+python tools/probe_sinks_stress.py --seconds 5
+
+# 输出预设：自己拉起临时引擎，走保存/应用/删除（会写临时 outputs.ini）
+python tools/probe_output_profiles.py
+
+# 崩溃捕获：故意空指针子进程，检查 dmp/说明文件
+python tools/probe_crash.py
+
+# 长跑：默认 10 分钟，--duration 28800 为 8 小时
+python tools/soak.py --duration 600
 ```
 
 没有真机数据时用回放跑通链路：
@@ -249,15 +261,18 @@ gh run watch <id> --exit-status
 | OSCQuery 找不到或误判 | 启动回退本地 JSON；同机 OVRToolkit 也广播 `_oscjson._tcp` | mDNS 收满 150 ms 窗口再选，只认实例名以 VRChat 开头；HTTP 端口动态，别探 9001；`python tools/probe_oscquery.py` 先确认 |
 | 输出帧率比设定低 | 90 Hz 实际 60、30 Hz 实际 24 | `now-last >= interval` 在 120 Hz tick 下会被量化；用 `sinks/throttle.hpp` 的 `SinkThrottle` 按截止时间调度 |
 | 输出页保存了但没生效 | 运行态仍是旧目标/开关 | 保存只写 `outputs.ini`，要点「保存并重启引擎」；`status.outputs` 是保存值，`*_out` 是运行态（ADR-0025） |
+| 中文预设名让测试 abort | 堆栈在 `std::filesystem::_Convert_narrow_to_wide` | Windows 的 `path(std::string)` 按 ANSI 解释；用户文本路径走 `config::path_from_utf8()`，INI 层用宽字符 API（ADR-0027） |
+| VMC/模块 UDP 收不到局域网包 | 这是刻意加固：输入口默认只绑 `127.0.0.1`；mDNS 显式 `any_interface=true` | 不要把输入口改回 `INADDR_ANY`（docs/10） |
+| 崩溃后找不到转储 | 看 `%LOCALAPPDATA%\FaceGazeBridge\crashes\` 的 `.dmp`+`.txt`；设置页可导出诊断包 | MiniDump 不是全内存 dump；堆损坏严重时可能写失败（ADR-0028） |
 
 ## 6. 代码地图
 
 ```
-src/base/      日志（含订阅回调）、时钟、极简 JSON
+src/base/      日志（含订阅回调）、时钟、极简 JSON、进程资源、崩溃转储、诊断包
 src/core/      数据模型（含 GazeState）、无锁容器、滤波、校准与 GazeEstimator
 src/osc/       OSC 编解码（零分配写入器）
 src/net/       UDP / TCP / WebSocket 服务端（自写 RFC 6455 子集）、WinHTTP 下载、mDNS 发现
-src/config/    INI 与输出设置（outputs.ini：目标/开关/帧率，命令行可覆盖）
+src/config/    INI 与输出设置（outputs.ini + outputs-profiles/ 命名预设；命令行可覆盖）
 src/vrcft/     VRCFT 协议、沙箱、模块进程托管、模块仓（module_registry）、模块库（module_library）
 src/vmc/       VMC blendshape 名字表（输入/输出共用，只有这一份）
 src/params/    参数目录、v2/v1 派生、地址路由、OSCQuery 头像发现、校准（含预览取样 preview_tap）
@@ -268,7 +283,7 @@ src/openvr/    SteamVR 启动项：运行库定位、openvr_api.dll 动态加载
 src/web/       控制面 IPC（WS 消息 + 静态页面）
 src/ui/        FaceGaze Bridge.exe：WebView2 窗口 + 托盘 + 拉起/回收引擎（无业务逻辑）
 sdk/           公开 ABI 头（模块 fgb_module_api.h、共享内存 fgb_shared_frame.h、UDP 帧 fgb_udp_frame.h）
-samples/       native-sine：无硬件的原生模块示例
+samples/       native-sine：无硬件的原生模块示例；unity-face-gaze：Unity 共享内存读取/驱动示例
 ui/            页面资源（无构建步骤；face.js 是 WebGL2 渲染器，face/ 是模型与映射表）
 tools/         抓包、冒烟、探针，以及 build_vrcft_runtime.py（出精简运行时）、
                gen_face_model.py / check_face_model.py（3D 资产生成与校验）
@@ -289,12 +304,16 @@ docs/          方案、ADR、路线图、原生模块指南（05）、共享内
 | →UI | `calibration`（88 个形状的 lo/hi/active + 视线 + 路径 + 未保存标记） | 连接时 / 任何校准改动后 |
 | →UI | `preview`（校准前 `raw[88]` + 校准后 `out[88]` + 视线 + seq） | 30 Hz，**只在校准页订阅时** |
 | →UI | `steamvr`（状态/原因/路径/registered/autolaunch/busy） | 连接时快照；每次检测/开关/移除完成后 |
+| →UI | `outputs_profiles`（预设名列表/active/dir） | 连接时 / 任何预设或保存值变更后 |
+| →UI | `diagnostics`（导出结果/路径/错误） | 后台打包完成后 |
 | →UI | `log`（级别/tag/正文；连接时补发最近 120 行） | 有日志时 |
 | UI→ | `set_filter` / `set_outputs` / `set_module` / `set_module_enabled` / `scan_modules` / `reload_avatar` / `set_log_level` / `quit` | 按操作 |
 | UI→ | `import_module` / `import_modules`（逗号分隔 id）/ `import_all` / `install_module_archive` / `delete_module` / `open_modules_dir` | 模块管理 |
 | UI→ | `refresh_library` / `install_library` / `restart_engine` | 模块库与重启（退出码 3） |
 | UI→ | `set_preview` / `set_calibration_shape` / `set_calibration_eye` / `capture_calibration` / `save_calibration` / `reload_calibration` / `reset_calibration` | 校准（实时生效，显式保存） |
 | UI→ | `refresh_steamvr` / `set_steamvr_autolaunch` / `remove_steamvr_manifest` | SteamVR（后台线程执行，完成后推 `steamvr`） |
+| UI→ | `save_output_profile` / `apply_output_profile` / `delete_output_profile` | 命名输出预设（应用会写 outputs.ini，界面随后重启引擎） |
+| UI→ | `export_diagnostics`（可选 `out` 路径） | 后台导出诊断包，完成后推 `diagnostics` |
 | →UI | `ack`（命令、ok、error） | 每条命令 |
 
 HTTP（同一端口，只绑回环）：`/healthz`、`/api/status`、`/api/params`、

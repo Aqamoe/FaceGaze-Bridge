@@ -77,7 +77,7 @@ VRCFT 运行时
   参数：365 个参数的热力图（只显示已绑定的），搜索过滤
   输出：参数集 / 眼追模式 / 绑定条数 / VMC / 共享内存 / WebSocket / UDP，
         可编辑所有输出目标与开关（保存到 outputs.ini，保存并重启引擎后生效），
-        重新读取头像参数表
+        命名预设可保存/应用/删除（应用即快速切换），重新读取头像参数表
   日志：引擎与模块日志，可过滤级别
   设置：One Euro 滤波开关与滑杆，SteamVR 启动项（状态/自启动/重新检测/移除注册），
         日志级别，界面语言，停止引擎
@@ -94,6 +94,7 @@ VRCFT 运行时
   sdk/GAZE-SERVICE.md    /api/gaze 与 WS gaze 的字段和边界
   sdk/NATIVE-MODULE-GUIDE.md  原生模块开发指南（含示例工程）
   sdk/sample-native-sine/     可运行的示例模块（正弦波，无硬件）
+  sdk/unity-face-gaze/        Unity 示例包（UPM package.json + 共享内存驱动组件）
   runtime\vrcft\        VRCFT 模块宿主运行时（Apache-2.0，含 LICENSE/NOTICE）
   ui\                   页面资源（含 uiace 模型与映射表）。换页面不用重编 exe
   app.vrmanifest        SteamVR 注册清单（只借用 dashboard overlay 的自启动机制）
@@ -158,4 +159,5 @@ VRCFT 运行时
   模块仓：%LOCALAPPDATA%\FaceGazeBridge\modules
   模块库缓存：%LOCALAPPDATA%\FaceGazeBridge\library.json
   校准档案：%LOCALAPPDATA%\FaceGazeBridge\calibration.ini（上一版自动留成 .bak）
+  输出预设：%LOCALAPPDATA%\FaceGazeBridge\outputs-profiles\*.ini
   配置：%APPDATA%\FaceGazeBridge\fgb.ini

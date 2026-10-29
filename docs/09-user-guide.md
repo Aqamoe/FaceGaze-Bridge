@@ -1,0 +1,164 @@
+# 09 · 用户手册（v0.1.x）
+
+> 面向最终用户与排障人员。开发/集成请看 [README](../README.md)、
+> [05-native-module-guide](05-native-module-guide.md)、[07-streaming-outputs](07-streaming-outputs.md)。
+
+## 1. 安装与启动
+
+发布包是绿色版目录：
+
+```
+FaceGaze Bridge.exe    唯一入口（窗口 + 拉起引擎）
+fgb-cli.exe            引擎/命令行（平时不用手动开）
+runtime\vrcft\         VRCFT 模块宿主运行时
+ui\                    页面资源
+sdk\                   集成文档与示例
+```
+
+1. 解压到**固定目录**（SteamVR 自启动会记录这个路径，移动后要重新注册）。
+2. 双击 `FaceGaze Bridge.exe`。
+3. 第一次启动如果没有任何模块，界面会提示去「模块」页导入或安装。
+
+**关窗 = 收进托盘，追踪继续**；托盘右键「退出」才真正停止引擎。
+`--tray` 启动只驻留托盘、不弹窗口（SteamVR 自启动用的就是它）。
+
+### 第一次运行检查清单
+
+- [ ] VRChat 已启动，游戏内 `Options → OSC` 已打开（默认发到 `127.0.0.1:9000`）
+- [ ] VRCFT 本体已完全退出（模块沙箱端口独占，VRCFT 占着时 FGB 加载不了）
+- [ ] 系统有 WebView2 Runtime（Win10/11 一般随 Edge 预装）
+- [ ] 头显/串流软件已连上，PICO 的 `faceTrackingTransferProtocol` 已设为 1 或 2
+- [ ] 「模块」页选中了模块，状态是「运行中」
+
+## 2. 界面速览
+
+| 页面 | 能做什么 |
+|---|---|
+| 状态 | 输入帧率、tick 迟到、OSC 计数、头像与命中参数、输入源、注视卡片、性能与资源 |
+| 模块 | 导入本机 VRCFT 模块、zip 安装、启停/删除、设为启动、在线模块库、运行时来源 |
+| 模块库 | 浏览 `registry.vrcft.io`，一键安装/更新（带缓存与进度） |
+| 参数 | 365 个派生参数的热力图，搜索过滤 |
+| 校准 | 88 形状 lo/hi、视线 gain/center、3D 预览、取当前、保存/重载 |
+| 输出 | 参数集/眼追模式/输出目标、命名预设、重新读取头像参数表 |
+| 日志 | 引擎与模块日志，级别过滤、自动滚动 |
+| 设置 | 滤波、引擎启停、诊断包、SteamVR 启动项、界面语言 |
+
+## 3. 输出
+
+默认只开 VRChat OSC。其余输出要在「输出」页打开（或命令行显式给）：
+
+| 输出 | 开关 | 协议 |
+|---|---|---|
+| VRChat OSC | 始终开启 | `/avatar/parameters/*`，地址来自头像参数表 |
+| VMC | 输出页「启用 VMC」或 `--vmc-out host:port` | `/VMC/Ext/Blend/Val` + `Apply` |
+| 共享内存 | 「启用共享内存」或 `--shm <name>` | `Local\FGB_Shm_<name>`，见 [06](06-shared-memory.md) |
+| WebSocket JSON | 「启用 WebSocket JSON」或 `--ws-out <port>` | 见 [07](07-streaming-outputs.md) |
+| UDP 二进制 | 「启用 UDP 二进制」或 `--udp-out host:port` | 592 字节固定帧，见 [07](07-streaming-outputs.md) |
+
+保存后要点「保存并重启引擎」才生效；命令行参数永远覆盖保存值。
+WebSocket 与控制面只绑 `127.0.0.1`。
+
+### 命名预设
+
+- 在输出页填好一套目标/开关 → 输入名称 → 「保存为预设」；
+- 下拉选预设 → 「应用并重启」，一次完成切换；
+- 预设文件在 `%LOCALAPPDATA%\FaceGazeBridge\outputs-profiles\*.ini`，可直接备份/复制；
+- 预设只包含输出设置，不含校准/滤波/模块选择。
+
+## 4. 校准
+
+- 校准页每个形状有 lo/hi：把静止值设 lo、夸张值设 hi（或点「取当前」）；
+- 视线有 gain/center：可把当前视线设为中心；
+- 拖动立即作用于输出，点「保存」写入 `calibration.ini`（上一版留 `.bak`）；
+- 3D 预览是**示波器**，不是你的头像：通用风格化人头，用于看哪个部位在动；
+- 没有模型映射的形状标「仅数值」，仍然可以调；
+- 5 点注视校准与漂移补偿仍未做（需要 VR 内校准界面）。
+
+## 5. 模块兼容性（实测范围）
+
+VRCFT 协议层已真机跑通；**模块覆盖仍是当前最大缺口**（roadmap 2.10 要求 ≥5 个真实模块）。
+
+| 模块 | 硬件/来源 | 状态 | 备注 |
+|---|---|---|---|
+| `VRCFTPicoModule` v0.1.11 | PICO + PICO Connect | ✅ 真机验收（2026-10-29） | 先退出 VRCFT；真实面捕数据 |
+| `native-sine` 示例 | 无 | ✅ 单测 + 端到端 | 无硬件验证链路 |
+| 回放（`.fgbrec`） | 无 | ✅ 单测 + 探针 | 金样为真实 PICO 抓包 |
+| VMC 输入 | VSeeFace 等 | ✅ 协议冒烟 | 必须跟 `Apply` 才生效 |
+| SteamLink VRCFT Module | Quest（Steam Link） | ⚠ 仅安装/加载路径验证 | 缺 Quest 真机 |
+| ETVR Tracking Module | iPhone | ⚠ 仅安装/加载路径验证 | 缺真机 |
+| MediaPipe / LiveLink | 摄像头/iPhone | ❌ 未验证 | 当前机器未安装 |
+
+加载失败时优先看「模块」页卡片里的原因，以及日志页。
+
+## 6. 性能与诊断
+
+状态页「性能与资源」：
+
+- **tick 耗时**：引擎每帧合并/处理/输出的平均与 P95；不含休眠停顿
+- **CPU / 工作集 / 句柄**：长跑看有没有泄漏
+- **休眠恢复**：机器睡眠/长时间调试后自动复位的次数
+
+设置页「诊断 → 导出诊断包」会生成
+`%LOCALAPPDATA%\FaceGazeBridge\diagnostics\FaceGazeBridge-diag-*.zip`，
+包含日志、配置、最近 5 份崩溃转储和系统信息；不含模块 DLL/头像文件。
+命令行等价：`fgb-cli diag bundle --out D:\diag.zip`。
+
+崩溃时会在 `%LOCALAPPDATA%\FaceGazeBridge\crashes\` 留 `.dmp` + `.txt`
+（版本、时间、异常码、模块路径），保留最近 20 份。
+
+## 7. 故障排查
+
+| 现象 | 先查什么 |
+|---|---|
+| 界面一直「等待引擎」 | `engine.log` 最后几行；8787–8796 是否被占；内置运行库是否缺失 |
+| 模块页空白/没有输入源 | 点「重新扫描」→ 导入 → 设为启动 → 重启引擎；或从模块库安装 |
+| 模块状态「故障」 | 卡片里的原因；最常见是端口被占（VRCFT 还在跑）或头显没连上 |
+| 有帧但 VRChat 不动 | 状态页「命中参数」是否为 0；输出页「重新读取头像参数表」；确认游戏内 OSC 已开 |
+| 表情动但方向/幅度不对 | 校准 lo/hi 与视线 gain；检查头像是否绑了对应参数 |
+| 输出页保存了不生效 | 需要「保存并重启引擎」；`status.outputs` 是保存值，运行态看目标卡片 |
+| 90/30 Hz 实际只有 60/24 | 旧版本取整问题已由 `SinkThrottle` 修复；确认用的是当前版本 |
+| WS 连不上 | 只绑回环；端口是否被占，状态页会显示「未监听」 |
+| 共享内存读不到 | 名称是否一致（非法字符会替换成 `_`）；引擎是否真的开了该输出 |
+| 3D 预览只剩 2D | WebGL2 不可用（远程桌面/老显卡）；校准功能仍可用 |
+| SteamVR 开关灰 | 卡片写原因：未安装 / 未运行。FGB 不会自动拉起 SteamVR |
+| 中文预设名崩溃 | 已修复（UTF-8 路径）；升级到当前版本 |
+| 长跑内存上涨 | 导出诊断包，看工作集/句柄曲线；soak 脚本见下 |
+
+无硬件时自测：
+
+```powershell
+# 回放真实抓包（如果有）
+fgb-cli run --source replay --replay golden.fgbrec --replay-loop --panel 8787
+# 纯 VMC 输入，脚本自己灌数据
+python tools/soak.py --duration 600
+```
+
+## 8. 隐私与安全
+
+- 控制面与 WebSocket 只绑 `127.0.0.1`，不监听局域网；
+- VMC/模块 UDP 输入默认只绑回环（mDNS 例外，必须收网卡组播）；
+- 不改写 VRChat `config.json`；OSC 开关由用户在游戏内管理；
+- 诊断包由用户主动导出，不含模块 DLL 与头像文件；
+- 模块 DLL 属于可执行代码，只从自己的模块仓加载，安装前请确认来源；
+- 详细审查记录见 [10-security-review](10-security-review.md)。
+
+## 9. FAQ
+
+**Q：能和 VRCFT 同时开吗？**
+不能。模块沙箱端口独占，先完全退出 VRCFT。
+
+**Q：必须装 VRCFT 吗？**
+不需要。发布包带精简运行时；VRCFT 只在导入模块时作为来源。
+
+**Q：支持哪些头显？**
+取决于 VRCFT 模块。当前实测只有 PICO；Quest/iPhone 等需要对应模块与真机验证。
+
+**Q：能驱动 Unity 角色吗？**
+可以：开共享内存后用 [samples/unity-face-gaze](../samples/unity-face-gaze/README.md)
+（Unity 2021.3+，Windows），或开 VMC 输出给认 VMC 的软件。
+
+**Q：眼追能喂给游戏吗？**
+当前提供 `/api/gaze` 与 WS 30 Hz 数据（HMD 局部坐标），OpenXR 注入未做。
+
+**Q：为什么 CPU 显示 0%？**
+引擎占用很低时，Windows 的进程 CPU 计数可能显示 0.0；以 tick P95 与工作集为准。

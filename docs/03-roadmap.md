@@ -237,11 +237,17 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 | 4.9 | 多 Sink 并发压力测试（5 sink @ 90 Hz） | 2 |
 | | **合计** | **16** |
 
-> **进度（2026-10-30）**：4.1 节流（统一的 `SinkThrottle`）、4.2 共享内存、4.4 VMC、
-> 4.5 WebSocket JSON、4.6 UDP 二进制、4.7 录制回放已完成；4.8 已完成"输出设置持久化 +
-> 输出页编辑"（[ADR-0025](adr/0025-output-settings-persistence.md)），命名预设仍未做；
-> 4.3 Unity C# 示例包、4.9 多 Sink 压测未做。流式输出格式与取舍见
-> [ADR-0024](adr/0024-streaming-outputs.md) 和 [07-streaming-outputs.md](07-streaming-outputs.md)。
+> **进度（2026-10-30）**：**M4 全部完成**。4.1 节流（统一的 `SinkThrottle`）、
+> 4.2 共享内存、4.4 VMC、4.5 WebSocket JSON、4.6 UDP 二进制、4.7 录制回放；
+> 4.8 输出设置持久化 + 输出页编辑 + 命名预设/快速切换
+> （[ADR-0025](adr/0025-output-settings-persistence.md)、[ADR-0027](adr/0027-named-output-profiles.md)）；
+> 4.9 五 Sink 并发压测（单测 5 路 @ 90 Hz 扇出 Debug ~30 µs/帧；
+> `tools/probe_sinks_stress.py` 实测各帧率达标、late_ticks=0，五路相对基线的
+> **引擎 tick P95 增量约 +115 µs**（< 500 µs；UDP 端到端只作参考，受 Python 调度抖动影响））；
+> 4.3 Unity 示例包 `samples/unity-face-gaze/`（UPM + 共享内存驱动，C# 已用 Roslyn 桩编译，
+> 并用 .NET 读取端对真实引擎验证过 88 形状与延迟；**未在 Unity 编辑器内实机验收**）。
+> 流式输出格式与取舍见 [ADR-0024](adr/0024-streaming-outputs.md) 和
+> [07-streaming-outputs.md](07-streaming-outputs.md)。
 
 **验收**：5 个 Sink 同时输出时，主链路延迟不增加 > 0.5 ms；录制 10 分钟文件 < 20 MB。
 
@@ -286,6 +292,20 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 | 6.7 | 发布前安全审查（无隐私泄漏、无越权写配置） | 1 |
 | 6.8 | v1.0 候选版回归 | 2 |
 | | **合计** | **20** |
+
+> **进度（2026-10-30）**：6.1 性能指标、6.2 休眠恢复与长跑脚本、6.3 崩溃转储与诊断包、
+> 6.6 用户手册/兼容表/FAQ、6.7 安全审查已完成。
+> 6.1：状态页/`/api/status` 有 tick 耗时（avg/p50/p95/max）、CPU/工作集/句柄；Release
+> 回放实测 avg 57 µs / p95 103 µs / late 0。6.2：`TickStats` 与 `GazeEstimator` 在
+> ≥1 s 停顿后自动复位；`tools/soak.py`（默认 10 分钟，可 `--duration 28800` 跑 8 小时）
+> 本机 60 s 实测内存 +1.4 MB、句柄 0 增长、late 0；**8 小时长跑仍需真机/过夜执行**。
+> 6.3：Windows 原生 MiniDump（无第三方）+ `fgb-cli diag bundle` + 设置页一键导出
+> （[ADR-0028](adr/0028-crash-dumps-and-diagnostics.md)）。
+> 6.6：[09-user-guide.md](09-user-guide.md)；模块兼容表目前只有 PICO 真机，
+> Quest/iPhone 等仍待硬件（2.10 的 ≥5 模块目标未达）。
+> 6.7：[10-security-review.md](10-security-review.md)（修复静态文件前缀比较、UDP 输入默认
+> 绑回环）。
+> **未做：6.4 安装包、6.5 自动更新、6.8 v1.0 回归**（安装器/更新源需先定方案）。
 
 **发布门禁**：
 - [ ] 8 小时长跑零中断
