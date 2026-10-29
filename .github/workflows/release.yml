@@ -73,7 +73,14 @@ jobs:
           $zip = Join-Path $PWD "vrcft-runtime.zip"
           if ($env:RUNTIME_URL) {
             Write-Host "下载 runtime_url"
-            Invoke-WebRequest -Uri $env:RUNTIME_URL -OutFile $zip
+            $curlArgs = @("-fsSL", "-o", $zip)
+            # 私有仓库的 Release 资产需要鉴权；不要把这个 token 发给第三方主机。
+            if ($env:RUNTIME_URL -match '^https://(api\.)?github\.com/') {
+              $curlArgs += @("-H", "Authorization: Bearer $env:GH_TOKEN")
+            }
+            $curlArgs += $env:RUNTIME_URL
+            & curl.exe @curlArgs
+            if ($LASTEXITCODE -ne 0) { throw "下载运行时失败：$env:RUNTIME_URL" }
           } else {
             Write-Host "从最近一个已发布 Release 下载 vrcft-runtime.zip"
             & gh release download --pattern "vrcft-runtime.zip" --output $zip
