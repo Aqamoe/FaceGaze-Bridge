@@ -1,4 +1,4 @@
-# 09 · 用户手册（v0.1.x）
+# 09 · 用户手册（v1.0.x）
 
 > 面向最终用户与排障人员。开发/集成请看 [README](../README.md)、
 > [05-native-module-guide](05-native-module-guide.md)、[07-streaming-outputs](07-streaming-outputs.md)。

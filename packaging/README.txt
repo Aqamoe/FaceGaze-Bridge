@@ -33,6 +33,7 @@ FaceGazeBridge-Setup-<版本>.exe 是用户级安装包（不需要管理员）�
   - VRCFT 本体已完全退出（模块的沙箱端口是独占的）
   - 系统里有 WebView2 Runtime。Win10/11 随 Edge 预装；没有的话装
     "Microsoft Edge WebView2 Runtime"（Evergreen）即可
+  - VC++ 运行库已随包提供（msvcp140 / vcruntime140），不需要另装
 
 模块从哪来
 ----------

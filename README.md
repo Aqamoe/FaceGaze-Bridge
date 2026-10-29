@@ -60,7 +60,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 性能与稳定性（M6） | ✅ 状态页 tick 耗时 P50/P95、CPU/工作集/句柄、休眠恢复计数；`tools/soak.py` 长跑探针；Release 回放 avg 57 µs / P95 103 µs / late 0 |
 | 崩溃与诊断（M6） | ✅ Windows MiniDump（无第三方）+ `fgb-cli diag bundle` + 设置页一键导出（[ADR-0028](docs/adr/0028-crash-dumps-and-diagnostics.md)） |
 | 文档与审查（M6） | ✅ [用户手册](docs/09-user-guide.md)（含兼容表/FAQ/排障）、[安全审查](docs/10-security-review.md) |
-| 安装包（M6） | ✅ Inno Setup 用户级安装器（`packaging/build_installer.ps1`），支持静默安装/卸载与 SteamVR 注册清理；本机已编译，安装/卸载未在真实用户数据上执行 |
+| 安装包（M6） | ✅ 1.0.0 用户级安装器（`packaging/build_installer.ps1`，31.7 MB，含 106 MB 运行时与 VC 运行库），静默安装/卸载已实测；默认目录安装与 SteamVR 真实注册仍待真机 |
 | 更新检查（M6） | ✅ 设置页读取 GitHub Releases latest 并提示手动下载（`fgb-cli update-check`），不自动替换 |
 
 **已经能跑的**（M1 + M2 核心）：

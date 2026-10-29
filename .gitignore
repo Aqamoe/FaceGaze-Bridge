@@ -3,6 +3,7 @@
 /out/
 /install/
 /dist/
+/dist-installer/
 /artifacts/
 CMakeUserPresets.json
 compile_commands.json
