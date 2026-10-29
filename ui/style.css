@@ -47,6 +47,7 @@ body {
   flex-direction: column;
   padding: 20px 14px 18px;
   gap: 26px;
+  overflow-y: auto;
 }
 
 .brand {
@@ -141,7 +142,9 @@ body {
 .muted { color: var(--dim); font-size: 11.5px; }
 
 /* ---------- 主区 ---------- */
-.main { display: flex; flex-direction: column; min-width: 0; }
+/* min-height: 0 是让内部 .content 能真正滚动的关键：
+   grid/flex 项默认 min-height:auto，内容一长就会把视口撑破，而不是出现滚动条 */
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
 .topbar {
   display: flex;
@@ -188,7 +191,7 @@ body {
 }
 .pill.accent::before { opacity: 1; background: var(--ok); }
 
-.content { padding: 24px 30px 36px; overflow-y: auto; flex: 1; }
+.content { padding: 24px 30px 36px; overflow-y: auto; flex: 1; min-height: 0; overscroll-behavior: contain; }
 
 .page { display: none; }
 .page.active { display: block; animation: fade .18s ease-out; }

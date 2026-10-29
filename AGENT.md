@@ -186,6 +186,7 @@ gh run watch <id> --exit-status
 | 模块更新失败 | 提示"正在被占用" | 引擎加载模块时 DLL 被锁；先停引擎再更新（界面会拒绝删除运行中的模块） |
 | 模块库刷新超时 | WinHTTP 12002 | registry.vrcft.io 偶发卡 20 s；库内部重试一次，失败时保留缓存 |
 | WebView2 调试端口 | 9222 不监听 | 已有实例共用 user-data 时新实例不会开 CDP；测试实例加 `--user-data %TEMP%\...` |
+| 页面不能滚动/底部被裁 | 内容超出窗口但没有滚动条 | grid/flex 子项默认 `min-height:auto`；`.main`/`.content` 必须显式 `min-height:0`，否则 `.content` 的 `overflow-y:auto` 不生效 |
 
 ## 6. 代码地图
 

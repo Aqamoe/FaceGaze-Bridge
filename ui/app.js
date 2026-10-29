@@ -78,12 +78,11 @@ function apply_l10n() {
   if (state.status) {
     render_status(state.status);
   }
-  if (state.view === "modules") {
-    if (state.modules) {
-      render_modules();
-    } else if (state.library) {
-      render_library();
-    }
+  if (state.view === "modules" && state.modules) {
+    render_modules();
+  }
+  if (state.view === "library") {
+    render_library();
   }
   if (state.view === "logs") {
     rerender_logs();
@@ -116,6 +115,7 @@ const state = {
   logs: [],
   modules: null,
   library: null,
+  library_requested: false,
   status: null,
   source_rows: [],
   running_rows: [],
@@ -128,6 +128,7 @@ const state = {
 const PAGE_META = {
   status: ["page.status.title", "page.status.sub"],
   modules: ["page.modules.title", "page.modules.sub"],
+  library: ["page.library.title", "page.library.sub"],
   params: ["page.params.title", "page.params.sub"],
   output: ["page.output.title", "page.output.sub"],
   logs: ["page.logs.title", "page.logs.sub"],
@@ -541,7 +542,6 @@ function render_modules() {
 
   render_running_modules(state.status ? state.status.modules : []);
   render_importable((data && data.importable) || []);
-  render_library();
 }
 
 function fmt_mb(bytes) {
@@ -1002,6 +1002,14 @@ function switch_page(page) {
   if (page === "status") {
     render_params(state.values);
   }
+  if (page === "library") {
+    // 第一次打开时自动拉一次；之后手动点"刷新"
+    if (!state.library_requested) {
+      state.library_requested = true;
+      send({ type: "refresh_library" });
+    }
+    render_library();
+  }
 }
 
 function push_filter() {
@@ -1040,6 +1048,9 @@ function wire() {
   });
   $("mod-install").addEventListener("click", () => {
     send({ type: "install_module_archive" });
+  });
+  $("mod-library").addEventListener("click", () => {
+    switch_page("library");
   });
   $("mod-open").addEventListener("click", () => {
     send({ type: "open_modules_dir" });

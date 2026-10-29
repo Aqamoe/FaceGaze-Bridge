@@ -27,6 +27,10 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>
         <span data-i18n="nav.modules">模块</span>
       </button>
+      <button class="nav-item" data-page="library">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H10l2 2h5.5A2.5 2.5 0 0 1 20 9.5v7A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5z"/><path d="M12 11v5M9.5 13.5 12 11l2.5 2.5"/></svg>
+        <span data-i18n="nav.library">模块库</span>
+      </button>
       <button class="nav-item" data-page="params">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 12h4M12 12h8M4 17h12M20 17h0"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="17" r="2"/></svg>
         <span data-i18n="nav.params">参数</span>
@@ -123,6 +127,7 @@
         <div class="toolbar">
           <button class="btn" id="mod-rescan" data-i18n="modules.rescan">重新扫描</button>
           <button class="btn" id="mod-install" data-i18n="modules.install_zip">从 .zip 安装</button>
+          <button class="btn" id="mod-library" data-i18n="modules.open_library">在线模块库</button>
           <button class="btn ghost" id="mod-open" data-i18n="modules.open_dir">打开模块目录</button>
           <button class="btn ghost" id="mod-restart" data-i18n="modules.restart">重启引擎</button>
           <span class="pill" id="mod-runtime">—</span>
@@ -158,10 +163,13 @@
           这些模块来自 VRCFT 的 CustomLibs。导入后复制到 FaceGaze Bridge 自己的模块仓，之后不再依赖 VRCFT。
         </p>
 
-        <div class="section-head">
-          <h2 data-i18n="modules.library.title">模块库</h2>
+      </section>
+
+      <!-- 模块库 -->
+      <section class="page" data-page="library">
+        <div class="toolbar">
           <input id="lib-search" type="search" data-i18n-placeholder="modules.library.search" placeholder="搜索模块">
-          <button class="btn small" id="lib-refresh" data-i18n="modules.library.refresh">刷新</button>
+          <button class="btn" id="lib-refresh" data-i18n="modules.library.refresh">刷新</button>
           <span class="muted" id="lib-status">—</span>
         </div>
         <div class="module-list" id="library-list"></div>

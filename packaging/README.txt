@@ -26,7 +26,7 @@ FaceGaze Bridge 有自己的模块仓，**不再直接加载 VRCFT 目录里的 
   - 检测到本机 VRCFT 模块 → 导入（复制进自己的模块仓，之后不依赖 VRCFT）
   - 从 .zip / .dll 手动安装
   - 启用 / 停用 / 删除 / 设为启动模块
-  - 模块库（registry.vrcft.io，与 VRCFT 同源）浏览、搜索、一键安装/更新
+  - 「模块库」页（registry.vrcft.io，与 VRCFT 同源）浏览、搜索、一键安装/更新
 
 改完模块选择后点「重启引擎」生效。引擎一次只加载一个模块。
 
