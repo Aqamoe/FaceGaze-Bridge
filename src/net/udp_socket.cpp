@@ -97,7 +97,8 @@ void UdpSocket::close() noexcept {
 
 bool UdpSocket::valid() const noexcept { return handle_ != kInvalidHandle; }
 
-bool UdpSocket::open_receiver(std::uint16_t port, bool reuse_addr) noexcept {
+bool UdpSocket::open_receiver(std::uint16_t port, bool reuse_addr,
+                              bool any_interface) noexcept {
     if (!ensure_wsa()) {
         return false;
     }
@@ -116,7 +117,7 @@ bool UdpSocket::open_receiver(std::uint16_t port, bool reuse_addr) noexcept {
 
     sockaddr_in addr{};
     addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_addr.s_addr = htonl(any_interface ? INADDR_ANY : INADDR_LOOPBACK);
     addr.sin_port        = htons(port);
 
     if (::bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {

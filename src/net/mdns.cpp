@@ -306,9 +306,10 @@ bool mdns_discover(std::string_view service_type, std::vector<MdnsService>& out,
     }
 
     UdpSocket socket;
-    if (!socket.open_receiver(kMdnsPort, true)) {
+    // 组播必须在网卡上收，不能只绑回环
+    if (!socket.open_receiver(kMdnsPort, true, true)) {
         // 5353 被 Bonjour 等占用时退回临时端口；RFC 6762 的 legacy 查询允许单播回复
-        if (!socket.open_receiver(0, true)) {
+        if (!socket.open_receiver(0, true, true)) {
             return false;
         }
     }

@@ -20,7 +20,10 @@ public:
 
     // 绑定本地端口。port 为 0 时由系统分配，可用 local_port() 查询。
     // reuse_addr 在 bind 之前设置 SO_REUSEADDR（mDNS 5353 与 Bonjour 共存需要）。
-    bool open_receiver(std::uint16_t port, bool reuse_addr = false) noexcept;
+    // 默认只绑 127.0.0.1：VMC/模块协议都是本机数据口，不该暴露给局域网。
+    // mDNS 必须收到网卡上的组播，才显式传 any_interface=true。
+    bool open_receiver(std::uint16_t port, bool reuse_addr = false,
+                       bool any_interface = false) noexcept;
     bool open_sender() noexcept;
     void close() noexcept;
 
