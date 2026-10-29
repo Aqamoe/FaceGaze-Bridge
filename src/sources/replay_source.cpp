@@ -90,11 +90,13 @@ bool ReplaySource::poll(FaceFrame& out) {
         return false;
     }
 
-    const std::uint64_t elapsed = clock::now_ns() - t0_;
-    bool produced               = false;
+    bool produced = false;
 
-    // 一次 tick 可能已经过了好几帧的时间，全部消费掉，只保留最后一个状态
+    // 一次 tick 可能已经过了好几帧的时间，全部消费掉，只保留最后一个状态。
+    // elapsed 必须在循环内重算：loop 回绕时 load_next() 会把 t0_ 重置为 now，
+    // 沿用循环外的旧 elapsed 会让整个文件在同一 tick 里被无限重放。
     while (have_next_) {
+        const std::uint64_t elapsed = clock::now_ns() - t0_;
         if (elapsed < due_ns()) {
             break;
         }

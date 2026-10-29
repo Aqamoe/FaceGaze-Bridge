@@ -11,6 +11,7 @@ constexpr NativeSocket kInvalidSocket = INVALID_SOCKET;
 #else
 #include <arpa/inet.h>
 #include <cerrno>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/select.h>
@@ -37,6 +38,10 @@ void close_socket(NativeSocket s) noexcept {
     }
 }
 bool would_block() noexcept { return WSAGetLastError() == WSAEWOULDBLOCK; }
+bool set_nonblocking(NativeSocket s) noexcept {
+    u_long mode = 1;
+    return ::ioctlsocket(s, FIONBIO, &mode) == 0;
+}
 #else
 bool ensure_wsa() noexcept { return true; }
 void close_socket(NativeSocket s) noexcept {
@@ -45,6 +50,10 @@ void close_socket(NativeSocket s) noexcept {
     }
 }
 bool would_block() noexcept { return errno == EAGAIN || errno == EWOULDBLOCK; }
+bool set_nonblocking(NativeSocket s) noexcept {
+    const int flags = ::fcntl(s, F_GETFL, 0);
+    return flags >= 0 && ::fcntl(s, F_SETFL, flags | O_NONBLOCK) == 0;
+}
 #endif
 
 NativeSocket native(std::intptr_t handle) noexcept { return static_cast<NativeSocket>(handle); }
@@ -82,6 +91,13 @@ bool WsServer::listen(std::uint16_t port, std::string& error) {
     if (::listen(s, 8) != 0) {
         close_socket(s);
         error = "listen 失败";
+        return false;
+    }
+    // 监听 socket 也必须非阻塞：select 说可读只保证至少一个连接，
+    // 多收一次就会在没有连接时永久阻塞引擎主循环。
+    if (!set_nonblocking(s)) {
+        close_socket(s);
+        error = "无法把监听 socket 设为非阻塞";
         return false;
     }
 
@@ -124,36 +140,65 @@ std::size_t WsServer::ready_count() const noexcept {
 
 void WsServer::accept_new() {
     const NativeSocket listener = native(handle_);
-    for (;;) {
-        const NativeSocket conn = ::accept(listener, nullptr, nullptr);
-        if (conn == kInvalidSocket) {
-            return;
-        }
-
-        // 小包为主，关掉 Nagle 让 UI 的即时反馈不要被延迟合并
-        int yes = 1;
-        ::setsockopt(conn, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&yes), sizeof(yes));
-
-        Client client;
-        client.conn = static_cast<std::intptr_t>(conn);
-        clients_.push_back(std::move(client));
-
-        // 一次 poll 最多收一个连接：回环上 UI 只有一个客户端，
-        // 多收会挤占引擎这一帧的时间预算
+    // 一次 poll 最多收一个连接：回环上 UI 只有一个客户端，
+    // 多收会挤占引擎这一帧的时间预算
+    const NativeSocket conn = ::accept(listener, nullptr, nullptr);
+    if (conn == kInvalidSocket) {
         return;
     }
+
+    // 小包为主，关掉 Nagle 让 UI 的即时反馈不要被延迟合并
+    int yes = 1;
+    ::setsockopt(conn, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&yes), sizeof(yes));
+    // 非阻塞 + 出站缓冲：对端（暂停的页面、被杀掉的 curl）不能卡住 120 Hz 主循环
+    if (!set_nonblocking(conn)) {
+        close_socket(conn);
+        return;
+    }
+
+    Client client;
+    client.conn = static_cast<std::intptr_t>(conn);
+    clients_.push_back(std::move(client));
 }
 
 bool WsServer::send_raw(Client& client, std::string_view data) {
+    if (client.dead) {
+        return false;
+    }
+    client.out.append(data.data(), data.size());
+    const std::size_t pending = client.out.size() - client.out_sent;
+    // 页面暂停/被杀后可能永远不再读；给一个上限，别让出站缓冲无限增长
+    const std::size_t limit = client.upgraded ? 512u * 1024u : 4u * 1024u * 1024u;
+    if (pending > limit) {
+        client.dead = true;
+        return false;
+    }
+    return flush(client);
+}
+
+bool WsServer::flush(Client& client) {
+    if (client.dead) {
+        return false;
+    }
     const NativeSocket sock = native(client.conn);
-    std::size_t sent        = 0;
-    while (sent < data.size()) {
-        const int n = ::send(sock, data.data() + sent, static_cast<int>(data.size() - sent), 0);
-        if (n <= 0) {
-            client.dead = true;
-            return false;
+    while (client.out_sent < client.out.size()) {
+        const auto remaining = client.out.size() - client.out_sent;
+        const int n = ::send(sock, client.out.data() + client.out_sent,
+                             static_cast<int>(remaining), 0);
+        if (n > 0) {
+            client.out_sent += static_cast<std::size_t>(n);
+            continue;
         }
-        sent += static_cast<std::size_t>(n);
+        if (would_block()) {
+            return true;
+        }
+        client.dead = true;
+        return false;
+    }
+    client.out.clear();
+    client.out_sent = 0;
+    if (client.close_after_send) {
+        client.dead = true;
     }
     return true;
 }
@@ -230,8 +275,8 @@ void WsServer::process(Client& client) {
             if (head.upgrade == "websocket") {
                 if (head.ws_key.empty()) {
                     const std::string body = R"({"ok":false,"error":"missing Sec-WebSocket-Key"})";
+                    client.close_after_send = true;
                     send_raw(client, ws::http_response(400, "application/json", body));
-                    client.dead = true;
                     return;
                 }
                 std::string response = "HTTP/1.1 101 Switching Protocols\r\n"
@@ -257,8 +302,9 @@ void WsServer::process(Client& client) {
             if (!handled) {
                 body = R"({"ok":false,"error":"not found"})";
             }
+            // 诊断接口不保持连接，但响应可能还没发完：发完再关，别截断大文件
+            client.close_after_send = true;
             send_raw(client, ws::http_response(handled ? 200 : 404, content_type, body));
-            client.dead = true; // 诊断接口不保持连接，一个请求一个连接
             return;
         }
 
@@ -292,8 +338,8 @@ void WsServer::process(Client& client) {
         case ws::kOpClose: {
             std::string closing;
             ws::append_frame(closing, ws::kOpClose, frame.payload);
+            client.close_after_send = true;
             send_raw(client, closing);
-            client.dead = true;
             return;
         }
         case ws::kOpContinuation:
@@ -347,7 +393,9 @@ bool WsServer::poll(int timeout_ms) {
     }
 
     fd_set read_set;
+    fd_set write_set;
     FD_ZERO(&read_set);
+    FD_ZERO(&write_set);
     const NativeSocket listener = native(handle_);
     FD_SET(listener, &read_set);
 
@@ -360,6 +408,9 @@ bool WsServer::poll(int timeout_ms) {
         }
         const NativeSocket sock = native(client.conn);
         FD_SET(sock, &read_set);
+        if (client.out_sent < client.out.size()) {
+            FD_SET(sock, &write_set);
+        }
 #ifdef _WIN32
         // Winsock 忽略 select 的第一个参数
 #else
@@ -372,9 +423,9 @@ bool WsServer::poll(int timeout_ms) {
     tv.tv_usec = (timeout_ms % 1000) * 1000;
 
 #ifdef _WIN32
-    const int ready = ::select(0, &read_set, nullptr, nullptr, &tv);
+    const int ready = ::select(0, &read_set, &write_set, nullptr, &tv);
 #else
-    const int ready = ::select(max_fd + 1, &read_set, nullptr, nullptr, &tv);
+    const int ready = ::select(max_fd + 1, &read_set, &write_set, nullptr, &tv);
 #endif
     if (ready < 0) {
         return false;
@@ -396,6 +447,13 @@ bool WsServer::poll(int timeout_ms) {
             continue;
         }
         const NativeSocket sock = native(client.conn);
+        if (FD_ISSET(sock, &write_set)) {
+            activity = true;
+            flush(client);
+            if (client.dead) {
+                continue;
+            }
+        }
         if (!FD_ISSET(sock, &read_set)) {
             continue;
         }

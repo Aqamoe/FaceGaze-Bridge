@@ -60,14 +60,18 @@ private:
         ConnId conn       = -1;
         std::string in;         // 未消费的字节
         std::string fragments;  // 分片文本帧的累积
+        std::string out;        // 待发送字节：对端读得慢时不能把引擎主循环卡住
+        std::size_t out_sent = 0;
         bool upgraded     = false;
         bool dead         = false;
+        bool close_after_send = false; // HTTP/Close 帧发完就关，不能提前丢掉缓冲
     };
 
     void accept_new();
     void read_client(Client& client);
     void process(Client& client);
     bool send_raw(Client& client, std::string_view data);
+    bool flush(Client& client);
     void sweep();
 
     std::intptr_t handle_ = -1;
