@@ -1,5 +1,8 @@
 # ADR-0011 · 模块管理：发现、选择、把失败原因说人话
 
+> 后续：模块的存储与加载在 [ADR-0017](0017-module-store-library-runtime.md) 改为独立模块仓
+> （VRCFT 目录只作为导入候选）；本文的模块页、状态文案与故障展示仍然有效。
+
 - 状态：已采纳
 - 日期：2026-10-29
 - 影响：新增 `vrcft/module_registry`、`base/json`（从 `web/json` 拆出）、`fgb-cli modules`、

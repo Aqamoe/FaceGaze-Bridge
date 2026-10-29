@@ -79,7 +79,11 @@ function apply_l10n() {
     render_status(state.status);
   }
   if (state.view === "modules") {
-    render_modules();
+    if (state.modules) {
+      render_modules();
+    } else if (state.library) {
+      render_library();
+    }
   }
   if (state.view === "logs") {
     rerender_logs();
@@ -111,6 +115,7 @@ const state = {
   mini: [],
   logs: [],
   modules: null,
+  library: null,
   status: null,
   source_rows: [],
   running_rows: [],
@@ -219,6 +224,12 @@ function handle(message) {
         render_modules();
       }
       break;
+    case "library":
+      state.library = message;
+      if (state.view === "modules") {
+        render_library();
+      }
+      break;
     case "params":
       render_params(message.values || []);
       break;
@@ -226,7 +237,9 @@ function handle(message) {
       push_log(message);
       break;
     case "ack":
-      if (message.command === "reload_avatar" && message.ok) {
+      if (!message.ok && message.error) {
+        push_log({ level: "warn", tag: "ui", message: `${message.command}: ${message.error}` });
+      } else if (message.command === "reload_avatar" && message.ok) {
         push_log({ level: "info", tag: "ui", message: t("log.avatar_reloaded") });
       }
       break;
@@ -497,31 +510,73 @@ function render_modules() {
   const list = $("module-list");
   list.textContent = "";
 
-  $("mod-config").textContent = (data && data.config) || t("modules.unpersisted");
-  $("mod-config").title = (data && data.config) || "";
+  $("mod-store").textContent = (data && data.store) || "—";
+  $("mod-store").title = (data && data.store) || "";
+  $("mod-installed-count").textContent = t("modules.installed.count", { count: items.length });
+  $("mod-picking").hidden = !(data && data.picking);
+  $("mod-restart-hint").hidden = !(data && data.restart_needed);
+
+  const runtime = (data && data.runtime) || {};
+  const pill = $("mod-runtime");
+  if (runtime.available) {
+    pill.textContent = `${t("modules.runtime")} · ${t("modules.runtime." + (runtime.origin || "unknown"))}`;
+    pill.className = "pill ok";
+    pill.title = runtime.path || "";
+  } else {
+    pill.textContent = t("modules.runtime.missing");
+    pill.className = "pill warn";
+    pill.title = "";
+  }
 
   if (!items.length) {
     const empty = el("div", "empty");
     empty.append(el("div", "", t("modules.empty")));
     empty.append(el("div", "hint", t("modules.empty.hint")));
-    if (data && data.roots) {
-      for (const root of data.roots) {
-        empty.append(el("div", "module-meta", `[${root.origin}] ${root.path}`));
-      }
-    }
     list.append(empty);
-    return;
+  } else {
+    for (const item of items) {
+      list.append(installed_card(item));
+    }
   }
 
-  for (const item of items) {
-    list.append(module_card(item, data));
-  }
-
-  // 运行态来自 status（10 Hz），切页时也要立刻画一次
   render_running_modules(state.status ? state.status.modules : []);
+  render_importable((data && data.importable) || []);
+  render_library();
 }
 
-function module_card(item, data) {
+function fmt_mb(bytes) {
+  if (!bytes) {
+    return "—";
+  }
+  return `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
+function source_label(source) {
+  if (!source) {
+    return "—";
+  }
+  const key = `modules.source.${source}`;
+  const text = t(key);
+  return text === key ? source : text;
+}
+
+function module_chip(item) {
+  if (item.broken) {
+    return { text: t("state.broken"), cls: "err" };
+  }
+  if (!item.enabled) {
+    return { text: t("state.disabled"), cls: "" };
+  }
+  if (item.running) {
+    return format_state(item.state);
+  }
+  if (item.active) {
+    return { text: t("state.selected"), cls: "ok" };
+  }
+  return { text: t("state.installed"), cls: "" };
+}
+
+function installed_card(item) {
   const card = el("article", "module-card");
   card.dataset.id = item.id;
   if (item.active) {
@@ -539,9 +594,9 @@ function module_card(item, data) {
   if (item.author) {
     head.append(el("span", "module-author", item.author));
   }
-  // 运行中就用运行态，否则用磁盘状态（"已安装" / "缺少 DLL"）
-  const chip_state = format_state(running_state_of(item.id) || item.state);
-  const chip = el("span", `chip ${chip_state.cls}`.trim(), chip_state.label);
+  head.append(el("span", "chip", item.kind === "native" ? "Native" : "VRCFT"));
+  const chip_state = module_chip(item);
+  const chip = el("span", `chip ${chip_state.cls}`.trim(), chip_state.text);
   chip.dataset.role = "chip";
   head.append(chip);
   card.append(head);
@@ -549,34 +604,253 @@ function module_card(item, data) {
   if (item.running && item.instance) {
     card.append(el("div", "module-desc", t("modules.instance", { name: item.instance })));
   }
-
   if (item.description) {
     card.append(el("p", "module-desc", item.description));
   }
 
   const meta = el("div", "module-meta");
   meta.append(el("span", "", `${t("modules.id")}  ${item.id}`));
-  meta.append(el("span", "", `${t("modules.dll")} ${item.dll || t("modules.none_found")}`));
+  meta.append(el("span", "", `${t("modules.source")} ${source_label(item.source)}`));
+  meta.append(el("span", "", `${t("modules.installed_at")} ${item.installed_at || "—"}`));
+  meta.append(el("span", "", `${t("modules.size")} ${fmt_mb(item.bytes)}`));
+  if (item.dll) {
+    meta.append(el("span", "", item.dll));
+  }
   card.append(meta);
 
+  const live = ((state.status && state.status.modules) || [])
+    .find((entry) => entry.module_id === item.id);
   const error = el("div", "module-error");
   error.dataset.role = "error";
-  error.hidden = true;
+  error.hidden = !live || !live.error;
+  if (live && live.error) {
+    error.textContent = live.error.slice(0, 400);
+    error.title = live.error;
+  }
   card.append(error);
 
   const actions = el("div", "module-actions");
-  if (item.active) {
-    actions.append(el("span", "muted", t("modules.current")));
-  } else if (item.broken) {
-    actions.append(el("span", "muted", t("modules.broken.hint")));
+
+  const toggle = el("label", "mod-toggle");
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = !!item.enabled;
+  checkbox.addEventListener("change", () => {
+    send({ type: "set_module_enabled", id: item.id, enabled: checkbox.checked });
+  });
+  toggle.append(checkbox, el("span", "", t("modules.enabled")));
+  actions.append(toggle);
+
+  if (!item.active) {
+    const set_button = el("button", "btn ghost small", t("modules.set_active"));
+    set_button.addEventListener("click", () => send({ type: "set_module", id: item.id }));
+    actions.append(set_button);
   } else {
-    const button = el("button", "btn", t("modules.set"));
-    button.addEventListener("click", () => send({ type: "set_module", id: item.id }));
+    actions.append(el("span", "muted", t("modules.current")));
+  }
+
+  const remove = el("button", "btn danger small", t("modules.delete"));
+  remove.addEventListener("click", () => {
+    if (window.confirm(t("modules.delete_confirm", { name: item.name || item.id }))) {
+      send({ type: "delete_module", id: item.id });
+    }
+  });
+  actions.append(remove);
+  card.append(actions);
+  return card;
+}
+
+function render_importable(items) {
+  const list = $("importable-list");
+  const head = $("importable-head");
+  const hint = $("importable-hint");
+  list.textContent = "";
+  head.hidden = !items.length;
+  hint.hidden = !items.length;
+  $("mod-import-all").disabled = !items.length;
+
+  for (const item of items) {
+    const card = el("article", "import-card");
+    const header = el("div", "module-head");
+    header.append(el("strong", "", item.name || item.id));
+    if (item.version) {
+      header.append(el("span", "module-ver", `v${item.version}`));
+    }
+    if (item.author) {
+      header.append(el("span", "module-author", item.author));
+    }
+    header.append(el("span", "chip", item.origin || "VRCFT"));
+    card.append(header);
+
+    if (item.description) {
+      card.append(el("p", "module-desc", item.description));
+    }
+    const meta = el("div", "module-meta");
+    meta.append(el("span", "", `${t("modules.id")}  ${item.id}`));
+    meta.append(el("span", "", item.dir || ""));
+    card.append(meta);
+
+    const actions = el("div", "module-actions");
+    const import_button = el("button", "btn small", t("modules.import"));
+    import_button.disabled = !!item.broken;
+    import_button.addEventListener("click", () => send({ type: "import_module", id: item.id }));
+    actions.append(import_button);
+    if (item.broken) {
+      actions.append(el("span", "muted", t("state.broken")));
+    }
+    card.append(actions);
+    list.append(card);
+  }
+}
+
+function rating_stars(value) {
+  const full = Math.round(value || 0);
+  return "★".repeat(Math.max(0, Math.min(5, full))) + "☆".repeat(Math.max(0, 5 - full));
+}
+
+function library_card(item, installed, status) {
+  const card = el("article", "lib-card");
+  card.dataset.id = item.id;
+
+  const head = el("div", "module-head");
+  head.append(el("strong", "", item.name || item.id));
+  head.append(el("span", "module-ver", `v${item.version || "?"}`));
+  if (item.author) {
+    head.append(el("span", "module-author", item.author));
+  }
+  if (installed) {
+    const same = installed.version && item.version && installed.version === item.version;
+    const tag = el("span", `chip ${same ? "ok" : "warn"}`.trim(),
+      same ? t("modules.library.installed") : t("modules.library.update_available"));
+    head.append(tag);
+  }
+  card.append(head);
+
+  if (item.description) {
+    card.append(el("p", "lib-desc", item.description));
+  }
+
+  const meta = el("div", "lib-meta");
+  meta.append(el("span", "rating", `${rating_stars(item.rating)} ${(item.rating || 0).toFixed(1)}`));
+  meta.append(el("span", "", t("modules.library.downloads", { count: fmt_int(item.downloads) })));
+  if (item.updated) {
+    meta.append(el("span", "", item.updated.slice(0, 10)));
+  }
+  card.append(meta);
+
+  const actions = el("div", "lib-actions");
+  const installing = status && status.install_id === item.id &&
+    (status.phase === "downloading" || status.phase === "installing");
+  const button = el("button", "btn small", "");
+  const state_text = el("span", "muted", "");
+  const progress = el("div", "progress");
+  const bar = document.createElement("i");
+  progress.append(bar);
+  progress.hidden = true;
+
+  if (installing) {
+    button.hidden = true;
+    progress.hidden = false;
+    state_text.dataset.role = "lib-state";
+    actions.append(progress, state_text);
+  } else {
+    const same = installed && installed.version && item.version &&
+      installed.version === item.version;
+    button.textContent = same ? t("modules.library.installed") :
+      (installed ? t("modules.library.update") : t("modules.library.install"));
+    button.disabled = same || (status && (status.phase === "downloading" ||
+      status.phase === "installing" || status.phase === "refreshing"));
+    button.addEventListener("click", () => {
+      if (window.confirm(t("modules.library.confirm", { name: item.name || item.id }))) {
+        send({ type: "install_library", id: item.id });
+      }
+    });
     actions.append(button);
   }
   card.append(actions);
-
+  update_library_card_progress(card, status, item.id);
   return card;
+}
+
+function update_library_card_progress(card, status, id) {
+  const bar = card.querySelector(".progress i");
+  const label = card.querySelector("[data-role=lib-state]");
+  if (!bar || !status || status.install_id !== id) {
+    return;
+  }
+  const percent = status.total > 0 ? Math.min(100, (status.received / status.total) * 100) : 0;
+  bar.parentElement.hidden = false;
+  bar.style.setProperty("--p", `${percent.toFixed(1)}%`);
+  if (label) {
+    label.textContent = status.phase === "installing"
+      ? t("modules.library.installing")
+      : t("modules.library.downloading", {
+          percent: percent.toFixed(0),
+          received: (status.received / 1048576).toFixed(1),
+          total: status.total ? (status.total / 1048576).toFixed(1) : "?",
+        });
+  }
+}
+
+function render_library() {
+  const list = $("library-list");
+  if (!list) {
+    return;
+  }
+  const lib = state.library;
+  const status_el = $("lib-status");
+  if (!lib) {
+    status_el.textContent = t("modules.library.not_loaded");
+    if (!list.childElementCount) {
+      list.append(el("div", "empty", t("modules.library.not_loaded")));
+    }
+    return;
+  }
+
+  const status = lib.status || {};
+  if (status.phase === "refreshing") {
+    status_el.textContent = t("modules.library.refreshing");
+  } else if (status.phase === "error") {
+    status_el.textContent = t("modules.library.error", { error: status.error || "?" });
+  } else if (lib.stale) {
+    status_el.textContent = t("modules.library.stale", { time: lib.fetched_at || "—" });
+  } else {
+    status_el.textContent = t("modules.library.updated", { time: lib.fetched_at || "—" });
+  }
+  status_el.title = status.error || "";
+  $("lib-refresh").disabled = status.phase === "refreshing";
+
+  const filter = ($("lib-search").value || "").trim().toLowerCase();
+  const all_items = lib.items || [];
+  const items = all_items.filter((item) => {
+    if (!filter) {
+      return true;
+    }
+    return `${item.name} ${item.author} ${item.description}`.toLowerCase().includes(filter);
+  });
+  const installed = new Map(((state.modules && state.modules.items) || []).map((m) => [m.id, m]));
+
+  const signature = items.map((item) => item.id).join(",") + "|" + status.phase + "|" +
+    (status.install_id || "") + "|" + filter;
+  if (list.dataset.signature !== signature) {
+    list.dataset.signature = signature;
+    list.textContent = "";
+    if (!items.length) {
+      list.append(el("div", "empty", all_items.length ? t("modules.library.no_match") :
+        t("modules.library.empty")));
+    } else {
+      for (const item of items) {
+        list.append(library_card(item, installed.get(item.id), status));
+      }
+    }
+  } else {
+    for (const item of items) {
+      const card = list.querySelector(`.lib-card[data-id="${CSS.escape(item.id)}"]`);
+      if (card) {
+        update_library_card_progress(card, status, item.id);
+      }
+    }
+  }
 }
 
 // 运行中的实例：多实例时"谁在跑、哪一路坏了"要分开看，所以单独一块，
@@ -763,6 +1037,28 @@ function wire() {
 
   $("mod-rescan").addEventListener("click", () => {
     send({ type: "scan_modules" });
+  });
+  $("mod-install").addEventListener("click", () => {
+    send({ type: "install_module_archive" });
+  });
+  $("mod-open").addEventListener("click", () => {
+    send({ type: "open_modules_dir" });
+  });
+  $("mod-restart").addEventListener("click", () => {
+    if (window.confirm(t("modules.restart_confirm"))) {
+      send({ type: "restart_engine" });
+    }
+  });
+  $("mod-import-all").addEventListener("click", () => {
+    send({ type: "import_all" });
+  });
+  $("lib-refresh").addEventListener("click", () => {
+    send({ type: "refresh_library" });
+  });
+  $("lib-search").addEventListener("input", () => {
+    if (state.library) {
+      render_library();
+    }
   });
 
   $("log-level").addEventListener("change", rerender_logs);

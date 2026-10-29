@@ -215,7 +215,7 @@ def main():
         "    expected: state.modules ? state.modules.items.length : -1,"
         "    names: cards.map(card => card.querySelector('strong').textContent),"
         "    chips: cards.map(card => card.querySelector('[data-role=chip]').textContent),"
-        "    config: document.getElementById('mod-config').textContent"
+        "    config: document.getElementById('mod-store').textContent"
         "  });"
         "})()"))
     print(f"模块页：{modules}")

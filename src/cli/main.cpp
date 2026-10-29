@@ -37,6 +37,9 @@
 namespace {
 
 std::atomic<bool> g_stop{false};
+// 桌面入口据此重启引擎（退出码 3），而不是把窗口一起关掉
+std::atomic<bool> g_restart{false};
+constexpr int kExitRestartEngine = 3;
 
 #ifdef _WIN32
 BOOL WINAPI console_handler(DWORD type) {
@@ -116,30 +119,23 @@ bool parse_uint16(std::string_view text, std::uint16_t& out) {
     return true;
 }
 
-// VRCFT 的默认安装位置（Steam 版）。找不到就让用户用 --module-exe 指定。
-std::filesystem::path default_vrcft_dir() {
-    const std::filesystem::path candidates[] = {
-        "C:\\Program Files (x86)\\Steam\\steamapps\\common\\VRCFaceTracking",
-        "C:\\Program Files\\Steam\\steamapps\\common\\VRCFaceTracking",
-    };
-    std::error_code ec;
-    for (const auto& dir : candidates) {
-        if (std::filesystem::exists(dir, ec)) {
-            return dir;
-        }
-    }
-    return {};
+// VRCFT 模块宿主运行时：内置 <exe>/runtime/vrcft → 本机副本 → 已安装 VRCFT。
+// 找不到就让用户用 --module-exe 指定（或者先导入模块/装一份运行时）。
+std::filesystem::path default_module_process_exe() {
+    const auto runtime = fgb::vrcft::find_vrcft_runtime();
+    return runtime.has_value() ? runtime->exe : std::filesystem::path{};
 }
 
-// 模块目录：VRCFT 的 CustomLibs + 我们自己 exe 旁边的 vrcft-libs。
-// 两个都扫，是因为"接管 VRCFT 的模块"和"给 FGB 单独放模块"都是要支持的用法。
-void add_default_module_roots(fgb::vrcft::ModuleRegistry& registry) {
-    registry.add_root(fgb::vrcft::vrcft_module_root(), "VRCFT");
+// 导入候选目录：VRCFT 的 CustomLibs + 我们自己 exe 旁边的 vrcft-libs。
+// 这两个都只是"可以从这里导入"，引擎不会直接从里面加载任何 DLL。
+void add_default_import_roots(fgb::vrcft::ModuleRegistry& registry) {
+    registry.add_import_root(fgb::vrcft::vrcft_module_root(), "VRCFT");
 #ifdef _WIN32
     wchar_t buffer[MAX_PATH]{};
     const DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
     if (length > 0 && length < MAX_PATH) {
-        registry.add_root(std::filesystem::path{buffer}.parent_path() / L"vrcft-libs", "FGB");
+        registry.add_import_root(std::filesystem::path{buffer}.parent_path() / L"vrcft-libs",
+                                 "FGB");
     }
 #endif
 }
@@ -148,10 +144,13 @@ std::string module_state_text(const fgb::vrcft::ModuleInfo& module) {
     if (module.broken) {
         return "缺少 DLL";
     }
+    if (!module.enabled) {
+        return "已停用";
+    }
     if (module.active) {
         return "启动时加载";
     }
-    return "已安装";
+    return "已启用";
 }
 
 bool parse_host_port(std::string_view text, std::string& host, std::uint16_t& port) {    const auto colon = text.rfind(':');
@@ -421,6 +420,13 @@ int cmd_run(int argc, char** argv) {
         panel_port = 8787; // --ui 隐含控制面
     }
 
+    // 界面上的模块管理不依赖输入源：即使是 VMC 模式，也能导入/安装/启停模块。
+    if (panel_port != 0 && !module_registry) {
+        module_registry = std::make_unique<fgb::vrcft::ModuleRegistry>();
+        add_default_import_roots(*module_registry);
+        module_registry->rescan();
+    }
+
     fgb::EngineConfig engine_cfg;
     engine_cfg.tick_hz = tick_hz;
     fgb::Engine engine{engine_cfg};
@@ -443,15 +449,23 @@ int cmd_run(int argc, char** argv) {
                 vrcft_total > 1 ? "vrcft[" + std::to_string(index + 1) + "]" : "vrcft";
 
             if (module_exe.empty()) {
-                const auto dir = default_vrcft_dir();
-                if (!dir.empty()) {
-                    module_exe = dir / "VRCFaceTracking.ModuleProcess.exe";
+                module_exe = default_module_process_exe();
+                if (module_exe.empty()) {
+                    std::fprintf(stderr,
+                                 "没有找到 VRCFT 运行时（VRCFaceTracking.ModuleProcess.exe）。\n"
+                                 "  发布包应带 runtime\\vrcft；开发环境可以安装一份 VRCFT，\n"
+                                 "  或用 --module-exe 指定 ModuleProcess.exe 的路径。\n");
+                    if (panel_port != 0) {
+                        FGB_WARN("vrcft", "跳过 vrcft 输入：没有运行时；可在界面里安装运行时或改用 VMC");
+                        continue;
+                    }
+                    return 2;
                 }
             }
             // 模块选择交给 registry：命令行 > 配置文件 > 只有一个是它
             if (!module_registry) {
                 module_registry = std::make_unique<fgb::vrcft::ModuleRegistry>();
-                add_default_module_roots(*module_registry);
+                add_default_import_roots(*module_registry);
                 module_registry->rescan();
             }
 
@@ -465,8 +479,12 @@ int cmd_run(int argc, char** argv) {
                     std::fprintf(stderr, "没有确定要加载哪个模块（第 %zu 个 vrcft 输入）。\n", index + 1);
                     if (module_registry->modules().empty()) {
                         std::fprintf(stderr,
-                                     "  磁盘上没发现模块：把 VRCFT 的模块放进 %%APPDATA%%\\"
-                                     "VRCFaceTracking\\CustomLibs，或用 --module-dll 指定路径。\n");
+                                     "  模块仓是空的：运行 fgb-cli modules import-all 导入本机模块，\n"
+                                     "  或在界面「模块」页里导入/从模块库安装。\n");
+                        for (const auto& candidate : module_registry->importable()) {
+                            std::fprintf(stderr, "    可导入：%-32s %s\n", candidate.info.name.c_str(),
+                                         candidate.info.id.c_str());
+                        }
                     } else {
                         std::fprintf(stderr, "  已安装：\n");
                         for (const auto& candidate : module_registry->modules()) {
@@ -475,6 +493,11 @@ int cmd_run(int argc, char** argv) {
                         }
                         std::fprintf(stderr,
                                      "  用 --module-id <id> 指定（可重复），或 fgb-cli modules use <id>\n");
+                    }
+                    if (panel_port != 0) {
+                        // 界面模式：先让窗口起来，用户在「模块」页导入/启用后重启引擎
+                        FGB_WARN("vrcft", "跳过 vrcft 输入：还没有选择模块，可在界面里导入或启用");
+                        continue;
                     }
                     return 2;
                 }
@@ -485,6 +508,9 @@ int cmd_run(int argc, char** argv) {
                     const std::string message = "模块「" + module->name + "」的目录里找不到 DLL\n  " +
                                                 module->directory.string() + "\n";
                     std::fputs(message.c_str(), stderr);
+                    if (panel_port != 0) {
+                        continue;
+                    }
                     return 2;
                 }
                 instance_dll         = module->dll;
@@ -612,10 +638,14 @@ int cmd_run(int argc, char** argv) {
         ctx.eye_mode    = fgb::to_string(vrchat_cfg.eye_mode);
         ctx.ui_dir      = ui_dir;
         ctx.quit        = &g_stop;
+        ctx.restart_engine = &g_restart;
 
         ctx.modules          = module_registry.get();
         ctx.running_modules  = running_modules;
         ctx.active_module_id = active_module_id;
+        if (ctx.active_module_id.empty() && module_registry) {
+            ctx.active_module_id = module_registry->active_id();
+        }
 
         ipc = std::make_unique<fgb::web::IpcServer>(std::move(ctx));
         std::string ipc_error;
@@ -689,6 +719,10 @@ int cmd_run(int argc, char** argv) {
                  static_cast<unsigned long long>(st.ticks),
                  static_cast<unsigned long long>(st.frames_in),
                  static_cast<unsigned long long>(st.late_ticks));
+    if (g_restart.load(std::memory_order_acquire)) {
+        FGB_INFO("cli", "按界面请求重启引擎（退出码 %d）", kExitRestartEngine);
+        return kExitRestartEngine;
+    }
     return 0;
 }
 
@@ -1037,51 +1071,140 @@ int cmd_params(int argc, char** argv) {
 int cmd_modules(int argc, char** argv) {
     fgb::vrcft::ModuleRegistry registry;
 
-    add_default_module_roots(registry);
+    add_default_import_roots(registry);
     registry.rescan();
 
-    if (argc >= 3 && std::string_view{argv[2]} == "use") {
-        if (argc < 4) {
-            std::fprintf(stderr, "用法: fgb-cli modules use <模块 id 或名字>|none\n");
-            return 2;
+    if (argc >= 3) {
+        const std::string_view action = argv[2];
+        if (action == "use") {
+            if (argc < 4) {
+                std::fprintf(stderr, "用法: fgb-cli modules use <模块 id 或名字>|none\n");
+                return 2;
+            }
+            const std::string_view key = argv[3];
+            const bool cleared         = key == "none";
+            if (!registry.set_active(cleared ? std::string_view{} : key)) {
+                std::fprintf(stderr, "%s%.*s\n", "没有这个模块（或它被停用了）：",
+                             static_cast<int>(key.size()), key.data());
+                return 1;
+            }
+            std::printf("启动模块已设为：%s（重启引擎后生效）\n",
+                        cleared ? "不加载" : registry.active_id().c_str());
+            return 0;
         }
-        const std::string_view key = argv[3];
-        const bool cleared         = key == "none";
-        if (!registry.set_active(cleared ? std::string_view{} : key)) {
-            std::fprintf(stderr, "没有这个模块: %.*s（先跑 fgb-cli modules 看列表）\n",
-                         static_cast<int>(key.size()), key.data());
-            return 1;
+        if (action == "enable" || action == "disable") {
+            if (argc < 4) {
+                std::fprintf(stderr, "用法: fgb-cli modules %.*s <id 或名字>\n",
+                             static_cast<int>(action.size()), action.data());
+                return 2;
+            }
+            if (!registry.set_enabled(argv[3], action == "enable")) {
+                std::fprintf(stderr, "%s%s\n", "没有这个模块：", argv[3]);
+                return 1;
+            }
+            std::printf("%s%s%s\n", action == "enable" ? "已启用" : "已停用", "：", argv[3]);
+            return 0;
         }
-        std::printf("启动模块已设为：%s（重启引擎后生效）\n",
-                    cleared ? "不加载" : registry.active_id().c_str());
-        return 0;
+        if (action == "remove") {
+            if (argc < 4) {
+                std::fprintf(stderr, "用法: fgb-cli modules remove <id 或名字>\n");
+                return 2;
+            }
+            std::string error;
+            if (!registry.remove_module(argv[3], error)) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                return 1;
+            }
+            std::printf("已删除 %s\n", argv[3]);
+            return 0;
+        }
+        if (action == "import") {
+            if (argc < 4) {
+                std::fprintf(stderr, "用法: fgb-cli modules import <id 或名字>\n");
+                return 2;
+            }
+            std::string error;
+            if (!registry.import_module(argv[3], error)) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                return 1;
+            }
+            std::printf("已导入 %s\n", argv[3]);
+            return 0;
+        }
+        if (action == "import-all") {
+            std::vector<std::string> ids;
+            for (const auto& candidate : registry.importable()) {
+                ids.push_back(candidate.info.id);
+            }
+            if (ids.empty()) {
+                std::printf("没有待导入的模块\n");
+                return 0;
+            }
+            std::size_t done = 0;
+            for (const std::string& id : ids) {
+                std::string error;
+                if (registry.import_module(id, error)) {
+                    ++done;
+                } else {
+                    std::fprintf(stderr, "%s%s%s%s\n", "导入 ", id.c_str(), " 失败：", error.c_str());
+                }
+            }
+            std::printf("已导入 %zu / %zu 个模块\n", done, ids.size());
+            return done == ids.size() ? 0 : 1;
+        }
+        if (action == "install") {
+            if (argc < 4) {
+                std::fprintf(stderr, "用法: fgb-cli modules install <模块.zip|模块.dll>\n");
+                return 2;
+            }
+            std::string error;
+            if (!registry.install_path(argv[3], error, "cli")) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                return 1;
+            }
+            std::printf("已安装：%s\n", argv[3]);
+            return 0;
+        }
+        std::fprintf(stderr, "未知子命令：%.*s\n", static_cast<int>(action.size()), action.data());
+        return 2;
     }
 
-    std::printf("模块目录：\n");
-    std::error_code ec;
-    for (const auto& root : registry.roots()) {
-        std::printf("  [%-5s] %s%s\n", root.origin.c_str(), root.path.string().c_str(),
-                    std::filesystem::is_directory(root.path, ec) ? "" : "  （不存在）");
+    std::printf("模块仓：%s\n", registry.store_dir().string().c_str());
+    std::printf("状态文件：%s\n", registry.state_path().string().c_str());
+    const auto runtime = fgb::vrcft::find_vrcft_runtime();
+    if (runtime.has_value()) {
+        std::printf("VRCFT 运行时：%s\n", runtime->exe.string().c_str());
+    } else {
+        std::printf("VRCFT 运行时：未找到（A 层模块无法启动，先用 fgb-cli modules import 或装 VRCFT）\n");
     }
-    std::printf("配置文件 %s\n\n", registry.config_path().string().c_str());
+    std::printf("\n");
 
     if (registry.modules().empty()) {
-        std::printf("没有发现任何模块。\n"
-                    "  把 VRCFT 的模块放进 %%APPDATA%%\\VRCFaceTracking\\CustomLibs，\n"
-                    "  或放一份到 %s\\vrcft-libs。\n",
-                    std::filesystem::current_path().string().c_str());
-        return 1;
+        std::printf("模块仓是空的。\n");
+    } else {
+        std::printf("%-34s %-9s %-13s %-11s %s\n", "模块", "版本", "作者", "状态", "来源");
+        std::printf("%s\n", std::string(82, '-').c_str());
+        for (const auto& module : registry.modules()) {
+            std::printf("%-34s %-9s %-13s %-11s %s\n", module.name.c_str(),
+                        module.version.empty() ? "-" : module.version.c_str(),
+                        module.author.empty() ? "-" : module.author.c_str(),
+                        module_state_text(module).c_str(),
+                        module.source.empty() ? "-" : module.source.c_str());
+        }
     }
 
-    std::printf("%-38s %-10s %-14s %s\n", "模块", "版本", "作者", "状态");
-    std::printf("%s\n", std::string(78, '-').c_str());
-    for (const auto& module : registry.modules()) {
-        std::printf("%-38s %-10s %-14s %s\n", module.name.c_str(),
-                    module.version.empty() ? "-" : module.version.c_str(),
-                    module.author.empty() ? "-" : module.author.c_str(),
-                    module_state_text(module).c_str());
+    if (!registry.importable().empty()) {
+        std::printf("\n检测到本机有 %zu 个未导入模块：\n", registry.importable().size());
+        for (const auto& candidate : registry.importable()) {
+            std::printf("  %-34s %-9s [%s] %s\n", candidate.info.name.c_str(),
+                        candidate.info.version.empty() ? "-" : candidate.info.version.c_str(),
+                        candidate.origin.c_str(), candidate.info.id.c_str());
+        }
+        std::printf("  fgb-cli modules import <id>   或   fgb-cli modules import-all\n");
     }
-    std::printf("\n切换：fgb-cli modules use <id 或名字>    停用：fgb-cli modules use none\n");
+
+    std::printf("\n切换：fgb-cli modules use <id>    启停：enable/disable <id>\n"
+                "安装：install <.zip|.dll>       删除：remove <id>\n");
     return 0;
 }
 

@@ -43,6 +43,8 @@ constexpr UINT_PTR kEngineTimer   = 2;
 constexpr UINT kRetryIntervalMs   = 1500;
 constexpr UINT kEnginePollMs      = 1000;
 constexpr int kIconResource       = 101;
+// 引擎在收到 restart_engine 时用这个退出码结束，外壳据此原地重启而不是关窗
+constexpr DWORD kEngineRestartExit = 3;
 
 // 逻辑像素；实际尺寸按显示器 DPI 放大。旧版固定 1180x780 在 125%/150% 缩放下显得很小。
 constexpr int kDefaultWidthDip  = 1360;
@@ -426,6 +428,17 @@ void on_engine_exit(DWORD exit_code) {
         ::CloseHandle(g_host.engine_process);
         g_host.engine_process = nullptr;
     }
+
+    // 界面里改了模块配置：原地拉起新引擎，窗口不动
+    if (exit_code == kEngineRestartExit && g_host.engine_owned) {
+        if (spawn_engine(g_host.default_source)) {
+            navigate_once();
+            return;
+        }
+        PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
+        return;
+    }
+
     if (g_host.navigated_ok) {
         PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
         return;
@@ -452,6 +465,7 @@ void on_engine_exit(DWORD exit_code) {
         kept.push_back(g_host.engine_args[i]);
     }
     g_host.engine_args = std::move(kept);
+    g_host.default_source = L"vmc";
 
     if (spawn_engine(L"vmc")) {
         navigate_once();

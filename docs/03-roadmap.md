@@ -188,7 +188,9 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > （[ADR-0014](adr/0014-vmc-output-sink.md)）；
 > ③ 模块页按实例显示运行态，多实例（两个模块）不再是黑盒（[ADR-0015](adr/0015-multi-instance-modules.md)）；
 > ④ 发版形态收敛为单入口 `FaceGaze Bridge.exe`：窗口拉起隐藏引擎、关窗即停，去掉 `.cmd`
-> （[ADR-0016](adr/0016-single-entry-desktop-app.md)）。
+> （[ADR-0016](adr/0016-single-entry-desktop-app.md)）；
+> ⑤ 模块改为独立模块仓（导入/zip 安装/启停/删除）+ 模块库一键安装 + 内置精简 VRCFT 运行时
+> （[ADR-0017](adr/0017-module-store-library-runtime.md)）。
 > 共享内存 Sink 未做。
 > 3.10 / 3.11 / 3.12 已完成——`fgb-ui`（WebView2 外壳）+
 > 本机 WebSocket IPC，六个页面（状态 / 模块 / 参数热力图 / 输出 / 日志 / 设置）已接真实数据，

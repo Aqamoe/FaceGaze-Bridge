@@ -3,7 +3,7 @@ FaceGaze Bridge —— 绿色版
 
 怎么用
 ------
-双击 FaceGaze Bridge.exe 就行，不需要任何脚本。
+双击 FaceGaze Bridge.exe，不需要任何脚本。
 
   1. 窗口打开后会自动拉起引擎（没有黑窗口，日志在界面「日志」页）
   2. 关掉窗口 = 停止追踪，不会留下后台进程
@@ -15,18 +15,36 @@ FaceGaze Bridge —— 绿色版
   - 系统里有 WebView2 Runtime。Win10/11 随 Edge 预装；没有的话装
     "Microsoft Edge WebView2 Runtime"（Evergreen）即可
 
-没有 VRCFT 模块会怎样
----------------------
-窗口会提示"引擎启动失败"，并可以直接选择改用 VMC 输入重试。
-详细原因写在 %LOCALAPPDATA%\FaceGazeBridge\engine.log。
+模块从哪来
+----------
+FaceGaze Bridge 有自己的模块仓，**不再直接加载 VRCFT 目录里的 DLL**：
+
+  %LOCALAPPDATA%\FaceGazeBridge\modules\<模块 ID>\
+  %LOCALAPPDATA%\FaceGazeBridge\modules.ini      启用状态与启动模块
+
+「模块」页可以做：
+  - 检测到本机 VRCFT 模块 → 导入（复制进自己的模块仓，之后不依赖 VRCFT）
+  - 从 .zip / .dll 手动安装
+  - 启用 / 停用 / 删除 / 设为启动模块
+  - 模块库（registry.vrcft.io，与 VRCFT 同源）浏览、搜索、一键安装/更新
+
+改完模块选择后点「重启引擎」生效。引擎一次只加载一个模块。
+
+VRCFT 运行时
+------------
+发布包自带一份精简的 VRCFT 宿主运行时（runtime\vrcft，约 106 MB），
+从已安装的 VRCFT 提取，包含 ModuleProcess + Core/SDK + .NET 运行时，
+不含 VRCFT 的界面与内置推理。这样卸载 VRCFT 后模块仍可运行。
+
+找不到内置运行时时，会依次尝试：
+  %LOCALAPPDATA%\FaceGazeBridge\runtime\vrcft → 已安装的 VRCFT
+界面右上角的「运行时」标签会显示当前用的是哪一份。
 
 固定用 VMC 输入（VSeeFace / VRChat OSC Trackers 等）
 ---------------------------------------------------
 给 FaceGaze Bridge.exe 建一个快捷方式，在「目标」末尾加上 --source vmc：
 
     "D:\...\FaceGaze Bridge.exe" --source vmc
-
-之后双击这个快捷方式，引擎会监听 UDP 39539 的 VMC 数据。
 
 进阶：同时输出给别的程序
 ------------------------
@@ -39,8 +57,8 @@ FaceGaze Bridge —— 绿色版
 
 界面里能做什么
 --------------
-  状态：帧率 / 累计帧 / tick 抖动 / OSC 条数 / 当前头像
-  模块：扫描磁盘上的 VRCFT 模块，选启动时加载哪个，故障时显示模块自己报的原因
+  状态：帧率 / 累计帧 / tick 抖动 / OSC 条数 / 当前头像 / 输入源
+  模块：本机导入、zip 安装、启停、删除、设为启动、模块库一键安装、运行时状态
   参数：365 个参数的热力图（只显示已绑定的），搜索过滤
   输出：参数集 / 眼追模式 / 绑定条数，重新读取头像参数表
   日志：引擎与模块日志，可过滤级别
@@ -49,7 +67,8 @@ FaceGaze Bridge —— 绿色版
 文件说明
 --------
   FaceGaze Bridge.exe   唯一入口：界面窗口 + 启动引擎
-  fgb-cli.exe           引擎本体（命令行用户也可以直接跑）
+  fgb-cli.exe           引擎与命令行工具（modules / run / params …）
+  runtime\vrcft\        VRCFT 模块宿主运行时（Apache-2.0，含 LICENSE/NOTICE）
   ui\                   页面资源。换页面不用重编 exe
   engine.log            %LOCALAPPDATA%\FaceGazeBridge\engine.log
   配置                  %APPDATA%\FaceGazeBridge\fgb.ini
@@ -58,19 +77,26 @@ FaceGaze Bridge —— 绿色版
 --------
   界面一直"等待引擎…"
      先看 %LOCALAPPDATA%\FaceGazeBridge\engine.log 的最后几行。
-     最常见的是没装模块、VRCFT 本体没关，或 8787 端口被别的程序占用。
+     最常见的是没有模块、8787 端口被别的程序占用，或者内置运行时缺失。
+
+  模块页是空的 / 没有输入源
+     点「重新扫描」看有没有"检测到本机模块"，导入后设为启动并重启引擎；
+     或者到下面的模块库安装一个。
+
+  模块库刷新失败
+     registry.vrcft.io 偶尔会超时，重试即可。断网时会显示上一次的缓存。
+
+  更新模块失败
+     模块正在被引擎加载时 DLL 会被占用。先在设置页停止引擎，再更新。
 
   模块页显示"故障"
      卡片里就是模块自己报的原因。最常见的是端口被占（还在跑 VRCFT），
-     或者头显/串流软件没连上。修好后点"重新扫描"，或重开应用。
+     或者头显/串流软件没连上。
 
   VRChat 里表情不动
      先看界面状态页的"命中参数"是不是 0：
      是 0 → 头像参数表没读到，去"输出"页点"重新读取头像参数表"；
      不是 0 → 检查 VRChat OSC 端口、以及模型是否绑了 FT/v2 参数。
-
-  关掉界面后追踪还在继续吗
-     不会。窗口和引擎是一体的，关闭窗口即停止输出。
 
   想自己起引擎（比如做自动化测试）
      fgb-cli.exe run --source vmc --panel 8787
@@ -81,4 +107,6 @@ FaceGaze Bridge —— 绿色版
 ----------
   控制面地址：http://127.0.0.1:8787/（浏览器也能打开，方便对照）
   引擎日志：%LOCALAPPDATA%\FaceGazeBridge\engine.log
+  模块仓：%LOCALAPPDATA%\FaceGazeBridge\modules
+  模块库缓存：%LOCALAPPDATA%\FaceGazeBridge\library.json
   配置：%APPDATA%\FaceGazeBridge\fgb.ini

@@ -12,6 +12,7 @@ add_executable(fgb-tests
     test_ws.cpp
     test_json.cpp
     test_modules.cpp
+    test_library.cpp
     test_merge.cpp
     test_vmc_out.cpp)
 

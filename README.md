@@ -37,7 +37,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 校准与滤波（M3 剩余） | ✅ 逐形状校准（从两份抓包推导）+ One Euro 滤波（[ADR-0008](docs/adr/0008-calibration-and-filtering.md)） |
 | 界面（WebView2） | ✅ 单入口 `FaceGaze Bridge.exe`（窗口自己拉起引擎）+ WebSocket IPC：状态 / 模块 / 参数热力图 / 输出 / 日志 / 设置（[ADR-0010](docs/adr/0010-webview2-ui-and-websocket-ipc.md)、[ADR-0016](docs/adr/0016-single-entry-desktop-app.md)） |
 | 界面本地化 | ✅ 简中 / 英 / 日三语，界面内切换并记住选择（[ADR-0012](docs/adr/0012-ui-localization.md)） |
-| 模块管理 | ✅ 扫描 VRCFT `CustomLibs` + FGB `vrcft-libs`、解析 `module.json`、选择启动模块并持久化（[ADR-0011](docs/adr/0011-module-management.md)） |
+| 模块管理 | ✅ 独立模块仓（导入 / .zip 安装 / 启停 / 删除）+ 模块库一键安装 + 内置精简 VRCFT 运行时；VRCFT 目录只作为导入来源（[ADR-0017](docs/adr/0017-module-store-library-runtime.md)） |
 | 多源合并（M4） | ✅ 表情 / 眼追 / 头姿三通道分别选提供者，可重复 `--source`（[ADR-0013](docs/adr/0013-source-merging.md)） |
 | 多输出（M4） | ✅ VRChat OSC + VMC 第二路（`--vmc-out`），可同时驱动 Unity 场景（[ADR-0014](docs/adr/0014-vmc-output-sink.md)）；共享内存 Sink 未做 |
 
@@ -54,14 +54,17 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 - 眼追参数派生（`EyeLeftX/Y`、`EyeLidLeft/Right`），`parameters` / `native` / `both` 三模式
 - 界面：`FaceGaze Bridge.exe` 双击即用（窗口拉起隐藏引擎，关窗即停），↔ 引擎走本机 WebSocket，
   10 Hz 推送状态与 365 个参数值，滤波滑杆/重新读取头像/日志实时回传
-- 模块管理：自动发现 VRCFT 的 `CustomLibs` 与 FGB 的 `vrcft-libs`，解析 `module.json`，
-  界面里选启动模块（写 `%APPDATA%\FaceGazeBridge\fgb.ini`），故障时显示模块自己报的原因
+- 模块管理：自己的模块仓（`%LOCALAPPDATA%\FaceGazeBridge\modules`），本机 VRCFT 模块只作为
+  "检测到，是否导入"；支持 .zip/.dll 安装、启用/停用、删除；模块库（registry.vrcft.io，
+  与 VRCFT 同源）浏览、搜索、一键安装/更新，下载后校验 MD5
+- 独立运行时：发布包带精简的 VRCFT 宿主（`runtime/vrcft`，约 106 MB），
+  卸载 VRCFT 后模块仍可加载；界面显示当前用的是内置/本机副本/VRCFT 安装
 - 多源合并：多个输入可同时工作（如模块给眼追、VMC 给表情），
   按通道选提供者并有过期回退；状态页能看见每个源在喂哪一路
 - 多输出：VRChat OSC 与 VMC 同时输出（`--vmc-out 127.0.0.1:9100`），
   同一张脸可以既驱动 VRChat 模型又驱动 Unity 场景
 - 界面三语（简中 / 英 / 日）+ 双击即用的发布包（`cmake --install` 到 `dist/`）
-- 100 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面/VMC 输出探针
+- 107 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面/VMC 输出探针
   （`tools/probe_ipc.py`、`tools/probe_ui.py`）
 
 ```bash
@@ -71,9 +74,11 @@ fgb-cli run --source vrcft --vrchat 127.0.0.1:9000 --verbose
 # 带界面：拉起 WebView2 窗口（隐含 --panel 8787）
 fgb-cli run --source vrcft --ui
 
-# 模块：看磁盘上有哪些模块、当前选的是哪个
+# 模块：仓里有什么、本机有什么可导入、运行时来自哪里
 fgb-cli modules
-fgb-cli modules use VRCFTPicoModule   # 写进 fgb.ini，重启引擎后生效
+fgb-cli modules import-all            # 把本机 VRCFT 模块复制进自己的模块仓
+fgb-cli modules install module.zip    # 手动安装 .zip / .dll
+fgb-cli modules use VRCFTPicoModule   # 启动模块，重启引擎后生效
 ```
 
 **还没做的**：
@@ -81,7 +86,8 @@ fgb-cli modules use VRCFTPicoModule   # 写进 fgb.ini，重启引擎后生效
 - 头像切换的实时感知（目前启动时读 VRChat 日志确认，换头像需在界面里点"重新读取"）
 - 托盘常驻壳（界面已经能单开一个窗口，缺的是"开机自启 + 右键菜单"这一层）
 - 界面里还不能改输出目标 / 参数集 / 校准档案，仍需重启
-- 多 Sink（VMC / 共享内存 / OpenXR）
+- 多 Sink（共享内存 / OpenXR；VMC 已做）
+- 原生 C ABI 模块（设计见 `docs/01-architecture.md` §8.2，尚未实现）
 - 与 VRCFT 输出的逐参数对齐（量化"替代"的最后一道关口）
 
 **已验证的关键事实**（M0，详见 [ADR-0003](docs/adr/0003-vrcft-ipc-protocol.md)）：
@@ -170,7 +176,7 @@ VRCFT 生态的现实是：绝大多数模型只把 `FT/v2/EyeLeftX`、`EyeLidLe
 src/base      日志（含订阅回调）、时钟        零依赖
 src/core      数据模型、无锁容器、滤波/校准   零 I/O，纯计算
 src/osc       OSC 编解码                     零分配写入器
-src/net       UDP / TCP / WebSocket 服务端
+src/net       UDP / TCP / WebSocket 服务端、WinHTTP 下载
 src/sources   输入（VMC / VRCFT 模块 / 抓包回放）
 src/sinks     输出（VRChat / 待接入 VMC、共享内存）
 src/engine    合并、快照发布、扇出
@@ -179,6 +185,6 @@ src/ui        FaceGaze Bridge.exe：桌面入口（WebView2 窗口 + 拉起/回�
 src/cli       fgb-cli
 ui/           界面资源（index.html / app.js / style.css，无构建步骤）
 tests         单元测试 + 金样测试
-tools         抓包、冒烟与 IPC/界面探针脚本
+tools         抓包、冒烟、探针，以及 build_vrcft_runtime.py（出精简运行时）
 docs          方案、ADR、路线图
 ```

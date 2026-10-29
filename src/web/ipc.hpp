@@ -20,6 +20,7 @@
 #include "sinks/vmc_sink.hpp"
 #include "sinks/vrchat_sink.hpp"
 #include "sources/vrcft_source.hpp"
+#include "vrcft/module_library.hpp"
 #include "vrcft/module_registry.hpp"
 
 #include <atomic>
@@ -27,6 +28,7 @@
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <string>
 
@@ -54,6 +56,8 @@ struct IpcContext {
 
     // 模块管理：非 vrcft 输入时为空。列表是"磁盘上有什么"，运行态在每个实例那边。
     vrcft::ModuleRegistry* modules = nullptr;
+    // restart_engine 命令：置位后引擎以退出码 3 结束，桌面入口据此重新拉起
+    std::atomic<bool>* restart_engine = nullptr;
     std::vector<RunningModule> running_modules;
     std::string active_module_id; // 注册表里"下次启动加载"的那个，与运行态不是一回事
 
@@ -89,6 +93,7 @@ private:
     void build_status(std::string& out);
     void build_params(std::string& out);
     void build_modules(std::string& out);
+    void build_library(std::string& out);
     void build_metrics(std::string& out); // status 的公共部分，HTTP 接口复用
     // per-instance 运行态；state/error 都来自对应的 VrcftSource
     const char* module_state(const RunningModule& module) const noexcept;
@@ -100,6 +105,9 @@ private:
     bool serve_static(std::string_view path, std::string& body, std::string& content_type) const;
     void flush_logs();
     void refresh_catalog();
+    void poll_picker();
+    void start_picker();
+    void after_module_change(bool ok, const std::string& message);
 
     IpcContext ctx_;
     net::WsServer server_;
@@ -111,9 +119,19 @@ private:
     std::uint64_t last_frames_  = 0; // fps 用两次推送之间的增量算
     double last_fps_            = 0.0;
 
+    struct PickerState {
+        std::atomic<bool> running{true};
+        std::atomic<bool> ready{false};
+        std::mutex mutex;
+        std::string path;
+    };
+
     std::deque<LogLine> logs_;        // 待推送（UI 没连上时暂存，有上限）
     std::deque<LogLine> recent_logs_; // 最近若干行，新连接建立时补发
     std::mutex log_mutex_;
+    std::unique_ptr<vrcft::ModuleLibrary> library_;
+    std::shared_ptr<PickerState> picker_;
+    std::chrono::steady_clock::time_point last_library_push_{};
 };
 
 } // namespace fgb::web

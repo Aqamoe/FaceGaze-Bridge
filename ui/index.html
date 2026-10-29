@@ -122,9 +122,13 @@
       <section class="page" data-page="modules">
         <div class="toolbar">
           <button class="btn" id="mod-rescan" data-i18n="modules.rescan">重新扫描</button>
-          <span class="pill" data-i18n="modules.config">配置文件</span>
-          <span class="muted mono" id="mod-config">—</span>
+          <button class="btn" id="mod-install" data-i18n="modules.install_zip">从 .zip 安装</button>
+          <button class="btn ghost" id="mod-open" data-i18n="modules.open_dir">打开模块目录</button>
+          <button class="btn ghost" id="mod-restart" data-i18n="modules.restart">重启引擎</button>
+          <span class="pill" id="mod-runtime">—</span>
+          <span class="muted mono" id="mod-store">—</span>
         </div>
+
         <article class="card" style="margin-bottom:14px">
           <h2 data-i18n="modules.running.title">运行中的实例</h2>
           <div class="running-list" id="running-list"></div>
@@ -133,8 +137,37 @@
           </div>
         </article>
 
+        <div class="section-head">
+          <h2 data-i18n="modules.installed.title">已安装</h2>
+          <span class="muted" id="mod-installed-count">—</span>
+          <span class="muted" id="mod-picking" hidden data-i18n="modules.picking">等待选择安装包…</span>
+          <span class="pill warn" id="mod-restart-hint" hidden data-i18n="modules.restart_needed">配置已变更，重启引擎后生效</span>
+        </div>
         <div class="module-list" id="module-list"></div>
-        <p class="hint" data-i18n="modules.note">引擎一次只加载一个模块：点「设为启动模块」写进配置文件，重启引擎后生效。眼追与表情分属两个模块的并发加载还在 M4 计划里。</p>
+        <p class="hint" data-i18n="modules.note">
+          引擎一次只加载一个模块：设为启动后点「重启引擎」生效。模块文件只从上面的模块仓加载，
+          VRCFT 目录只作为导入来源。
+        </p>
+
+        <div class="section-head" id="importable-head" hidden>
+          <h2 data-i18n="modules.importable.title">检测到本机模块</h2>
+          <button class="btn small" id="mod-import-all" data-i18n="modules.import_all">全部导入</button>
+        </div>
+        <div class="module-list" id="importable-list"></div>
+        <p class="hint" id="importable-hint" hidden data-i18n="modules.importable.hint">
+          这些模块来自 VRCFT 的 CustomLibs。导入后复制到 FaceGaze Bridge 自己的模块仓，之后不再依赖 VRCFT。
+        </p>
+
+        <div class="section-head">
+          <h2 data-i18n="modules.library.title">模块库</h2>
+          <input id="lib-search" type="search" data-i18n-placeholder="modules.library.search" placeholder="搜索模块">
+          <button class="btn small" id="lib-refresh" data-i18n="modules.library.refresh">刷新</button>
+          <span class="muted" id="lib-status">—</span>
+        </div>
+        <div class="module-list" id="library-list"></div>
+        <p class="hint" data-i18n="modules.library.hint">
+          列表来自 registry.vrcft.io（与 VRCFT 同源），下载后校验 MD5 再装入模块仓。安装第三方的模块等于运行它的代码，请只装你信任的来源。
+        </p>
       </section>
 
       <!-- 参数 -->

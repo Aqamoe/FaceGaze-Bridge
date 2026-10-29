@@ -22,10 +22,11 @@ add_library(fgb_net STATIC
     net/udp_socket.cpp
     net/tcp_listener.cpp
     net/ws_codec.cpp
-    net/ws_server.cpp)
+    net/ws_server.cpp
+    net/http_client.cpp)
 target_link_libraries(fgb_net PUBLIC fgb_base)
 if(WIN32)
-    target_link_libraries(fgb_net PRIVATE ws2_32)
+    target_link_libraries(fgb_net PRIVATE ws2_32 winhttp)
 endif()
 
 # VRCFT 模块兼容层：协议编解码 + 数据转换 + 沙箱服务 + 进程管理 + 模块发现
@@ -34,8 +35,12 @@ add_library(fgb_vrcft STATIC
     vrcft/update_data.cpp
     vrcft/sandbox_server.cpp
     vrcft/module_host.cpp
-    vrcft/module_registry.cpp)
+    vrcft/module_registry.cpp
+    vrcft/module_library.cpp)
 target_link_libraries(fgb_vrcft PUBLIC fgb_core fgb_net fgb_config)
+if(WIN32)
+    target_link_libraries(fgb_vrcft PRIVATE bcrypt)
+endif()
 
 # 抓包文件格式。engine 与 params（校准推导要读抓包）都要用
 add_library(fgb_capture STATIC
@@ -81,6 +86,9 @@ target_link_libraries(fgb_engine PUBLIC fgb_core fgb_osc fgb_net fgb_vrcft fgb_p
 add_library(fgb_web STATIC
     web/ipc.cpp)
 target_link_libraries(fgb_web PUBLIC fgb_engine fgb_net fgb_process)
+if(WIN32)
+    target_link_libraries(fgb_web PRIVATE ole32 comdlg32 shell32)
+endif()
 target_compile_definitions(fgb_web PRIVATE FGB_VERSION="${PROJECT_VERSION}")
 
 # 版本信息 + 图标：两个 exe 共用一份模板，内部名/原始文件名各自填

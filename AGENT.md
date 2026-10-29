@@ -37,6 +37,8 @@
 - UI 是原生 JS，无构建步骤；**不要**为了一个功能引入 npm 工具链。
 - 界面文案一律走 `ui/i18n.js` 的 `t()`：新增文案**三语齐全**（zh/en/ja），
   静态文案用 `data-i18n` 属性。引擎日志保持中文，不要翻译。
+- **模块只从 `%LOCALAPPDATA%\FaceGazeBridge\modules` 加载**；VRCFT 的 `CustomLibs` 只是导入候选，
+  任何"直接扫别人的目录然后 LoadLibrary"的写法都不要加（[ADR-0017](docs/adr/0017-module-store-library-runtime.md)）。
 - **新增输入源必须声明 `frame.channels`**（`channel::kExpression / kEyes / kHead`）。
   合并层只认声明，不猜值——`FaceFrame::neutral()` 里眼睛是 valid 的，靠值猜会让源被误判成眼追来源。
 - **VMC 的 blendshape 名字表只有一份**（`src/vmc/vmc_map`）。输入和输出都 include 它，
@@ -57,7 +59,7 @@
 cmake -S . -B build/test -G "Visual Studio 16 2019" -A x64
 cmake --build build/test --config Debug --parallel
 
-# 单测（当前 100 个用例）
+# 单测（当前 107 个用例）
 ./build/test/bin/Debug/fgb-tests.exe
 # 或
 ctest --test-dir build/test -C Debug --output-on-failure
@@ -67,6 +69,24 @@ WebView2 SDK 不在 vcpkg：configure 时从 NuGet 抓一次到 `build/_deps`。
 离线/内网用 `-DFGB_WEBVIEW2_DIR=<已解压目录>`；完全不要界面用 `-DFGB_BUILD_UI=OFF`。
 `ui/` 里的资源由 CMake 在 `fgb-cli` 链接后复制到 exe 旁——**只改页面也要重新构建 fgb-cli**
 （或手动 `cmake -E copy_directory ui build/test/bin/Debug/ui`），否则跑的还是旧页面。
+
+模块仓与运行时（[ADR-0017](docs/adr/0017-module-store-library-runtime.md)）：
+
+```
+%LOCALAPPDATA%\FaceGazeBridge\modules\<id>\   module.json + dll + config.ini
+%LOCALAPPDATA%\FaceGazeBridge\modules.ini       启用/启动选择/来源
+%LOCALAPPDATA%\FaceGazeBridge\library.json     模块库缓存
+<exe>/runtime/vrcft/                          内置精简 VRCFT 运行时（发布包带）
+```
+
+```powershell
+fgb-cli modules                     # 仓里有什么、本机有什么可导入、运行时来源
+fgb-cli modules import-all          # 导入本机 VRCFT 模块（复制进仓）
+fgb-cli modules install <x.zip|dll> # 手动安装
+fgb-cli modules use <id>|none       # 启动模块（重启引擎后生效）
+fgb-cli modules enable|disable <id>
+fgb-cli modules remove <id>
+```
 
 ### 3.3 发布包（用户双击就能跑）
 
@@ -81,8 +101,16 @@ cmake --install build/release --config Release --prefix dist
 ```
 dist/FaceGaze Bridge.exe   唯一入口：界面窗口 + 拉起引擎（图标/版本信息在资源里）
 dist/fgb-cli.exe           引擎（命令行用；外壳启动时会调用它）
+dist/runtime/vrcft/        精简 VRCFT 宿主运行时（约 106 MB，卸载 VRCFT 也能跑模块）
 dist/ui/                   页面资源（index.html / app.js / style.css / i18n.js / logo.png）
 dist/README.txt            怎么用、日志在哪
+```
+
+`cmake --install` **不会**生成 `runtime/vrcft`（不能把 100 MB 二进制塞进仓库），
+装完补一步（需要本机装有 VRCFT）：
+
+```powershell
+python tools/build_vrcft_runtime.py --dest dist/runtime/vrcft
 ```
 
 入口只有一个（[ADR-0016](docs/adr/0016-single-entry-desktop-app.md)）：
@@ -99,7 +127,9 @@ dist/README.txt            怎么用、日志在哪
 python tools/probe_ipc.py 8787
 
 # 界面：通过 WebView2 远程调试端口跑 JS，验证页面真的渲染了数据
-"FaceGaze Bridge.exe" --debug-port 9222        # 引擎已由窗口拉起
+# 已经有别的实例在跑时，必须给测试实例单独的 user-data，否则 CDP 端口不会监听
+"FaceGaze Bridge.exe" --user-data %TEMP%
+gb-wv --debug-port 9222
 python tools/probe_ui.py 9222 8787
 
 # VMC 第二路输出：按接收端视角收包，检查 Blend/Val + Apply + 头姿
@@ -152,6 +182,10 @@ gh run watch <id> --exit-status
 | 后台进程 | 命令返回后进程被杀 | 启动→验证→收尾写在**同一条命令**里 |
 | 截图偏移/尺寸不对 | 截出来的窗口错位 | PowerShell 先 `SetProcessDpiAwarenessContext(-4)` 再量窗口 |
 | `fgb.ini` 写盘 | 整份重写 | 加新键时必须**先读再写**，否则盖掉用户手改的内容 |
+| zip 安装 | 解压后目录结构不对/越界 | 用系统 `tar.exe` 解压，再校验路径/符号链接/体积；不要自己拼 zip 解析 |
+| 模块更新失败 | 提示"正在被占用" | 引擎加载模块时 DLL 被锁；先停引擎再更新（界面会拒绝删除运行中的模块） |
+| 模块库刷新超时 | WinHTTP 12002 | registry.vrcft.io 偶发卡 20 s；库内部重试一次，失败时保留缓存 |
+| WebView2 调试端口 | 9222 不监听 | 已有实例共用 user-data 时新实例不会开 CDP；测试实例加 `--user-data %TEMP%\...` |
 
 ## 6. 代码地图
 
@@ -159,8 +193,8 @@ gh run watch <id> --exit-status
 src/base/      日志（含订阅回调）、时钟、极简 JSON
 src/core/      数据模型、无锁容器（SPSC ring / seqlock）、滤波与校准
 src/osc/       OSC 编解码（零分配写入器）
-src/net/       UDP / TCP / WebSocket 服务端（自写 RFC 6455 子集）
-src/vrcft/     VRCFT 协议、沙箱、模块进程托管、模块发现（module_registry）
+src/net/       UDP / TCP / WebSocket 服务端（自写 RFC 6455 子集）、WinHTTP 下载
+src/vrcft/     VRCFT 协议、沙箱、模块进程托管、模块仓（module_registry）、模块库（module_library）
 src/vmc/       VMC blendshape 名字表（输入/输出共用，只有这一份）
 src/params/    参数目录、v2/v1 派生、地址路由、校准
 src/sources/   输入（VMC / VRCFT 模块 / 抓包回放）
@@ -169,7 +203,7 @@ src/engine/    合并、快照发布、扇出
 src/web/       控制面 IPC（WS 消息 + 静态页面）
 src/ui/        FaceGaze Bridge.exe：WebView2 窗口 + 拉起/回收引擎（无业务逻辑）
 ui/            页面资源（无构建步骤）
-tools/         抓包、冒烟与探针脚本
+tools/         抓包、冒烟、探针，以及 build_vrcft_runtime.py（出精简运行时）
 docs/          方案、ADR、路线图
 ```
 
@@ -179,11 +213,14 @@ docs/          方案、ADR、路线图
 |---|---|---|
 | →UI | `hello`（协议版本、版本号、端口） | 连接时 |
 | →UI | `catalog`（365 个参数名 + 是否已绑定） | 连接时 / 换头像后 |
-| →UI | `modules`（模块列表 + 当前选择 + 配置文件） | 连接时 / 扫描或改选择后 |
+| →UI | `modules`（已安装 + 可导入 + 运行时 + 启动选择） | 连接时 / 扫描或任何模块变更后 |
+| →UI | `library`（模块库列表 + 缓存状态 + 下载进度） | 连接时 / 刷新或安装过程中 5 Hz |
 | →UI | `status`（帧率、tick、OSC、头像、滤波、`modules[]` 每实例状态、`sources[]` 每源贡献） | 10 Hz |
 | →UI | `params`（数值数组，顺序同 `catalog`） | 10 Hz |
 | →UI | `log`（级别/tag/正文；连接时补发最近 120 行） | 有日志时 |
-| UI→ | `set_filter` / `set_module` / `scan_modules` / `reload_avatar` / `set_log_level` / `quit` | 按操作 |
+| UI→ | `set_filter` / `set_module` / `set_module_enabled` / `scan_modules` / `reload_avatar` / `set_log_level` / `quit` | 按操作 |
+| UI→ | `import_module` / `import_all` / `install_module_archive` / `delete_module` / `open_modules_dir` | 模块管理 |
+| UI→ | `refresh_library` / `install_library` / `restart_engine` | 模块库与重启（退出码 3） |
 | →UI | `ack`（命令、ok、error） | 每条命令 |
 
 只读 HTTP 接口保留：`/api/status`、`/api/params`、`/healthz`（给 curl 与探针）。
