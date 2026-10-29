@@ -15,6 +15,7 @@ add_executable(fgb-tests
     test_gaze.cpp
     test_crash.cpp
     test_engine_stats.cpp
+    test_sinks_stress.cpp
     test_ws.cpp
     test_json.cpp
     test_modules.cpp
