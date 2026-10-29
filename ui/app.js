@@ -29,6 +29,9 @@ function show_toast(text, kind) {
 let modal_resolve = null;
 function ask_confirm({ title, message, confirmText, danger = true }) {
   return new Promise((resolve) => {
+    if (modal_resolve) {
+      modal_resolve(false); // 连续触发时先取消上一个，避免 Promise 悬空
+    }
     modal_resolve = resolve;
     $("modal-title").textContent = title || t("common.confirm");
     $("modal-message").textContent = message || "";
@@ -42,6 +45,7 @@ function ask_confirm({ title, message, confirmText, danger = true }) {
 
 function close_modal(result) {
   if (!modal_resolve) {
+    $("modal").hidden = true;
     return;
   }
   $("modal").hidden = true;
