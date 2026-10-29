@@ -52,6 +52,18 @@ struct ModuleInfo {
     std::uintmax_t bytes = 0;
 };
 
+// 模块库条目的元数据。下载包里没有 module.json 时用它补齐（例如 ALVR 只发一个 DLL），
+// 这样模块 ID/名字/版本与库条目一致，界面才能识别"已安装"。
+struct ModuleMetadataOverride {
+    std::string id;
+    std::string name;
+    std::string author;
+    std::string version;
+    std::string description;
+    std::string page;
+    std::string download_url;
+};
+
 struct ImportCandidate {
     ModuleInfo info;
     std::string origin; // 候选来源，如 "VRCFT" / "FGB"
@@ -113,8 +125,10 @@ public:
 
     // 从 .zip / .dll / 目录安装。source 只用于界面展示（默认按扩展名推断）。
     // replace=true 时允许覆盖同 ID 的旧版本（模块库更新用）。
+    // metadata 非空且包内没有 module.json 时，用它补齐 ID/名字/版本。
     bool install_path(const std::filesystem::path& path, std::string& error,
-                      const std::string& source = {}, bool replace = false);
+                      const std::string& source = {}, bool replace = false,
+                      const ModuleMetadataOverride* metadata = nullptr);
 
     // 删除仓里的模块。文件被占用（正在运行）时返回 false 并给出原因。
     bool remove_module(std::string_view id, std::string& error);
@@ -142,9 +156,11 @@ private:
     ModuleInfo scan_dll(const std::filesystem::path& dll, const std::string& origin) const;
 
     bool install_directory(const std::filesystem::path& source_dir, std::string& error,
-                           const std::string& source, bool replace = false);
+                           const std::string& source, bool replace,
+                           const ModuleMetadataOverride* metadata);
     bool install_loose_dll(const std::filesystem::path& dll, std::string& error,
-                           const std::string& source, bool replace = false);
+                           const std::string& source, bool replace,
+                           const ModuleMetadataOverride* metadata);
     bool extract_zip(const std::filesystem::path& archive, const std::filesystem::path& dest,
                      std::string& error) const;
 

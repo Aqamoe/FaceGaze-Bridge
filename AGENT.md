@@ -184,6 +184,7 @@ gh run watch <id> --exit-status
 | `fgb.ini` 写盘 | 整份重写 | 加新键时必须**先读再写**，否则盖掉用户手改的内容 |
 | zip 安装 | 解压后目录结构不对/越界 | 用系统 `tar.exe` 解压，再校验路径/符号链接/体积；不要自己拼 zip 解析 |
 | 模块更新失败 | 提示"正在被占用" | 引擎加载模块时 DLL 被锁；先停引擎再更新（界面会拒绝删除运行中的模块） |
+| 模块装完仍显示"安装" | 包内没有 module.json，ID 退化成 DLL 名 | 模块库安装必须传 `ModuleMetadataOverride` 兜底；版本比较用语义版本，不要用字符串相等 |
 | 模块库刷新超时 | WinHTTP 12002 | registry.vrcft.io 偶发卡 20 s；库内部重试一次，失败时保留缓存 |
 | WebView2 调试端口 | 9222 不监听 | 已有实例共用 user-data 时新实例不会开 CDP；测试实例加 `--user-data %TEMP%\...` |
 | `hidden` 不生效 | 弹窗/提示条启动就在，按钮点不动 | 组件 CSS 的 `display:flex/grid` 会压过 UA 的 `[hidden]`；全局加 `[hidden]{display:none!important}` |

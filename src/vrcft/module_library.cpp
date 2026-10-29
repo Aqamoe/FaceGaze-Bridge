@@ -725,6 +725,7 @@ void ModuleLibrary::do_download(LibraryEntry entry) {
     pending_install_ready_ = true;
     pending_install_id_    = entry.id;
     pending_install_path_  = package;
+    pending_install_entry_ = entry;
     status_.phase          = "installing";
     changed_               = true;
 }
@@ -735,6 +736,7 @@ LibraryEvents ModuleLibrary::poll() {
     LibraryEvents events;
     std::string install_id;
     std::filesystem::path install_path;
+    LibraryEntry install_entry;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (changed_) {
@@ -745,12 +747,22 @@ LibraryEvents ModuleLibrary::poll() {
             pending_install_ready_ = false;
             install_id             = pending_install_id_;
             install_path           = pending_install_path_;
+            install_entry          = pending_install_entry_;
         }
     }
 
     if (!install_path.empty() && registry_ != nullptr) {
+        ModuleMetadataOverride metadata;
+        metadata.id           = install_entry.id;
+        metadata.name         = install_entry.name;
+        metadata.author       = install_entry.author;
+        metadata.version      = install_entry.version;
+        metadata.description  = install_entry.description;
+        metadata.page         = install_entry.page;
+        metadata.download_url = install_entry.download_url;
         std::string error;
-        const bool ok = registry_->install_path(install_path, error, "registry", true);
+        const bool ok =
+            registry_->install_path(install_path, error, "registry", true, &metadata);
         std::error_code ec;
         std::filesystem::remove_all(install_path, ec);
         {

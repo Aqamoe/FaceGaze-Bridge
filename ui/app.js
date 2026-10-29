@@ -822,6 +822,43 @@ function update_import_selection_ui() {
   all.indeterminate = selected > 0 && selected < total;
 }
 
+function parse_version(text) {
+  const match = String(text || "").trim().replace(/^v/i, "").match(/^(\d+(?:\.\d+)*)/);
+  return match ? match[1].split(".").map(Number) : null;
+}
+
+// 返回 -1/0/1；任一方无法解析时返回 null（当作"已安装"，避免永远提示更新）
+function compare_versions(a, b) {
+  const left = parse_version(a);
+  const right = parse_version(b);
+  if (!left || !right) {
+    return null;
+  }
+  const count = Math.max(left.length, right.length);
+  for (let i = 0; i < count; ++i) {
+    const x = left[i] || 0;
+    const y = right[i] || 0;
+    if (x !== y) {
+      return x < y ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+// install / update / installed
+function library_relation(installed, item) {
+  if (!installed) {
+    return "install";
+  }
+  const cmp = compare_versions(installed.version, item.version);
+  if (cmp === null) {
+    // 旧安装可能没有版本号（如 "local"）。如果库条目有版本，允许更新一次把元数据补齐；
+    // 两边都无法解析时才当作已安装，避免永远提示更新。
+    return parse_version(item.version) ? "update" : "installed";
+  }
+  return cmp >= 0 ? "installed" : "update";
+}
+
 function rating_stars(value) {
   const full = Math.round(value || 0);
   return "★".repeat(Math.max(0, Math.min(5, full))) + "☆".repeat(Math.max(0, 5 - full));
@@ -837,10 +874,10 @@ function library_card(item, installed, status) {
   if (item.author) {
     head.append(el("span", "module-author", item.author));
   }
-  if (installed) {
-    const same = installed.version && item.version && installed.version === item.version;
-    const tag = el("span", `chip ${same ? "ok" : "warn"}`.trim(),
-      same ? t("modules.library.installed") : t("modules.library.update_available"));
+  const relation = library_relation(installed, item);
+  if (relation !== "install") {
+    const tag = el("span", `chip ${relation === "update" ? "warn" : "ok"}`.trim(),
+      relation === "update" ? t("modules.library.update_available") : t("modules.library.installed"));
     head.append(tag);
   }
   card.append(head);
@@ -873,11 +910,9 @@ function library_card(item, installed, status) {
     state_text.dataset.role = "lib-state";
     actions.append(progress, state_text);
   } else {
-    const same = installed && installed.version && item.version &&
-      installed.version === item.version;
-    button.textContent = same ? t("modules.library.installed") :
-      (installed ? t("modules.library.update") : t("modules.library.install"));
-    button.disabled = same || (status && (status.phase === "downloading" ||
+    button.textContent = relation === "installed" ? t("modules.library.installed") :
+      (relation === "update" ? t("modules.library.update") : t("modules.library.install"));
+    button.disabled = relation === "installed" || (status && (status.phase === "downloading" ||
       status.phase === "installing"));
     button.addEventListener("click", async () => {
       const question = t("modules.library.confirm", { name: item.name || item.id });
@@ -959,7 +994,8 @@ function render_library() {
     }
     return `${item.name} ${item.author} ${item.description}`.toLowerCase().includes(filter);
   });
-  const installed = new Map(((state.modules && state.modules.items) || []).map((m) => [m.id, m]));
+  const installed = new Map(((state.modules && state.modules.items) || [])
+    .map((m) => [String(m.id).toLowerCase(), m]));
 
   const signature = items.map((item) => item.id).join(",") + "|" + status.phase + "|" +
     (status.install_id || "") + "|" + filter;
@@ -971,7 +1007,7 @@ function render_library() {
         t("modules.library.empty")));
     } else {
       for (const item of items) {
-        list.append(library_card(item, installed.get(item.id), status));
+        list.append(library_card(item, installed.get(String(item.id).toLowerCase()), status));
       }
     }
   } else {

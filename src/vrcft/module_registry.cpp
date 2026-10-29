@@ -554,9 +554,9 @@ bool ModuleRegistry::import_module(std::string_view id, std::string& error) {
     bool ok = false;
     const std::string import_name = candidate->info.name;
     if (candidate->info.loose) {
-        ok = install_loose_dll(candidate->info.dll, error, "import");
+        ok = install_loose_dll(candidate->info.dll, error, "import", false, nullptr);
     } else {
-        ok = install_directory(candidate->info.directory, error, "import");
+        ok = install_directory(candidate->info.directory, error, "import", false, nullptr);
     }
     if (ok) {
         FGB_INFO(kTag, "已导入模块：%s", import_name.c_str());
@@ -653,7 +653,8 @@ bool ModuleRegistry::extract_zip(const std::filesystem::path& archive,
 }
 
 bool ModuleRegistry::install_loose_dll(const std::filesystem::path& dll, std::string& error,
-                                       const std::string& source, bool replace) {
+                                       const std::string& source, bool replace,
+                                       const ModuleMetadataOverride* metadata) {
     error.clear();
     std::error_code ec;
     const std::filesystem::path temp = store_dir_ / (".tmp-dll-" + std::to_string(
@@ -667,14 +668,14 @@ bool ModuleRegistry::install_loose_dll(const std::filesystem::path& dll, std::st
         std::filesystem::remove_all(temp, ec);
         return false;
     }
-    const bool ok = install_directory(temp, error, source, replace);
+    const bool ok = install_directory(temp, error, source, replace, metadata);
     std::filesystem::remove_all(temp, ec);
     return ok;
 }
 
 bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
                                        std::string& error, const std::string& source,
-                                       bool replace) {
+                                       bool replace, const ModuleMetadataOverride* metadata) {
     error.clear();
     std::error_code ec;
 
@@ -689,6 +690,21 @@ bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
     if (info.broken) {
         error = "没有找到模块 DLL";
         return false;
+    }
+
+    // 包里没有 module.json（例如 ALVR 只发一个 DLL）：用模块库条目的元数据补齐，
+    // 保证安装后的 ID/名称/版本能和库条目对应。
+    if (!info.metadata_ok && metadata != nullptr) {
+        if (!metadata->id.empty()) {
+            info.id = metadata->id;
+        }
+        if (!metadata->name.empty()) {
+            info.name = metadata->name;
+        }
+        info.author      = metadata->author;
+        info.version     = metadata->version;
+        info.description = metadata->description;
+        info.page_url    = metadata->page;
     }
 
     std::string id = info.id;
@@ -732,7 +748,12 @@ bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
         writer.key("ModuleName").str(info.name);
         writer.key("AuthorName").str(info.author);
         writer.key("Version").str(info.version.empty() ? "local" : info.version);
+        writer.key("ModuleDescription").str(info.description);
+        writer.key("ModulePageUrl").str(info.page_url);
         writer.key("DllFileName").str(info.dll.filename().string());
+        if (metadata != nullptr && !metadata->download_url.empty()) {
+            writer.key("DownloadUrl").str(metadata->download_url);
+        }
         writer.obj_end();
         std::ofstream out(staging / "module.json", std::ios::binary);
         out.write(json.data(), static_cast<std::streamsize>(json.size()));
@@ -773,7 +794,8 @@ bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
 }
 
 bool ModuleRegistry::install_path(const std::filesystem::path& path, std::string& error,
-                                  const std::string& source, bool replace) {
+                                  const std::string& source, bool replace,
+                                  const ModuleMetadataOverride* metadata) {
     error.clear();
     std::error_code ec;
     if (path.empty() || !std::filesystem::exists(path, ec)) {
@@ -781,12 +803,12 @@ bool ModuleRegistry::install_path(const std::filesystem::path& path, std::string
         return false;
     }
     if (std::filesystem::is_directory(path, ec)) {
-        return install_directory(path, error, source.empty() ? "dir" : source, replace);
+        return install_directory(path, error, source.empty() ? "dir" : source, replace, metadata);
     }
 
     const std::string extension = lower(path.extension().string());
     if (extension == ".dll") {
-        return install_loose_dll(path, error, source.empty() ? "dll" : source, replace);
+        return install_loose_dll(path, error, source.empty() ? "dll" : source, replace, metadata);
     }
     if (extension != ".zip") {
         error = "只支持 .zip 安装包或 .dll";
@@ -800,7 +822,7 @@ bool ModuleRegistry::install_path(const std::filesystem::path& path, std::string
     bool ok = extract_zip(path, temp, error);
     if (ok) {
         const std::filesystem::path root = find_module_root(temp);
-        ok = install_directory(root, error, source.empty() ? "zip" : source, replace);
+        ok = install_directory(root, error, source.empty() ? "zip" : source, replace, metadata);
     }
     std::filesystem::remove_all(temp, ec);
     return ok;

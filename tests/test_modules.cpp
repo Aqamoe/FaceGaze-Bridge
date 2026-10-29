@@ -392,3 +392,51 @@ FGB_TEST(install_replace_keeps_enabled_state) {
     }
     FGB_CHECK(registry.modules().size() == 1);
 }
+
+FGB_TEST(zip_without_metadata_uses_registry_override) {
+    TempDir root;
+    const fs::path zip = root.path / "alvr.zip";
+    // ALVR 的发布包只有 DLL，没有 module.json
+    write_zip(zip, {{"ALVRModule.dll", "dll"}});
+
+    ModuleMetadataOverride metadata;
+    metadata.id      = "699750bf-e217-4bd8-8039-3d5f97ee80ba";
+    metadata.name    = "ALVR Module";
+    metadata.author  = "zmerp";
+    metadata.version = "1.3.0";
+
+    ModuleRegistry registry{root.path / "modules.ini", root.path / "store"};
+    std::string error;
+    FGB_CHECK(registry.install_path(zip, error, "registry", false, &metadata));
+    const ModuleInfo* module = registry.find(metadata.id);
+    FGB_CHECK(module != nullptr);
+    if (module != nullptr) {
+        FGB_CHECK(module->name == "ALVR Module");
+        FGB_CHECK(module->version == "1.3.0");
+        FGB_CHECK(module->directory.filename().string() == metadata.id);
+        FGB_CHECK(fs::exists(module->directory / "module.json"));
+        FGB_CHECK(module->dll.filename().string() == "ALVRModule.dll");
+    }
+}
+
+FGB_TEST(zip_metadata_wins_over_registry_version) {
+    TempDir root;
+    const fs::path zip = root.path / "cymple.zip";
+    // 包里的 module.json 比模块库条目新（1.5.2 vs 1.0），应保留包内版本
+    write_zip(zip, {{"module.json", metadata_for("cymple-id", "cymple", "Cymple.dll", "1.5.2")},
+                    {"Cymple.dll", "dll"}});
+
+    ModuleMetadataOverride metadata;
+    metadata.id      = "cymple-id";
+    metadata.name    = "cymple";
+    metadata.version = "1.0";
+
+    ModuleRegistry registry{root.path / "modules.ini", root.path / "store"};
+    std::string error;
+    FGB_CHECK(registry.install_path(zip, error, "registry", false, &metadata));
+    const ModuleInfo* module = registry.find("cymple-id");
+    FGB_CHECK(module != nullptr);
+    if (module != nullptr) {
+        FGB_CHECK(module->version == "1.5.2");
+    }
+}

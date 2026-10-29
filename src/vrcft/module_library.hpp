@@ -116,6 +116,7 @@ private:
     bool pending_install_ready_ = false;
     std::string pending_install_id_;
     std::filesystem::path pending_install_path_;
+    LibraryEntry pending_install_entry_;
 
     std::int64_t cache_written_unix_ = 0;
 
