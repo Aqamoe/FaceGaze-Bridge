@@ -5,7 +5,13 @@
 
 ## 1. 安装与启动
 
-发布包是绿色版目录：
+**安装版**：运行 `FaceGazeBridge-Setup-<版本>.exe`。用户级安装，不需要管理员，
+默认在 `%LOCALAPPDATA%\Programs\FaceGazeBridge`，会创建开始菜单快捷方式。
+静默安装加 `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART`。
+卸载在 Windows「设置 → 应用」；交互式卸载会询问是否同时删除用户数据
+（校准、预设、模块、日志），静默卸载不会删。
+
+**绿色版**是目录：
 
 ```
 FaceGaze Bridge.exe    唯一入口（窗口 + 拉起引擎）
@@ -97,6 +103,10 @@ VRCFT 协议层已真机跑通；**模块覆盖仍是当前最大缺口**（road
 - **tick 耗时**：引擎每帧合并/处理/输出的平均与 P95；不含休眠停顿
 - **CPU / 工作集 / 句柄**：长跑看有没有泄漏
 - **休眠恢复**：机器睡眠/长时间调试后自动复位的次数
+
+设置页「版本更新 → 检查更新」只读取 GitHub Releases 的 latest 并提示；不会自动
+下载或替换程序。发现新版本时「打开下载页」会用默认浏览器打开 release 页，
+用户手动安装。命令行等价：`fgb-cli update-check`。
 
 设置页「诊断 → 导出诊断包」会生成
 `%LOCALAPPDATA%\FaceGazeBridge\diagnostics\FaceGazeBridge-diag-*.zip`，

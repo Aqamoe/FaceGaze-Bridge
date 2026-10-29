@@ -1,6 +1,17 @@
 FaceGaze Bridge —— 绿色版
 ============================================================
 
+如果你拿到的是安装版
+--------------------
+FaceGazeBridge-Setup-<版本>.exe 是用户级安装包（不需要管理员）：
+  - 默认装到 %LOCALAPPDATA%\Programs\FaceGazeBridge
+  - 创建开始菜单快捷方式，可选桌面图标
+  - 静默安装：FaceGazeBridge-Setup-<版本>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+卸载：Windows 设置 → 应用 → FaceGaze Bridge，或安装目录的 unins000.exe。
+交互式卸载会询问是否同时删除校准/预设/模块/日志；静默卸载不会删用户数据。
+
+绿色版直接解压即用，下面的说明对两种形态都适用。
+
 怎么用
 ------
 双击 FaceGaze Bridge.exe，不需要任何脚本。
