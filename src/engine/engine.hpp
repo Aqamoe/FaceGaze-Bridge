@@ -11,6 +11,7 @@
 #include "core/process/face_processor.hpp"
 #include "core/process/gaze_estimator.hpp"
 #include "engine/source_merger.hpp"
+#include "engine/tick_stats.hpp"
 #include "sinks/sink.hpp"
 #include "sources/source.hpp"
 
@@ -29,6 +30,7 @@ struct EngineStats {
     std::uint64_t ticks        = 0;
     std::uint64_t late_ticks   = 0;
     std::uint64_t frames_in    = 0;
+    std::uint64_t resumes      = 0; // 休眠/长时间停顿后恢复的次数
 };
 
 class Engine {
@@ -61,6 +63,7 @@ public:
 
     FaceFrame latest() const;
     GazeState current_gaze() const;
+    TickStats::Snapshot tick_stats() const noexcept { return tick_stats_.snapshot(); }
     EngineStats stats() const noexcept {
         // frames_in 由合并器统计（它是真正 poll 每个源的地方）
         EngineStats stats = stats_;
@@ -77,6 +80,7 @@ private:
     std::vector<std::unique_ptr<IFaceProcessor>> processors_;
     SourceMerger merger_;
     GazeEstimator gaze_estimator_;
+    TickStats tick_stats_;
     std::uint64_t last_tick_ns_ = 0;
 
     SeqLock<FaceFrame> snapshot_;

@@ -104,7 +104,19 @@ GazeState Engine::compute_gaze(const FaceFrame& frame) const noexcept {
 }
 
 void Engine::tick_once(std::uint64_t now_ns) {
-    last_tick_ns_ = now_ns;
+    const std::uint64_t previous = last_tick_ns_;
+    last_tick_ns_                 = now_ns;
+    // 休眠/调试打断后，上一帧的速度、注视状态和耗时窗口都失去意义，
+    // 不清掉会出现"刚唤醒就判成扫视"或 p95 被一次几小时的停顿拉爆。
+    if (previous != 0 && now_ns > previous + 1'000'000'000ULL) {
+        ++stats_.resumes;
+        gaze_estimator_.reset();
+        tick_stats_.reset();
+        FGB_WARN(kTag, "检测到 %.1f 秒停顿（休眠/调试），已复位注视与耗时统计",
+                 static_cast<double>(now_ns - previous) / 1'000'000'000.0);
+    }
+
+    const std::uint64_t work_start = clock::now_ns();
 
     // 先合并，再后处理，最后发布。
     // 顺序不能反：两个源频率不同时，"每个源各处理一遍"等于把滤波跑了两遍，
@@ -126,6 +138,7 @@ void Engine::tick_once(std::uint64_t now_ns) {
         sink->submit(last_frame_, last_gaze_, now_ns);
     }
 
+    tick_stats_.record(clock::now_ns() - work_start);
     ++stats_.ticks;
 }
 
