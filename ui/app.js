@@ -167,8 +167,6 @@ const state = {
   logs: [],
   modules: null,
   library: null,
-  library_requested: false,
-  library_waiting: false,
   import_selection: new Set(),
   restarting: false,
   status: null,
@@ -288,9 +286,6 @@ function handle(message) {
       const prev_id = prev.install_id;
       state.library = message;
       const next = message.status || {};
-      if (next.phase !== "refreshing") {
-        state.library_waiting = false;
-      }
       const finished = prev_phase === "downloading" || prev_phase === "installing";
       const entry = (message.items || []).find((item) => item.id === prev_id);
       if (finished && next.phase === "idle") {
@@ -882,8 +877,8 @@ function library_card(item, installed, status) {
       installed.version === item.version;
     button.textContent = same ? t("modules.library.installed") :
       (installed ? t("modules.library.update") : t("modules.library.install"));
-    button.disabled = same || state.library_waiting || (status && (status.phase === "downloading" ||
-      status.phase === "installing" || status.phase === "refreshing"));
+    button.disabled = same || (status && (status.phase === "downloading" ||
+      status.phase === "installing"));
     button.addEventListener("click", async () => {
       const question = t("modules.library.confirm", { name: item.name || item.id });
       if (await ask_confirm({ title: t("confirm.install_title"), message: question, danger: true })) {
@@ -933,9 +928,7 @@ function render_library() {
   }
 
   const status = lib.status || {};
-  if (status.phase === "refreshing" || state.library_waiting) {
-    status_el.textContent = t("modules.library.refreshing");
-  } else if (status.phase === "downloading" || status.phase === "installing") {
+  if (status.phase === "downloading" || status.phase === "installing") {
     const percent = status.total > 0 ? Math.min(100, (status.received / status.total) * 100) : 0;
     status_el.textContent = status.phase === "installing"
       ? t("modules.library.installing")
@@ -946,13 +939,17 @@ function render_library() {
         });
   } else if (status.phase === "error") {
     status_el.textContent = t("modules.library.error", { error: status.error || "?" });
-  } else if (lib.stale) {
-    status_el.textContent = t("modules.library.stale", { time: lib.fetched_at || "—" });
+  } else if (status.refreshing) {
+    status_el.textContent = t("modules.library.refreshing");
+  } else if (status.refresh_error) {
+    status_el.textContent = t("modules.library.error", { error: status.refresh_error });
+  } else if (status.stale) {
+    status_el.textContent = t("modules.library.stale", { time: status.fetched_at || "—" });
   } else {
-    status_el.textContent = t("modules.library.updated", { time: lib.fetched_at || "—" });
+    status_el.textContent = t("modules.library.updated", { time: status.fetched_at || "—" });
   }
-  status_el.title = status.error || "";
-  $("lib-refresh").disabled = status.phase === "refreshing";
+  status_el.title = status.error || status.refresh_error || "";
+  $("lib-refresh").disabled = !!status.refreshing;
 
   const filter = ($("lib-search").value || "").trim().toLowerCase();
   const all_items = lib.items || [];
@@ -1137,12 +1134,6 @@ function switch_page(page) {
     render_params(state.values);
   }
   if (page === "library") {
-    // 第一次打开时自动拉一次；之后手动点"刷新"
-    if (!state.library_requested) {
-      state.library_requested = true;
-      state.library_waiting = true;
-      send({ type: "refresh_library" });
-    }
     render_library();
   }
 }

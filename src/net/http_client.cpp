@@ -87,7 +87,8 @@ bool open_request(const std::string& url, Request& out) {
         out.error = last_error_text("HTTP 会话创建失败");
         return false;
     }
-    ::WinHttpSetTimeouts(out.session, 10'000, 10'000, 30'000, 60'000);
+    // 模块库只是十几 KB 的 JSON：连接/接收超时收紧，坏网络尽快失败而不是卡半分钟
+    ::WinHttpSetTimeouts(out.session, 4'000, 5'000, 10'000, 15'000);
 
     out.connection = Handle{::WinHttpConnect(out.session, host.c_str(), parts.nPort, 0)};
     if (out.connection.value == nullptr) {

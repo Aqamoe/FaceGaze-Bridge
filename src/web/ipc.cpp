@@ -153,6 +153,8 @@ IpcServer::IpcServer(IpcContext context) : ctx_(std::move(context)) {
     if (ctx_.modules != nullptr) {
         library_ = std::make_unique<vrcft::ModuleLibrary>(ctx_.modules);
         library_->load_cache();
+        // 6 小时内不重复联网：启动时先用缓存，过期了才在后台刷新
+        library_->refresh_if_stale(std::chrono::hours(6));
     }
 
     server_.on_open = [this](std::intptr_t conn) {
@@ -561,9 +563,11 @@ void IpcServer::build_library(std::string& out) {
     if (library_) {
         snapshot = library_->snapshot();
     }
+    writer.key("status").obj_begin();
     writer.key("stale").boolean(snapshot.status.stale);
     writer.key("fetched_at").str(snapshot.status.fetched_at);
-    writer.key("status").obj_begin();
+    writer.key("refreshing").boolean(snapshot.status.refreshing);
+    writer.key("refresh_error").str(snapshot.status.refresh_error);
     writer.key("phase").str(snapshot.status.phase);
     writer.key("error").str(snapshot.status.error);
     writer.key("install_id").str(snapshot.status.install_id);

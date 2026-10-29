@@ -10,6 +10,7 @@
 #include "vrcft/module_registry.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -38,7 +39,8 @@ struct LibraryEntry {
 };
 
 struct LibraryStatus {
-    // idle / refreshing / downloading / installing / error
+    // phase 只描述"安装/下载"；刷新是独立的后台任务，两者可以同时进行
+    // idle / downloading / installing / error
     std::string phase = "idle";
     std::string error;
     std::string install_id;
@@ -46,6 +48,8 @@ struct LibraryStatus {
     std::uint64_t total    = 0;
     bool stale             = false; // 显示的是缓存（刷新失败/未刷新）
     std::string fetched_at;
+    bool refreshing        = false;
+    std::string refresh_error;
 };
 
 struct LibrarySnapshot {
@@ -76,8 +80,11 @@ public:
 
     // 启动时把上次的列表读出来（标记 stale，界面先有东西看）
     void load_cache();
+    // 缓存过期（或没有缓存）才在后台刷新；启动时用，避免每次开软件都等网络
+    void refresh_if_stale(std::chrono::seconds max_age);
 
-    // 忙（正在刷新/下载）时返回 false，调用方据此给界面明确回执
+    // 刷新与安装各有一个后台线程：刷新期间也可以安装缓存里的模块。
+    // 已有同类任务时返回 false，调用方给界面明确回执。
     bool refresh();
     bool install(std::string entry_id);
 
@@ -85,13 +92,14 @@ public:
     LibraryEvents poll();
 
     LibrarySnapshot snapshot() const;
-    bool busy() const noexcept { return !done_.load(std::memory_order_acquire); }
+    bool busy() const noexcept { return !install_done_.load(std::memory_order_acquire); }
     const std::filesystem::path& cache_path() const noexcept { return cache_path_; }
     void stop();
 
 private:
-    void join_if_done();
-    void start_worker(std::function<void()> work);
+    void join_finished();
+    void start_install_worker(std::function<void()> work);
+    void start_refresh_worker(std::function<void()> work);
     void do_refresh();
     void do_download(LibraryEntry entry);
     void save_cache(const std::string& body) const;
@@ -109,8 +117,12 @@ private:
     std::string pending_install_id_;
     std::filesystem::path pending_install_path_;
 
-    std::thread worker_;
-    std::atomic<bool> done_{true};
+    std::int64_t cache_written_unix_ = 0;
+
+    std::thread install_worker_;
+    std::atomic<bool> install_done_{true};
+    std::thread refresh_worker_;
+    std::atomic<bool> refresh_done_{true};
     std::atomic<bool> stop_{false};
 };
 

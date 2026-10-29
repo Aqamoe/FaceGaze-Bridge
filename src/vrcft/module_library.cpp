@@ -51,6 +51,39 @@ std::string now_local_string() {
     return buffer;
 }
 
+std::int64_t file_mtime_unix(const std::filesystem::path& path) {
+#ifdef _WIN32
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    if (::GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data) == FALSE) {
+        return 0;
+    }
+    ULARGE_INTEGER stamp{};
+    stamp.LowPart  = data.ftLastWriteTime.dwLowDateTime;
+    stamp.HighPart = data.ftLastWriteTime.dwHighDateTime;
+    constexpr std::uint64_t kEpochDiff = 116444736000000000ULL; // 1601 → 1970（100ns）
+    if (stamp.QuadPart < kEpochDiff) {
+        return 0;
+    }
+    return static_cast<std::int64_t>((stamp.QuadPart - kEpochDiff) / 10000000ULL);
+#else
+    (void)path;
+    return 0;
+#endif
+}
+
+std::int64_t now_unix() {
+    return static_cast<std::int64_t>(std::time(nullptr));
+}
+
+std::string unix_to_local_string(std::int64_t unix_seconds) {
+    const std::time_t stamp = static_cast<std::time_t>(unix_seconds);
+    std::tm local{};
+    localtime_s(&local, &stamp);
+    char buffer[32];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M", &local);
+    return buffer;
+}
+
 std::string safe_file_name(std::string_view id) {
     std::string out;
     for (const char c : id) {
@@ -477,41 +510,70 @@ void ModuleLibrary::load_cache() {
         FGB_WARN(kTag, "模块库缓存损坏：%s", error.c_str());
         return;
     }
+    cache_written_unix_ = file_mtime_unix(cache_path_);
     std::lock_guard<std::mutex> lock(mutex_);
-    entries_         = std::move(entries);
-    status_.stale    = true;
-    changed_         = true;
+    entries_       = std::move(entries);
+    status_.stale  = true;
+    status_.fetched_at =
+        cache_written_unix_ != 0 ? unix_to_local_string(cache_written_unix_) : std::string{};
+    FGB_DEBUG(kTag, "模块库缓存：%zu 个模块，更新于 %s", entries_.size(), status_.fetched_at.c_str());
+    changed_ = true;
 }
 
-void ModuleLibrary::join_if_done() {
-    if (worker_.joinable() && done_.load(std::memory_order_acquire)) {
-        worker_.join();
+void ModuleLibrary::join_finished() {
+    if (install_worker_.joinable() && install_done_.load(std::memory_order_acquire)) {
+        install_worker_.join();
+    }
+    if (refresh_worker_.joinable() && refresh_done_.load(std::memory_order_acquire)) {
+        refresh_worker_.join();
     }
 }
 
-void ModuleLibrary::start_worker(std::function<void()> work) {
-    join_if_done();
-    if (!done_.load(std::memory_order_acquire)) {
-        return; // 已有任务在跑
+void ModuleLibrary::start_install_worker(std::function<void()> work) {
+    join_finished();
+    if (!install_done_.load(std::memory_order_acquire)) {
+        return;
     }
-    done_.store(false, std::memory_order_release);
-    worker_ = std::thread([this, work = std::move(work)] {
+    install_done_.store(false, std::memory_order_release);
+    install_worker_ = std::thread([this, work = std::move(work)] {
         work();
-        done_.store(true, std::memory_order_release);
+        install_done_.store(true, std::memory_order_release);
     });
 }
 
+void ModuleLibrary::start_refresh_worker(std::function<void()> work) {
+    join_finished();
+    if (!refresh_done_.load(std::memory_order_acquire)) {
+        return;
+    }
+    refresh_done_.store(false, std::memory_order_release);
+    refresh_worker_ = std::thread([this, work = std::move(work)] {
+        work();
+        refresh_done_.store(true, std::memory_order_release);
+    });
+}
+
+void ModuleLibrary::refresh_if_stale(std::chrono::seconds max_age) {
+    if (cache_written_unix_ != 0) {
+        const std::int64_t age = now_unix() - cache_written_unix_;
+        if (age >= 0 && age < static_cast<std::int64_t>(max_age.count())) {
+            return;
+        }
+    }
+    refresh();
+}
+
 bool ModuleLibrary::refresh() {
-    if (!done_.load(std::memory_order_acquire)) {
+    if (!refresh_done_.load(std::memory_order_acquire)) {
         return false;
     }
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        status_.phase = "refreshing";
-        status_.error.clear();
+        status_.refreshing = true;
+        status_.refresh_error.clear();
         changed_ = true;
     }
-    start_worker([this] { do_refresh(); });
+    start_refresh_worker([this] { do_refresh(); });
     return true;
 }
 
@@ -529,10 +591,10 @@ void ModuleLibrary::do_refresh() {
     }
     if (!fetched) {
         std::lock_guard<std::mutex> lock(mutex_);
-        status_.phase = "error";
-        status_.error = error;
-        status_.stale = true;
-        changed_      = true;
+        status_.refreshing    = false;
+        status_.refresh_error = error;
+        status_.stale         = true;
+        changed_              = true;
         FGB_WARN(kTag, "模块库刷新失败：%s", error.c_str());
         return;
     }
@@ -541,28 +603,29 @@ void ModuleLibrary::do_refresh() {
     std::string parse_error;
     if (!parse_registry_json(body, entries, parse_error)) {
         std::lock_guard<std::mutex> lock(mutex_);
-        status_.phase = "error";
-        status_.error = parse_error;
-        status_.stale = true;
-        changed_      = true;
+        status_.refreshing    = false;
+        status_.refresh_error = parse_error;
+        status_.stale         = true;
+        changed_              = true;
         return;
     }
 
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        entries_          = entries;
-        status_.phase     = "idle";
-        status_.error.clear();
-        status_.stale     = false;
-        status_.fetched_at = now_local_string();
-        changed_          = true;
+        entries_              = std::move(entries);
+        status_.refreshing    = false;
+        status_.refresh_error.clear();
+        status_.stale         = false;
+        status_.fetched_at    = now_local_string();
+        changed_              = true;
     }
+    cache_written_unix_ = now_unix();
     save_cache(body);
-    FGB_INFO(kTag, "模块库已刷新：%zu 个模块", entries.size());
+    FGB_INFO(kTag, "模块库已刷新：%zu 个模块", entries_.size());
 }
 
 bool ModuleLibrary::install(std::string entry_id) {
-    if (!done_.load(std::memory_order_acquire)) {
+    if (!install_done_.load(std::memory_order_acquire)) {
         return false;
     }
     LibraryEntry entry;
@@ -584,7 +647,7 @@ bool ModuleLibrary::install(std::string entry_id) {
         status_.total      = 0;
         changed_           = true;
     }
-    start_worker([this, entry = std::move(entry)] { do_download(entry); });
+    start_install_worker([this, entry = std::move(entry)] { do_download(entry); });
     return true;
 }
 
@@ -667,7 +730,7 @@ void ModuleLibrary::do_download(LibraryEntry entry) {
 }
 
 LibraryEvents ModuleLibrary::poll() {
-    join_if_done();
+    join_finished();
 
     LibraryEvents events;
     std::string install_id;
@@ -738,10 +801,14 @@ void ModuleLibrary::save_cache(const std::string& body) const {
 
 void ModuleLibrary::stop() {
     stop_.store(true, std::memory_order_release);
-    if (worker_.joinable()) {
-        worker_.join();
+    if (install_worker_.joinable()) {
+        install_worker_.join();
     }
-    done_.store(true, std::memory_order_release);
+    if (refresh_worker_.joinable()) {
+        refresh_worker_.join();
+    }
+    install_done_.store(true, std::memory_order_release);
+    refresh_done_.store(true, std::memory_order_release);
 }
 
 } // namespace fgb::vrcft
