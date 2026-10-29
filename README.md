@@ -41,6 +41,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 界面本地化 | ✅ 简中 / 英 / 日三语，界面内切换并记住选择（[ADR-0012](docs/adr/0012-ui-localization.md)） |
 | 模块管理 | ✅ 独立模块仓（导入 / .zip 安装 / 启停 / 删除）+ 模块库一键安装 + 内置精简 VRCFT 运行时；VRCFT 目录只作为导入来源（[ADR-0017](docs/adr/0017-module-store-library-runtime.md)） |
 | 多源合并（M4） | ✅ 表情 / 眼追 / 头姿三通道分别选提供者，可重复 `--source`（[ADR-0013](docs/adr/0013-source-merging.md)） |
+| 头像发现与切换（M3） | ✅ OSCQuery（mDNS 找动态 HTTP 端口，2 s 轮询 `/avatar/change` 热重绑）+ 本地 JSON 回退；状态页显示参数来源（[ADR-0023](docs/adr/0023-oscquery-avatar-discovery.md)） |
 | 原生 C ABI（M4/M5 基础） | ✅ 进程内 C ABI v1 + 无硬件示例模块（[ADR-0018](docs/adr/0018-native-c-abi-v1.md)） |
 | 共享内存输出（M4） | ✅ 命名映射 + 双缓冲 seqlock，`--shm <name>` 显式开启（[ADR-0019](docs/adr/0019-shared-memory-output.md)） |
 | 多输出（M4） | ✅ VRChat OSC + VMC 第二路（`--vmc-out`）+ 共享内存（`--shm`），可同时驱动 Unity 场景（[ADR-0014](docs/adr/0014-vmc-output-sink.md)、[ADR-0019](docs/adr/0019-shared-memory-output.md)） |
@@ -68,6 +69,9 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
   与 VRCFT 同源）浏览、搜索、一键安装/更新，下载后校验 MD5
 - 独立运行时：发布包带精简的 VRCFT 宿主（`runtime/vrcft`，约 106 MB），
   卸载 VRCFT 后模块仍可加载；界面显示当前用的是内置/本机副本/VRCFT 安装
+- 头像发现：OSCQuery 自动找 VRChat 的 OSCQuery 端点（mDNS `_oscjson._tcp`，HTTP 端口动态），
+  直接读当前头像名/ID/参数表；换头像后约 2 s 内自动重绑，不用再点「重新读取」。
+  OSCQuery 不可用时回退"日志头像 ID + 本地 JSON"；界面「参数来源」显示当前走哪条路
 - 多源合并：多个输入可同时工作（如模块给眼追、VMC 给表情），
   按通道选提供者并有过期回退；状态页能看见每个源在喂哪一路
 - 多输出：VRChat OSC 与 VMC 同时输出（`--vmc-out 127.0.0.1:9100`），
@@ -82,7 +86,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 - SteamVR 启动项：设置页显式开关 + 状态/原因；只在 SteamVR 运行时可用，绝不自动注册，
   移除注册后不残留启动项（真实注册待 SteamVR 运行环境验收）
 - 界面三语（简中 / 英 / 日）+ 双击即用的发布包（`cmake --install` 到 `dist/`）
-- 124 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面/VMC 输出探针
+- 133 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面/VMC 输出/OSCQuery 探针
   （`tools/probe_ipc.py`、`tools/probe_ui.py`）
 
 ```bash
@@ -101,10 +105,11 @@ fgb-cli modules use VRCFTPicoModule   # 启动模块，重启引擎后生效
 
 **还没做的**：
 
-- 头像切换的实时感知（目前启动时读 VRChat 日志确认，换头像需在界面里点"重新读取"）
 - 校准 3D 的正式美术头模（渲染器/格式/映射已完成，当前是程序化占位头；
   换资产保持 `.fgbface` v1 与 morph/区域名即可，见 ADR-0021）
 - 界面里还不能改输出目标 / 参数集
+- 自动启用 VRChat OSC（实测 `config.json` 里没有 OSC 字段，开关在游戏内 Options > OSC，
+  写入位置未确认；暂不动用户配置）
 - OpenXR API Layer / 眼追注入（共享内存与 VMC 输出已做）
 - 随 SteamVR 启动的真实注册验收（代码与设置页已完成，`not_running` 已实测；见 ADR-0020）
 - 与 VRCFT 输出的逐参数对齐（量化"替代"的最后一道关口）

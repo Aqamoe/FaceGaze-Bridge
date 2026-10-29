@@ -97,7 +97,7 @@ void UdpSocket::close() noexcept {
 
 bool UdpSocket::valid() const noexcept { return handle_ != kInvalidHandle; }
 
-bool UdpSocket::open_receiver(std::uint16_t port) noexcept {
+bool UdpSocket::open_receiver(std::uint16_t port, bool reuse_addr) noexcept {
     if (!ensure_wsa()) {
         return false;
     }
@@ -106,6 +106,12 @@ bool UdpSocket::open_receiver(std::uint16_t port) noexcept {
     const NativeSocket s = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (is_bad(s)) {
         return false;
+    }
+
+    if (reuse_addr) {
+        const int value = 1;
+        ::setsockopt(s, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&value),
+                     sizeof(value));
     }
 
     sockaddr_in addr{};
@@ -193,6 +199,27 @@ bool UdpSocket::set_broadcast(bool enabled) noexcept {
     const int value = enabled ? 1 : 0;
     return ::setsockopt(from_handle(handle_), SOL_SOCKET, SO_BROADCAST,
                         reinterpret_cast<const char*>(&value), sizeof(value)) == 0;
+}
+
+bool UdpSocket::join_multicast_group(const std::string& group_ip) noexcept {
+    if (!valid()) {
+        return false;
+    }
+    ip_mreq request{};
+    if (::inet_pton(AF_INET, group_ip.c_str(), &request.imr_multiaddr) != 1) {
+        return false;
+    }
+    request.imr_interface.s_addr = htonl(INADDR_ANY);
+    return ::setsockopt(from_handle(handle_), IPPROTO_IP, IP_ADD_MEMBERSHIP,
+                        reinterpret_cast<const char*>(&request), sizeof(request)) == 0;
+}
+
+bool UdpSocket::set_multicast_ttl(int ttl) noexcept {
+    if (!valid()) {
+        return false;
+    }
+    return ::setsockopt(from_handle(handle_), IPPROTO_IP, IP_MULTICAST_TTL,
+                        reinterpret_cast<const char*>(&ttl), sizeof(ttl)) == 0;
 }
 
 int UdpSocket::recv_from(std::span<std::byte> buffer, std::string& from_ip,

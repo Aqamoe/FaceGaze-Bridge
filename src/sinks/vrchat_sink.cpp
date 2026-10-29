@@ -2,8 +2,10 @@
 
 #include "base/log.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <utility>
 
 namespace fgb {
 namespace {
@@ -11,6 +13,26 @@ namespace {
 constexpr char kTag[] = "vrchat";
 
 constexpr char kAddrNativePitchYaw[] = "/tracking/eye/LeftRightPitchYaw";
+
+// avatar_source 用稳定 token 存，界面再翻译；日志里给中文。
+const char* source_label(std::string_view token) noexcept {
+    if (token == "oscquery") {
+        return "OSCQuery";
+    }
+    if (token == "config") {
+        return "配置文件";
+    }
+    if (token == "local") {
+        return "本地配置";
+    }
+    if (token == "heuristic") {
+        return "本地配置（启发式）";
+    }
+    if (token == "prefix") {
+        return "固定前缀";
+    }
+    return "未知";
+}
 constexpr char kAddrNativeClosed[]   = "/tracking/eye/EyesClosedAmount";
 
 // 一条参数消息的经验长度：地址 + 对齐 + 类型标签 + 参数 + bundle 长度前缀
@@ -87,7 +109,11 @@ bool parse_params_mode(std::string_view text, ParamsMode& out) noexcept {
     return false;
 }
 
-VrchatSink::VrchatSink(VrchatSinkConfig config) : config_(std::move(config)) { reset_dedup(); }
+VrchatSink::VrchatSink(VrchatSinkConfig config) : config_(std::move(config)) {
+    reset_dedup();
+}
+
+VrchatSink::~VrchatSink() { stop(); }
 
 void VrchatSink::map_target_groups() {
     // 目标列表与 catalog 同序，按参数逐个对齐即可，不需要额外查找
@@ -117,9 +143,27 @@ void VrchatSink::reset_dedup() noexcept {
     last_heartbeat_ns_  = 0;
 }
 
+void VrchatSink::bind_avatar_locked(const params::AvatarConfig& config, std::string_view source) {
+    router_.bind(config);
+    avatar_name_   = config.name;
+    avatar_id_     = config.id;
+    avatar_source_ = source;
+    bound_via_oscquery_.store(source == "oscquery");
+}
+
+void VrchatSink::use_fallback() {
+    router_.use_fallback(config_.fallback_prefix);
+    avatar_name_.clear();
+    avatar_id_.clear();
+    avatar_source_ = "prefix";
+}
+
 void VrchatSink::resolve_addresses() {
+    using Clock = std::chrono::steady_clock;
+
     if (!config_.discover_avatar && config_.avatar_config.empty()) {
-        router_.use_fallback(config_.fallback_prefix);
+        std::unique_lock lock(router_mutex_);
+        use_fallback();
         return;
     }
 
@@ -127,25 +171,55 @@ void VrchatSink::resolve_addresses() {
     if (!config_.avatar_config.empty()) {
         params::AvatarConfig cfg;
         if (params::load_avatar_file(config_.avatar_config, cfg)) {
-            router_.bind(cfg);
-            avatar_name_ = cfg.name;
-            avatar_id_   = cfg.id;
+            std::unique_lock lock(router_mutex_);
+            bind_avatar_locked(cfg, "config");
             return;
         }
         FGB_WARN(kTag, "无法解析指定的头像配置 %s，改用自动发现", config_.avatar_config.c_str());
     }
 
-    // 2. 从 VRChat 日志读出当前穿着的头像 ID，精确定位
+    // 2. OSCQuery：mDNS 找到 VRChat 的动态 HTTP 端口，树里直接带当前头像与参数
+    if (config_.use_oscquery) {
+        std::string base = params::normalize_oscquery_base_url(config_.oscquery_url);
+        std::string error;
+        if (base.empty()) {
+            params::OscQueryEndpoint endpoint;
+            if (params::discover_oscquery_endpoint(endpoint, error, config_.oscquery_timeout_ms)) {
+                base = endpoint.base_url();
+            } else {
+                next_discovery_ = Clock::now() + std::chrono::seconds(10);
+            }
+        }
+        if (!base.empty()) {
+            // 端点留着：头像可能只是还没加载完，watcher 每 2 s 直接重试 HTTP，
+            // 不用重新走一遍 mDNS；端点真的失效时 watcher 会清掉它。
+            oscquery_base_url_ = base;
+            params::AvatarConfig cfg;
+            const int timeout = std::max(config_.oscquery_timeout_ms, 1500);
+            if (params::fetch_oscquery_avatar(base, cfg, error, timeout)) {
+                next_discovery_ = {};
+                std::unique_lock lock(router_mutex_);
+                bind_avatar_locked(cfg, "oscquery");
+                FGB_INFO(kTag, "OSCQuery 已绑定头像「%s」：%zu 个参数 / %zu 条 OSC 目标（%s）",
+                         cfg.name.c_str(), router_.param_count(), router_.targets().size(),
+                         oscquery_base_url_.c_str());
+                return;
+            }
+            FGB_INFO(kTag, "OSCQuery 端点可用但拉取参数表失败（%s），先用本地配置",
+                     error.c_str());
+        }
+    }
+
+    // 3. 从 VRChat 日志读出当前穿着的头像 ID，精确定位
     //
     // 这里不能靠"最近修改的文件"：加载头像不更新 config.json 的 mtime，
     // 实测那份配置停在半个月前。日志里的 `Saving Avatar Data:` 才是当下的事实。
-    const std::string root = params::default_osc_root();
+    const std::string root       = params::default_osc_root();
     const std::string current_id = params::current_avatar_id();
     params::AvatarConfig current;
     if (!current_id.empty() && params::load_avatar_by_id(root, current_id, current)) {
-        router_.bind(current);
-        avatar_name_ = current.name;
-        avatar_id_   = current.id;
+        std::unique_lock lock(router_mutex_);
+        bind_avatar_locked(current, "local");
         if (router_.matched() == 0) {
             FGB_WARN(kTag, "当前头像「%s」没有任何面捕参数——表情不会动是正常的，"
                            "需要给这个模型加 FT 参数（或用支持面捕的模型）",
@@ -156,13 +230,12 @@ void VrchatSink::resolve_addresses() {
     FGB_INFO(kTag, "未能从 VRChat 日志确认当前头像（%s），改用启发式挑选",
              current_id.empty() ? "日志里没有 Saving Avatar Data" : current_id.c_str());
 
-    // 3. 兜底：在最近改动的若干配置里挑最像面捕头像的那份
+    // 4. 兜底：在最近改动的若干配置里挑最像面捕头像的那份
     const params::AvatarPick pick = params::pick_avatar(root);
 
     if (pick.valid && pick.v2_param_count >= 8) {
-        router_.bind(pick.config);
-        avatar_name_ = pick.config.name;
-        avatar_id_   = pick.config.id;
+        std::unique_lock lock(router_mutex_);
+        bind_avatar_locked(pick.config, "heuristic");
         return;
     }
 
@@ -170,7 +243,8 @@ void VrchatSink::resolve_addresses() {
                    "回退到固定前缀 %s——如果表情不动，多半是这个前缀和头像里的参数名不一致",
              root.c_str(), static_cast<std::size_t>(8), pick.v2_param_count,
              config_.fallback_prefix.c_str());
-    router_.use_fallback(config_.fallback_prefix);
+    std::unique_lock lock(router_mutex_);
+    use_fallback();
 }
 
 bool VrchatSink::start() {
@@ -179,9 +253,16 @@ bool VrchatSink::start() {
         return false;
     }
     resolve_addresses();
-    map_target_groups();
-    reset_dedup();
+    {
+        std::unique_lock lock(router_mutex_);
+        map_target_groups();
+        reset_dedup();
+        last_seen_avatar_id_ = avatar_id_;
+    }
     started_ = true;
+    if (config_.discover_avatar && config_.avatar_poll_ms > 0) {
+        start_watcher();
+    }
     FGB_INFO(kTag, "输出到 %s:%u，眼追模式 %s，参数集 %s", config_.host.c_str(),
              static_cast<unsigned>(config_.port), to_string(config_.eye_mode),
              to_string(config_.params_mode));
@@ -190,13 +271,180 @@ bool VrchatSink::start() {
 
 void VrchatSink::stop() noexcept {
     started_ = false;
+    watcher_stop_.store(true);
+    watcher_wake_.notify_all();
+    if (watcher_.joinable()) {
+        watcher_.join();
+    }
+    watcher_stop_.store(false);
+    reload_requested_.store(false);
     socket_.close();
 }
 
 void VrchatSink::reload_avatar() {
-    resolve_addresses();
+    // 实际重绑发生在引擎线程：控制线程直接改 router_ 会和 120 Hz 的 submit 抢数据
+    reload_requested_.store(true);
+    watcher_wake_.notify_all();
+}
+
+void VrchatSink::start_watcher() {
+    watcher_stop_.store(false);
+    watcher_ = std::thread([this] { watch_avatars(); });
+}
+
+void VrchatSink::watch_avatars() {
+    std::unique_lock lock(watcher_mutex_);
+    while (!watcher_stop_.load(std::memory_order_acquire)) {
+        watcher_wake_.wait_for(lock, std::chrono::milliseconds(config_.avatar_poll_ms), [this] {
+            return watcher_stop_.load() || reload_requested_.load();
+        });
+        if (watcher_stop_.load()) {
+            break;
+        }
+        const bool force = reload_requested_.exchange(false);
+        lock.unlock();
+        poll_avatar_once(force);
+        lock.lock();
+    }
+}
+
+void VrchatSink::poll_avatar_once(bool force) {
+    using Clock = std::chrono::steady_clock;
+    const auto now = Clock::now();
+
+    if (config_.use_oscquery) {
+        if (oscquery_base_url_.empty()) {
+            if (!config_.oscquery_url.empty()) {
+                oscquery_base_url_ = params::normalize_oscquery_base_url(config_.oscquery_url);
+            } else if (force || now >= next_discovery_) {
+                params::OscQueryEndpoint endpoint;
+                std::string error;
+                if (params::discover_oscquery_endpoint(endpoint, error, config_.oscquery_timeout_ms)) {
+                    oscquery_base_url_ = endpoint.base_url();
+                    next_discovery_    = {};
+                } else {
+                    next_discovery_ = now + std::chrono::seconds(10);
+                }
+            }
+        }
+
+        if (!oscquery_base_url_.empty()) {
+            std::string id;
+            std::string error;
+            if (params::fetch_oscquery_avatar_change(oscquery_base_url_, id, error,
+                                                     config_.oscquery_timeout_ms)) {
+                // 同一个头像 ID 通常不用动；但如果当前绑的是本地 JSON（OSCQuery 刚恢复），
+                // 仍要拉一次树，把来源升级成 OSCQuery。
+                if (!force && bound_via_oscquery_.load() && !id.empty() &&
+                    id == last_seen_avatar_id_) {
+                    return;
+                }
+
+                params::AvatarConfig cfg;
+                const int timeout = std::max(config_.oscquery_timeout_ms, 1500);
+                if (params::fetch_oscquery_avatar(oscquery_base_url_, cfg, error, timeout)) {
+                    if (cfg.id.empty()) {
+                        cfg.id = id;
+                    }
+                    const std::string previous = last_seen_avatar_id_;
+                    last_seen_avatar_id_       = cfg.id;
+                    if (!previous.empty() && previous != cfg.id) {
+                        FGB_INFO(kTag, "头像已切换：%s → %s（OSCQuery）", previous.c_str(),
+                                 cfg.id.c_str());
+                    }
+                    publish_avatar(std::move(cfg), "oscquery");
+                    return;
+                }
+
+                // 树拉不到时退回本地配置（Build & Test 头像有时没有本地 JSON）
+                params::AvatarConfig local;
+                if (!id.empty() && params::load_avatar_by_id(params::default_osc_root(), id, local)) {
+                    last_seen_avatar_id_ = id;
+                    publish_avatar(std::move(local), "local");
+                    return;
+                }
+
+                if (config_.oscquery_url.empty()) {
+                    oscquery_base_url_.clear();
+                    next_discovery_ = now + std::chrono::seconds(2);
+                }
+            } else if (config_.oscquery_url.empty()) {
+                // VRChat 重启后 OSCQuery 端口会变，清掉端点让下一轮重新 mDNS
+                oscquery_base_url_.clear();
+                next_discovery_ = now + std::chrono::seconds(2);
+            }
+        }
+    }
+
+    poll_avatar_from_log(force);
+}
+
+void VrchatSink::poll_avatar_from_log(bool force) {
+    const std::string id = params::current_avatar_id();
+    if (id.empty() || (!force && id == last_seen_avatar_id_)) {
+        return;
+    }
+    params::AvatarConfig cfg;
+    if (!params::load_avatar_by_id(params::default_osc_root(), id, cfg)) {
+        return;
+    }
+    last_seen_avatar_id_ = id;
+    publish_avatar(std::move(cfg), "local");
+}
+
+void VrchatSink::publish_avatar(params::AvatarConfig config, std::string source) {
+    {
+        std::lock_guard lock(pending_mutex_);
+        pending_.config = std::move(config);
+        pending_.source = std::move(source);
+    }
+    pending_seq_.fetch_add(1, std::memory_order_release);
+}
+
+void VrchatSink::apply_pending_avatar() {
+    if (pending_seq_.load(std::memory_order_acquire) == applied_seq_) {
+        return;
+    }
+
+    PendingAvatar pending;
+    std::uint64_t seq = 0;
+    {
+        std::lock_guard lock(pending_mutex_);
+        pending = pending_;
+        seq     = pending_seq_.load(std::memory_order_relaxed);
+    }
+    std::unique_lock lock(router_mutex_);
+    bind_avatar_locked(pending.config, pending.source);
     map_target_groups();
     reset_dedup();
+    applied_seq_ = seq;
+    FGB_INFO(kTag, "头像参数已更新（%s）：「%s」%zu 个参数 / %zu 条 OSC 目标",
+             source_label(pending.source), pending.config.name.c_str(), router_.param_count(),
+             router_.targets().size());
+}
+
+RouterStatus VrchatSink::status() const {
+    std::shared_lock lock(router_mutex_);
+    RouterStatus status;
+    status.bound        = router_.bound_to_avatar();
+    status.matched      = router_.matched();
+    status.param_count  = router_.param_count();
+    status.target_count = router_.targets().size();
+    status.binary_count = router_.binary_param_count();
+    status.avatar_name  = avatar_name_;
+    status.avatar_id    = avatar_id_;
+    status.avatar_source = avatar_source_;
+    return status;
+}
+
+std::vector<std::string> VrchatSink::bound_addresses() const {
+    std::shared_lock lock(router_mutex_);
+    std::vector<std::string> out;
+    out.reserve(router_.total());
+    for (std::size_t i = 0; i < router_.total(); ++i) {
+        out.push_back(router_.address(i));
+    }
+    return out;
 }
 
 void VrchatSink::flush(osc::BundleWriter& writer) noexcept {
@@ -336,6 +584,10 @@ void VrchatSink::submit(const FaceFrame& frame, const GazeState& /*gaze*/, std::
     if (!started_) {
         return;
     }
+    // 头像切换/手动重读在引擎线程落地，控制面只发布"待应用"的配置
+    apply_pending_avatar();
+    std::shared_lock avatar_lock(router_mutex_);
+
     if (last_send_ns_ != 0 && now_ns - last_send_ns_ < config_.min_interval_ns) {
         return;
     }

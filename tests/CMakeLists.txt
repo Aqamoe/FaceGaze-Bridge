@@ -5,6 +5,7 @@ add_executable(fgb-tests
     test_shape.cpp
     test_params.cpp
     test_vrchat.cpp
+    test_oscquery.cpp
     test_vrcft_protocol.cpp
     test_v1_params.cpp
     test_capture.cpp

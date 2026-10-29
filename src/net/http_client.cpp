@@ -62,7 +62,7 @@ struct Request {
     std::string error;
 };
 
-bool open_request(const std::string& url, Request& out) {
+bool open_request(const std::string& url, Request& out, int timeout_ms = 0) {
     const std::wstring wide = widen(url);
     URL_COMPONENTS parts{};
     parts.dwStructSize     = sizeof(parts);
@@ -81,14 +81,21 @@ bool open_request(const std::string& url, Request& out) {
         target.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
     }
 
-    out.session = Handle{::WinHttpOpen(L"FaceGazeBridge/0.1", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                                       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0)};
+    // 本机服务显式绕代理：127.0.0.1 不该经过用户配置的 HTTP 代理
+    const DWORD access_type =
+        timeout_ms > 0 ? WINHTTP_ACCESS_TYPE_NO_PROXY : WINHTTP_ACCESS_TYPE_DEFAULT_PROXY;
+    out.session = Handle{::WinHttpOpen(L"FaceGazeBridge/0.1", access_type, WINHTTP_NO_PROXY_NAME,
+                                       WINHTTP_NO_PROXY_BYPASS, 0)};
     if (out.session.value == nullptr) {
         out.error = last_error_text("HTTP 会话创建失败");
         return false;
     }
-    // 模块库只是十几 KB 的 JSON：连接/接收超时收紧，坏网络尽快失败而不是卡半分钟
-    ::WinHttpSetTimeouts(out.session, 4'000, 5'000, 10'000, 15'000);
+    if (timeout_ms > 0) {
+        ::WinHttpSetTimeouts(out.session, timeout_ms, timeout_ms, timeout_ms, timeout_ms);
+    } else {
+        // 模块库只是十几 KB 的 JSON：连接/接收超时收紧，坏网络尽快失败而不是卡半分钟
+        ::WinHttpSetTimeouts(out.session, 4'000, 5'000, 10'000, 15'000);
+    }
 
     out.connection = Handle{::WinHttpConnect(out.session, host.c_str(), parts.nPort, 0)};
     if (out.connection.value == nullptr) {
@@ -184,10 +191,10 @@ bool read_body(HINTERNET request, std::size_t max_bytes,
 } // namespace
 
 bool http_get(const std::string& url, std::string& body, std::string& error,
-              std::size_t max_bytes) {
+              std::size_t max_bytes, int timeout_ms) {
     body.clear();
     Request request;
-    if (!open_request(url, request)) {
+    if (!open_request(url, request, timeout_ms)) {
         error = request.error;
         return false;
     }

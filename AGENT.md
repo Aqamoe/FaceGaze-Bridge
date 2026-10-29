@@ -81,7 +81,7 @@
 cmake -S . -B build/test -G "Visual Studio 16 2019" -A x64
 cmake --build build/test --config Debug --parallel
 
-# 单测（当前 124 个用例）
+# 单测（当前 133 个用例）
 ./build/test/bin/Debug/fgb-tests.exe
 # 或
 ctest --test-dir build/test -C Debug --output-on-failure
@@ -164,11 +164,16 @@ python tools/probe_ipc.py 8787
 
 # 界面：通过 WebView2 远程调试端口跑 JS，验证页面真的渲染了数据
 # 包含 3D 模型加载、morph、区域高亮、SteamVR 卡片（只读检测，不切换真实自启动）
+# 校准页会真的保存档案：引擎启动时加 --calibration %TEMP%\fgb-probe\calibration.ini，
+# 别让探针写用户默认的 %LOCALAPPDATA%\FaceGazeBridge\calibration.ini
 # 已经有别的实例在跑时，必须给测试实例单独的 user-data，否则 CDP 端口不会监听；
 # 带 --debug-port 的实例不参与单实例检查，可以故意多开（ADR-0022 §4）
 "FaceGaze Bridge.exe" --user-data %TEMP%
 gb-wv --debug-port 9222
 python tools/probe_ui.py 9222 8787
+
+# OSCQuery：不开 FGB，直接看 mDNS 端点、头像名/ID、可写参数计数
+python tools/probe_oscquery.py
 
 # VMC 第二路输出：按接收端视角收包，检查 Blend/Val + Apply + 头姿
 fgb-cli.exe run --source replay --replay <抓包> --replay-loop --vmc-out 127.0.0.1:9100
@@ -236,6 +241,7 @@ gh run watch <id> --exit-status
 | 页面一卡/暂停，引擎就不动了 | 阻塞 socket 的 `send` 等对端读；`accept` 在无连接时还会再阻塞一次 | 监听/客户端 socket 都设非阻塞；accept 一次只收一个；出站缓冲 + 写集合，慢客户端丢弃（`net/ws_server.cpp`） |
 | 3D 模型与映射表对不上 | morph/区域改名后页面请求不到，或选中高亮为空 | 跑 `python tools/check_face_model.py`；资产由 `tools/gen_face_model.py` 生成，morph/区域名是契约 |
 | SteamVR 开关一直是灰的 | 状态是 `not_running`/`not_installed`，或缺失 manifest | 卡片会写原因；`/api/steamvr` 可 curl；真实注册必须 SteamVR 正在运行 |
+| OSCQuery 找不到或误判 | 启动回退本地 JSON；同机 OVRToolkit 也广播 `_oscjson._tcp` | mDNS 收满 150 ms 窗口再选，只认实例名以 VRChat 开头；HTTP 端口动态，别探 9001；`python tools/probe_oscquery.py` 先确认 |
 
 ## 6. 代码地图
 
@@ -243,10 +249,10 @@ gh run watch <id> --exit-status
 src/base/      日志（含订阅回调）、时钟、极简 JSON
 src/core/      数据模型、无锁容器（SPSC ring / seqlock）、滤波与校准
 src/osc/       OSC 编解码（零分配写入器）
-src/net/       UDP / TCP / WebSocket 服务端（自写 RFC 6455 子集）、WinHTTP 下载
+src/net/       UDP / TCP / WebSocket 服务端（自写 RFC 6455 子集）、WinHTTP 下载、mDNS 发现
 src/vrcft/     VRCFT 协议、沙箱、模块进程托管、模块仓（module_registry）、模块库（module_library）
 src/vmc/       VMC blendshape 名字表（输入/输出共用，只有这一份）
-src/params/    参数目录、v2/v1 派生、地址路由、校准（含预览取样 preview_tap）
+src/params/    参数目录、v2/v1 派生、地址路由、OSCQuery 头像发现、校准（含预览取样 preview_tap）
 src/sources/   输入（VMC / VRCFT 模块 / 原生 C ABI 模块 / 抓包回放）
 src/sinks/     输出（VRChat OSC / VMC / 共享内存）
 src/engine/    合并、快照发布、扇出

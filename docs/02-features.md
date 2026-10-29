@@ -102,12 +102,20 @@ VRChat 原生眼追（`/tracking/eye/*`）不是默认路径，见 §2.3。
 
 | 能力 | 细节 | 风险控制 |
 |---|---|---|
-| OSCQuery 发现 | mDNS `_oscjson._tcp` + HTTP `:9001` 拉参数列表 | 失败则回退到"全量发送" |
+| OSCQuery 发现 | mDNS `_oscjson._tcp` + **动态 HTTP 端口**拉参数列表 | 失败则回退本地 avatar 配置 JSON |
 | 参数裁剪 | 只发当前 avatar 实际存在的参数 | 未开 OSCQuery 时用本地 avatar 配置 JSON |
-| 自动启用 OSC | 改写 VRChat `config.json` | **改前备份 + 单独还原按钮 + 明确告知** |
+| 自动启用 OSC（未做） | 改写 VRChat `config.json` | **改前备份 + 单独还原按钮 + 明确告知** |
 | 眼追输出模式 | 默认 `parameters`（写 avatar 参数）；可切 `native` / `both` | 切换时明确提示"未适配原生眼追的模型眼睛会不动" |
 | 原生眼追（可选） | `/tracking/eye/LeftRightPitchYaw` + `EyesClosedAmount` | 10 s 超时 → 心跳保活 |
 | 发送节流 | 死区 + bundle 聚合 + 1 Hz 全量心跳 | 可配置 |
+
+**已实现（2026-10-30）**：OSCQuery 发现与参数裁剪——mDNS `_oscjson._tcp` 找到动态
+HTTP 端口，拉 `/avatar/parameters`，只发头像实际声明的 float/bool；后台每 2 s 轮询
+`/avatar/change`，换头像后热重绑（[ADR-0023](adr/0023-oscquery-avatar-discovery.md)）。
+OSCQuery 不可用时回退到"日志头像 ID + 本地 JSON"。状态页「参数来源」会显示当前走的是哪条路。
+
+**未做**：自动启用 OSC。实测本机 `config.json` 里没有 OSC 字段，开关在游戏内
+`Options > OSC`，写入位置未确认；在没有可靠证据前不动用户配置。
 
 ### 2.4 校准
 

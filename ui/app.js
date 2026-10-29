@@ -406,6 +406,9 @@ function render_status(status) {
   $("a-bound").textContent = status.bound_to_avatar
     ? t("status.avatar.bound.avatar")
     : t("status.avatar.bound.prefix");
+  $("a-source").textContent = status.avatar_source
+    ? t(`status.avatar.source.${status.avatar_source}`)
+    : "—";
   $("a-params").textContent = `${status.param_count || 0} / ${status.matched || 0}`;
   $("a-targets").textContent = status.target_count || 0;
   $("a-binary").textContent = status.binary_count || 0;

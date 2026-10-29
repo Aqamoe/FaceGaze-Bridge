@@ -23,7 +23,8 @@ add_library(fgb_net STATIC
     net/tcp_listener.cpp
     net/ws_codec.cpp
     net/ws_server.cpp
-    net/http_client.cpp)
+    net/http_client.cpp
+    net/mdns.cpp)
 target_link_libraries(fgb_net PUBLIC fgb_base)
 if(WIN32)
     target_link_libraries(fgb_net PRIVATE ws2_32 winhttp)
@@ -53,9 +54,10 @@ add_library(fgb_params STATIC
     params/v2_params.cpp
     params/v1_params.cpp
     params/avatar_config.cpp
+    params/oscquery.cpp
     params/preview_tap.cpp
     params/calibration.cpp)
-target_link_libraries(fgb_params PUBLIC fgb_core fgb_base fgb_capture fgb_vrcft)
+target_link_libraries(fgb_params PUBLIC fgb_core fgb_base fgb_capture fgb_vrcft fgb_net)
 
 # 配置与后处理
 add_library(fgb_config STATIC

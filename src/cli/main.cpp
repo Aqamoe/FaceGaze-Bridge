@@ -99,6 +99,9 @@ void print_usage() {
                  "  --param-prefix <前缀>   找不到头像配置时 v2 参数用的地址前缀\n"
                  "                          (默认 FT/v2/，因为多数头像这么命名)\n"
                  "  --avatar-config <路径>  指定头像参数表 JSON，不给则自动挑最新的\n"
+                 "  --no-oscquery           关闭 OSCQuery 自动发现（只读本地头像 JSON）\n"
+                 "  --oscquery-url <地址>   显式指定 OSCQuery 基地址（跳过 mDNS，如 127.0.0.1:65393）\n"
+                 "  --avatar-poll-ms <毫秒> 轮询换头像的间隔，0 关闭 (默认 2000)\n"
                  "  --tick-hz <hz>          引擎 tick 频率 (默认 120)\n"
                  "  --duration <秒>         运行指定秒数后退出，0 为不限 (默认 0)\n"
                  "  --verbose               打开调试日志\n");
@@ -414,6 +417,23 @@ int cmd_run(int argc, char** argv) {
             vrchat_cfg.discover_avatar = true;
         } else if (arg == "--no-avatar-discovery") {
             vrchat_cfg.discover_avatar = false;
+        } else if (arg == "--no-oscquery") {
+            vrchat_cfg.use_oscquery = false;
+        } else if (arg == "--oscquery-url") {
+            const auto v = next_value(arg);
+            if (v.empty()) {
+                return 2;
+            }
+            vrchat_cfg.oscquery_url    = std::string{v};
+            vrchat_cfg.use_oscquery    = true;
+            vrchat_cfg.discover_avatar = true;
+        } else if (arg == "--avatar-poll-ms") {
+            const auto v = next_value(arg);
+            std::uint16_t ms = 0;
+            if (v.empty() || !parse_uint16(v, ms)) {
+                return 2;
+            }
+            vrchat_cfg.avatar_poll_ms = ms;
         } else if (arg == "--tick-hz") {
             const auto v = next_value(arg);
             std::uint16_t hz = 0;

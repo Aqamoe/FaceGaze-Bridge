@@ -185,7 +185,7 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 | 3.13 | 本地化框架（简中/英/日） | 1 |
 | | **合计** | **31**（含 buffer，估 26–31） |
 
-> **进度（2026-10-29）**：**M4 部分完成**——
+> **进度（2026-10-30 更新）**：**M4 部分完成**——
 > ① 多输入源合并层：按表情 / 眼追 / 头姿三通道选提供者，可重复 `--source`
 > （[ADR-0013](adr/0013-source-merging.md)）；
 > ② VMC 第二路输出：`--vmc-out`，与 VRChat 并行且共享同一份 blendshape 名字表
@@ -198,7 +198,10 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > （[ADR-0017](adr/0017-module-store-library-runtime.md)）；
 > ⑥ B 层原生 C ABI v1 落地（进程内加载 + 示例模块 + 单测/端到端验证，
 > 见 [ADR-0018](adr/0018-native-c-abi-v1.md)）；
-> ⑦ 共享内存输出（双缓冲 + seqlock，`--shm <name>`，见 [ADR-0019](adr/0019-shared-memory-output.md)）。
+> ⑦ 共享内存输出（双缓冲 + seqlock，`--shm <name>`，见 [ADR-0019](adr/0019-shared-memory-output.md)）；
+> ⑧ 参数裁剪/头像发现：OSCQuery（mDNS 动态 HTTP 端口 + `/avatar/change` 轮询，
+> 换头像约 2 s 内热重绑）+ 本地 JSON 回退，状态页显示参数来源
+> （[ADR-0023](adr/0023-oscquery-avatar-discovery.md)），3.5 完成。
 > 3.10 / 3.11 / 3.12 已完成——`fgb-ui`（WebView2 外壳）+
 > 本机 WebSocket IPC，六个页面（状态 / 模块 / 参数热力图 / 输出 / 日志 / 设置）已接真实数据，
 > 见 [ADR-0010](adr/0010-webview2-ui-and-websocket-ipc.md)；模块页含扫描、选择与故障原因，

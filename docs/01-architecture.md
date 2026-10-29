@@ -145,7 +145,7 @@
 │                                                                        │
 │  输入                             输出                                  │
 │  ├ fgb-host-vrcft.exe (.NET)      ├ OSC/UDP → VRChat (参数 + 原生眼追)  │
-│  ├ fgb-host-native.exe (C++)      ├ OSCQuery :9001 (发现 + 参数裁剪)    │
+│  ├ fgb-host-native.exe (C++)      ├ OSCQuery（mDNS → 动态端口，参数裁剪）│
 │  ├ VMC in (UDP 39539)             ├ VMC out (UDP 39539)                │
 │  ├ OSC in (任意地址映射)           ├ 共享内存 (Unity/UE/OpenXR Layer)   │
 │  ├ OpenXR 眼追 (XR_EXT_eye_gaze)   ├ WebSocket JSON (第三方应用)        │
@@ -577,13 +577,20 @@ float 拆 bool 的 `BinaryBaseParameter` 编码（`Param1/2/4/8...`）同样需�
 
 VRChat 的 avatar Animator 参数有数量上限（约 256），且发不存在的参数纯属浪费。做法：
 
-1. 通过 OSCQuery（`http://127.0.0.1:9001/avatar/parameters`）拉取当前 avatar 的参数列表；
-2. 或直接解析本地 avatar 配置 JSON（`%LocalAppData%Low\VRChat\VRChat\OSC\...\Avatars\*.json`，路径随版本变化，需容错）；
+1. 通过 mDNS 找 VRChat 的 OSCQuery 端点（`_oscjson._tcp`，HTTP 端口是动态的，
+   不是 9001），再拉 `http://127.0.0.1:<port>/avatar/parameters`；
+2. 拿不到 OSCQuery 时，直接解析本地 avatar 配置 JSON
+   （`%LocalAppData%Low\VRChat\VRChat\OSC\...\Avatars\*.json`，路径随版本变化，需容错）；
 3. 只发送实际存在的参数。
+
+已实现见 [ADR-0023](adr/0023-oscquery-avatar-discovery.md)：后台轮询 `/avatar/change`，
+换头像后热重绑，不用手动「重新读取」。
 
 VRCFT 的 `Relevance` 机制就是这个思路，必须复刻——否则 130+ 参数 × 90 Hz = 每秒上万条消息，VRChat 端会明显掉帧。
 
-**自动配置**：VRCFT 会改写 VRChat 的 `config.json` 强制打开 OSC。FGB 做同样的事，但**改前备份、改后提示**，并提供一个"还原"按钮（改别人配置文件这件事要克制）。
+**自动配置（未实现）**：VRCFT 会改写 VRChat 的 `config.json` 强制打开 OSC。FGB 原计划
+做同样的事（改前备份、改后提示、单独还原）。实测本机 `config.json` 里没有 OSC 字段，
+OSC 开关在游戏内 `Options > OSC`，写入位置未确认；在没有可靠证据前不动用户配置。
 
 ### 9.3 其他 Sink
 

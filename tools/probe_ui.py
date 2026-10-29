@@ -6,9 +6,13 @@ catalog 到了、WebSocket 连上了、参数格子上有非零值、翻页正�
 比截图可靠：截图只能说明"有个窗口"，这里能说明"窗口里的数字是对的"。
 
 用法：
-    fgb-cli run --source replay --replay x.fgbrec --panel 8787
+    fgb-cli run --source replay --replay x.fgbrec --panel 8787 \
+        --calibration %TEMP%\fgb-probe-calibration.ini
     fgb-ui --port 8787 --debug-port 9222
     python tools/probe_ui.py 9222 8787
+
+注意：校准页会真的保存档案。一定要用 --calibration 指到临时文件，
+否则探针会覆盖用户默认的 %LOCALAPPDATA%\FaceGazeBridge\calibration.ini。
 
 只依赖标准库：CDP 本身就是 WebSocket + JSON，帧编解码与 probe_ipc.py 同一套写法。
 """
@@ -182,6 +186,7 @@ def main():
             "link: document.getElementById('link-text').textContent,"
             "fps: document.getElementById('m-fps').textContent,"
             "avatar: document.getElementById('a-name').textContent,"
+            "source: document.getElementById('a-source').textContent,"
             "catalog: typeof state !== 'undefined' ? state.names.length : -1,"
             "values: typeof state !== 'undefined' ? state.values.length : -1,"
             "cells: document.querySelectorAll('.cell').length"

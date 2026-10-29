@@ -25,8 +25,11 @@ constexpr std::size_t kDefaultTextLimit = 8u * 1024u * 1024u;
 constexpr std::size_t kDefaultFileLimit = 256u * 1024u * 1024u;
 
 // 成功时 body 为完整响应；失败时 error 是人类可读原因（含 HTTP 状态码）
+//
+// timeout_ms > 0 用于本机服务（OSCQuery）：超时收紧且绕过代理，避免本机端口
+// 没开时卡在默认的 15 秒接收超时上。
 bool http_get(const std::string& url, std::string& body, std::string& error,
-              std::size_t max_bytes = kDefaultTextLimit);
+              std::size_t max_bytes = kDefaultTextLimit, int timeout_ms = 0);
 
 // 下载到文件（先写 .part，成功后再改名，避免半截文件被当成模块包）
 bool http_download(const std::string& url, const std::filesystem::path& destination,

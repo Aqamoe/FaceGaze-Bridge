@@ -289,8 +289,10 @@ void IpcServer::build_catalog(std::string& out) {
     writer.obj_begin();
     writer.key("type").str("catalog");
 
-    const params::ParamRouter* router = ctx_.sink != nullptr ? &ctx_.sink->router() : nullptr;
-    std::size_t index                 = 0;
+    // 快照一次：引擎线程可能正在因为换头像重绑 router
+    const std::vector<std::string> addresses =
+        ctx_.sink != nullptr ? ctx_.sink->bound_addresses() : std::vector<std::string>{};
+    std::size_t index = 0;
 
     writer.key("names").arr_begin();
     for (const params::Group& group : params::groups()) {
@@ -309,7 +311,7 @@ void IpcServer::build_catalog(std::string& out) {
         const bool allowed = mode_allows(ctx_.params_mode, is_v2_group(group));
         for (const params::ParamEntry& entry : group.entries) {
             (void)entry;
-            const bool bound = router != nullptr && !router->address(index).empty();
+            const bool bound = index < addresses.size() && !addresses[index].empty();
             writer.boolean(allowed && bound);
             ++index;
         }
@@ -334,30 +336,24 @@ void IpcServer::build_metrics(std::string& out) {
     writer.key("late_ticks").integer(static_cast<long long>(stats.late_ticks));
     writer.key("fps").num(last_fps_, 1);
 
+    const RouterStatus router_status =
+        ctx_.sink != nullptr ? ctx_.sink->status() : RouterStatus{};
     if (ctx_.sink != nullptr) {
         const SinkStats sink_stats = ctx_.sink->stats();
         writer.key("messages").integer(static_cast<long long>(sink_stats.messages));
         writer.key("bytes").integer(static_cast<long long>(sink_stats.bytes));
-        writer.key("avatar_name").str(ctx_.sink->avatar_name());
-        writer.key("avatar_id").str(ctx_.sink->avatar_id());
-        writer.key("bound_to_avatar").boolean(ctx_.sink->router().bound_to_avatar());
-
-        const params::ParamRouter& router = ctx_.sink->router();
-        writer.key("param_count").integer(static_cast<long long>(router.param_count()));
-        writer.key("target_count").integer(static_cast<long long>(router.targets().size()));
-        writer.key("binary_count").integer(static_cast<long long>(router.binary_param_count()));
-        writer.key("matched").integer(static_cast<long long>(router.matched()));
     } else {
         writer.key("messages").integer(0);
         writer.key("bytes").integer(0);
-        writer.key("avatar_name").str("");
-        writer.key("avatar_id").str("");
-        writer.key("bound_to_avatar").boolean(false);
-        writer.key("param_count").integer(0);
-        writer.key("target_count").integer(0);
-        writer.key("binary_count").integer(0);
-        writer.key("matched").integer(0);
     }
+    writer.key("avatar_name").str(router_status.avatar_name);
+    writer.key("avatar_id").str(router_status.avatar_id);
+    writer.key("avatar_source").str(router_status.avatar_source);
+    writer.key("bound_to_avatar").boolean(router_status.bound);
+    writer.key("param_count").integer(static_cast<long long>(router_status.param_count));
+    writer.key("target_count").integer(static_cast<long long>(router_status.target_count));
+    writer.key("binary_count").integer(static_cast<long long>(router_status.binary_count));
+    writer.key("matched").integer(static_cast<long long>(router_status.matched));
 
     writer.key("params_mode").str(ctx_.params_mode);
     writer.key("eye_mode").str(ctx_.eye_mode);
