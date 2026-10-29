@@ -13,6 +13,7 @@ add_executable(fgb-tests
     test_capture.cpp
     test_calibration.cpp
     test_gaze.cpp
+    test_crash.cpp
     test_ws.cpp
     test_json.cpp
     test_modules.cpp
@@ -37,3 +38,7 @@ if(MSVC)
 endif()
 
 add_test(NAME fgb-tests COMMAND $<TARGET_FILE:fgb-tests>)
+
+# 故意崩溃的子进程，供 tools/probe_crash.py 验证未处理异常会留下 minidump
+add_executable(fgb-crash-child crash_child.cpp)
+target_link_libraries(fgb-crash-child PRIVATE fgb_base)

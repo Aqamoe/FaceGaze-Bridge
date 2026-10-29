@@ -1,11 +1,13 @@
 add_library(fgb_base STATIC
     base/log.cpp
     base/clock.cpp
-    base/json.cpp)
+    base/json.cpp
+    base/crash.cpp
+    base/diagnostics.cpp)
 target_include_directories(fgb_base PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(fgb_base PUBLIC fgb_options)
 if(WIN32)
-    target_link_libraries(fgb_base PRIVATE winmm)
+    target_link_libraries(fgb_base PRIVATE winmm dbghelp)
 endif()
 
 add_library(fgb_core STATIC
