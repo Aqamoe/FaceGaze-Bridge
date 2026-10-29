@@ -112,6 +112,12 @@ bool open_request(const std::string& url, Request& out, int timeout_ms = 0) {
         return false;
     }
 
+    // GitHub API 不接受没有 User-Agent 的请求；registry.vrcft.io 也无害
+    const wchar_t headers[] =
+        L"User-Agent: FaceGazeBridge/1.0\r\nAccept: application/json\r\n";
+    ::WinHttpAddRequestHeaders(out.request, headers, static_cast<DWORD>(-1),
+                               WINHTTP_ADDREQ_FLAG_ADD);
+
     if (::WinHttpSendRequest(out.request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA,
                              0, 0, 0) == FALSE) {
         out.error = last_error_text("发送请求失败");

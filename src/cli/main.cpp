@@ -6,6 +6,8 @@
 #include "capture/capture_file.hpp"
 #include "config/outputs.hpp"
 #include "core/process/one_euro.hpp"
+#include "net/update_check.hpp"
+#include "openvr/steamvr.hpp"
 #include "web/ipc.hpp"
 #include "params/avatar_config.hpp"
 #include "params/calibration.hpp"
@@ -74,6 +76,8 @@ void print_usage() {
                  "  fgb-cli modules        列出磁盘上的 VRCFT 模块与当前选择\n"
                  "         use <id|none>   指定启动时加载哪个模块（写 fgb.ini，重启生效）\n"
                  "  fgb-cli diag bundle [--out <zip>]  导出诊断包（日志/配置/崩溃转储）\n"
+                 "  fgb-cli update-check [--url <地址>] 检查 GitHub Releases 是否有新版本\n"
+                 "  fgb-cli steamvr remove 移除 SteamVR 启动项注册（卸载前用）\n"
                  "  fgb-cli version        显示版本\n"
                  "\n"
                  "run 选项:\n"
@@ -1499,14 +1503,62 @@ int cmd_diag(int argc, char** argv) {
         }
     }
 
+    if (request.output.empty()) {
+        request.output = fgb::diagnostics::default_bundle_path();
+    }
     std::string error;
     if (!fgb::diagnostics::build_bundle(request, error)) {
         std::fprintf(stderr, "导出诊断包失败：%s\n", error.c_str());
         return 1;
     }
-    const std::filesystem::path output =
-        request.output.empty() ? fgb::diagnostics::default_bundle_path() : request.output;
-    std::printf("诊断包：%s\n", output.string().c_str());
+    std::printf("诊断包：%s\n", request.output.string().c_str());
+    return 0;
+}
+
+int cmd_update_check(int argc, char** argv) {
+    std::string url = fgb::update::kDefaultUpdateUrl;
+    for (int i = 2; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        if (arg == "--url" && i + 1 < argc) {
+            url = argv[++i];
+        }
+    }
+
+    fgb::update::ReleaseInfo release;
+    std::string error;
+    if (!fgb::update::check_latest(url, release, error)) {
+        std::fprintf(stderr, "检查更新失败：%s\n", error.c_str());
+        return 1;
+    }
+    const int compare = fgb::update::compare_versions(release.tag, FGB_VERSION);
+    // 中文/全角标点紧跟 %s 会触发 MSVC C4474（见 AGENT 已知坑），先拼成 string
+    std::string summary = "当前版本：" + std::string{FGB_VERSION} + "\n最新版本：" + release.tag +
+                          (compare > 0 ? "（有新版本）" : "（已是最新）") + "\n";
+    if (!release.name.empty()) {
+        summary += "发布标题：" + release.name + "\n";
+    }
+    if (!release.url.empty()) {
+        summary += "下载页：" + release.url + "\n";
+    }
+    std::fputs(summary.c_str(), stdout);
+    return 0;
+}
+
+int cmd_steamvr(int argc, char** argv) {
+    if (argc < 3 || std::string_view{argv[2]} != "remove") {
+        std::fprintf(stderr, "用法：fgb-cli steamvr remove\n");
+        return 2;
+    }
+    fgb::steamvr::Manager manager(executable_dir());
+    const fgb::steamvr::Status status = manager.remove_registration();
+    if (!status.ok) {
+        const std::string message =
+            "移除 SteamVR 注册失败：" + status.reason + " " + status.detail + "\n";
+        std::fputs(message.c_str(), stderr);
+        return 1;
+    }
+    const std::string message = "已移除 SteamVR 启动项注册：" + status.app_key + "\n";
+    std::fputs(message.c_str(), stdout);
     return 0;
 }
 
@@ -1538,6 +1590,12 @@ int main(int argc, char** argv) {
     }
     if (cmd == "diag") {
         return cmd_diag(argc, argv);
+    }
+    if (cmd == "update-check") {
+        return cmd_update_check(argc, argv);
+    }
+    if (cmd == "steamvr") {
+        return cmd_steamvr(argc, argv);
     }
     if (cmd == "calibrate") {
         return cmd_calibrate(argc, argv);

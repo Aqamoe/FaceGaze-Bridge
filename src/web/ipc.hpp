@@ -132,6 +132,7 @@ private:
     void build_output_profiles(std::string& out) const;
     void broadcast_output_profiles();
     void start_diagnostics_export(const std::filesystem::path& output = {});
+    void start_update_check(std::string url);
     // 校准档案变了就广播：多个页面/探针连上来时各自显示一致的状态
     void broadcast_calibration();
     // per-instance 运行态；state/error 都来自对应的 VrcftSource
@@ -184,6 +185,12 @@ private:
     std::mutex diag_mutex_;
     std::string diag_result_;
     bool diag_result_pending_ = false;
+
+    std::thread update_thread_;
+    std::atomic<bool> update_running_{false};
+    std::mutex update_mutex_;
+    std::string update_result_;
+    bool update_result_pending_ = false;
 
     std::unique_ptr<vrcft::ModuleLibrary> library_;
     // OpenVR 初始化会阻塞，放在后台线程；命令结果由 pump() 广播

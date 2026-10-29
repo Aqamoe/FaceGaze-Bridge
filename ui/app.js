@@ -197,6 +197,7 @@ const state = {
   pending_outputs_restart: false,
   output_profiles: { profiles: [], active: "", dir: "" },
   profile_pending: null, // {action, name}：ack 回来时用本地化文案提示
+  update_info: null,
   status: null,
   gaze: null,
   source_rows: [],
@@ -305,6 +306,7 @@ function handle(message) {
     case "hello":
       state.version = message.version || "";
       $("brand-version").textContent = state.version ? `v${state.version}` : t("app.subtitle");
+      $("u-current").textContent = state.version || "—";
       break;
     case "catalog":
       build_catalog(message.names || [], message.sent || []);
@@ -374,6 +376,22 @@ function handle(message) {
       };
       render_output_profiles();
       break;
+    case "update":
+      $("u-busy").hidden = true;
+      $("u-check").disabled = false;
+      if (!message.ok) {
+        $("u-status").textContent = t("settings.update.failed", { error: message.error || "?" });
+        show_toast($("u-status").textContent, "error");
+        $("u-open").disabled = true;
+        break;
+      }
+      state.update_info = message;
+      $("u-latest").textContent = message.latest || "—";
+      $("u-status").textContent = message.available
+        ? t("settings.update.available", { latest: message.latest || "" })
+        : t("settings.update.latest_state");
+      $("u-open").disabled = !(message.available && message.url);
+      break;
     case "diagnostics":
       $("diag-busy").hidden = true;
       $("diag-export").disabled = false;
@@ -404,6 +422,10 @@ function handle(message) {
         if (message.command === "export_diagnostics") {
           $("diag-busy").hidden = true;
           $("diag-export").disabled = false;
+        }
+        if (message.command === "check_updates") {
+          $("u-busy").hidden = true;
+          $("u-check").disabled = false;
         }
         state.profile_pending = null;
       } else if (message.command === "set_outputs") {
@@ -2270,6 +2292,18 @@ function wire() {
   $("o-profile-select").addEventListener("change", () => {
     $("o-profile-name").value = $("o-profile-select").value;
     refresh_profile_buttons();
+  });
+  $("u-check").addEventListener("click", () => {
+    $("u-busy").hidden = false;
+    $("u-check").disabled = true;
+    $("u-open").disabled = true;
+    $("u-status").textContent = t("settings.update.checking");
+    send({ type: "check_updates" });
+  });
+  $("u-open").addEventListener("click", () => {
+    if (state.update_info && state.update_info.url) {
+      send({ type: "open_update_page", url: state.update_info.url });
+    }
   });
   $("diag-export").addEventListener("click", () => {
     $("diag-busy").hidden = false;

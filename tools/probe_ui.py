@@ -196,7 +196,8 @@ def main():
             "tick_text: document.getElementById('p-tick').textContent,"
             "p95_text: document.getElementById('p-p95').textContent,"
             "mem_text: document.getElementById('p-mem').textContent,"
-            "handles_text: document.getElementById('p-handles').textContent"
+            "handles_text: document.getElementById('p-handles').textContent,"
+            "update_current: document.getElementById('u-current').textContent"
             "})"))
         fps = float(summary["fps"] or 0)
         if summary["connected"] and summary["cells"] > 0 and fps > 0:
@@ -690,6 +691,9 @@ def main():
         ok = False
     if "MB" not in (summary.get("mem_text") or "") or not (summary.get("handles_text") or "").strip():
         print("FAIL 状态页没有渲染进程资源（工作集/句柄）")
+        ok = False
+    if (summary.get("update_current") or "") in ("", "—"):
+        print("FAIL 设置页没有显示当前版本")
         ok = False
     if params.get("active") != "params" or params.get("visible", 0) == 0:
         print("FAIL 参数页没有渲染出格子")

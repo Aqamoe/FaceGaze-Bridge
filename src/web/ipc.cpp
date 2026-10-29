@@ -3,6 +3,7 @@
 #include "base/diagnostics.hpp"
 #include "base/json.hpp"
 #include "base/log.hpp"
+#include "net/update_check.hpp"
 #include "params/avatar_config.hpp"
 #include "params/calibration.hpp"
 #include "params/catalog.hpp"
@@ -305,6 +306,9 @@ IpcServer::IpcServer(IpcContext context) : ctx_(std::move(context)) {
 IpcServer::~IpcServer() {
     if (diag_thread_.joinable()) {
         diag_thread_.join(); // 先等后台打包结束，避免它和 stop() 抢 server_
+    }
+    if (update_thread_.joinable()) {
+        update_thread_.join();
     }
     stop();
 }
@@ -842,6 +846,47 @@ void IpcServer::broadcast_output_profiles() {
     server_.broadcast(message);
 }
 
+void IpcServer::start_update_check(std::string url) {
+    if (update_running_.exchange(true, std::memory_order_acq_rel)) {
+        return;
+    }
+    if (update_thread_.joinable()) {
+        update_thread_.join();
+    }
+
+    update_thread_ = std::thread([this, url = std::move(url)] {
+        update::ReleaseInfo release;
+        std::string error;
+        const bool ok = update::check_latest(url, release, error);
+        const bool available =
+            ok && update::compare_versions(release.tag, FGB_VERSION) > 0;
+
+        std::string message;
+        JsonWriter writer{message};
+        writer.obj_begin();
+        writer.key("type").str("update");
+        writer.key("ok").boolean(ok);
+        writer.key("current").str(FGB_VERSION);
+        writer.key("tag").str(release.tag);
+        writer.key("latest").str(release.tag);
+        writer.key("name").str(release.name);
+        writer.key("url").str(release.url);
+        writer.key("available").boolean(available);
+        if (!error.empty()) {
+            writer.key("error").str(error);
+        }
+        writer.obj_end();
+
+        {
+            std::lock_guard<std::mutex> lock(update_mutex_);
+            update_result_         = std::move(message);
+            update_result_pending_ = true;
+        }
+        update_running_.store(false, std::memory_order_release);
+        FGB_INFO(kTag, "更新检查：%s", ok ? (available ? "有新版本" : "已是最新") : error.c_str());
+    });
+}
+
 void IpcServer::start_diagnostics_export(const std::filesystem::path& output) {
     if (diag_running_.exchange(true, std::memory_order_acq_rel)) {
         return;
@@ -851,22 +896,22 @@ void IpcServer::start_diagnostics_export(const std::filesystem::path& output) {
     }
 
     diagnostics::BundleRequest request;
-    request.output  = output;
+    // 默认路径只生成一次：打包含义是"构建前定名"，否则跨秒时返回路径会和
+    // build_bundle 内部再生成的名字差一秒
+    request.output  = output.empty() ? diagnostics::default_bundle_path() : output;
     request.exe_dir = ctx_.exe_dir;
     request.version = FGB_VERSION;
 
     diag_thread_ = std::thread([this, request] {
         std::string error;
         const bool ok = diagnostics::build_bundle(request, error);
-        const std::filesystem::path output =
-            request.output.empty() ? diagnostics::default_bundle_path() : request.output;
 
         std::string message;
         JsonWriter writer{message};
         writer.obj_begin();
         writer.key("type").str("diagnostics");
         writer.key("ok").boolean(ok);
-        writer.key("path").str(ok ? output.string() : "");
+        writer.key("path").str(ok ? request.output.string() : "");
         if (!error.empty()) {
             writer.key("error").str(error);
         }
@@ -879,7 +924,7 @@ void IpcServer::start_diagnostics_export(const std::filesystem::path& output) {
         }
         diag_running_.store(false, std::memory_order_release);
         if (ok) {
-            FGB_INFO(kTag, "诊断包已导出：%s", output.string().c_str());
+            FGB_INFO(kTag, "诊断包已导出：%s", request.output.string().c_str());
         } else {
             FGB_WARN(kTag, "诊断包导出失败：%s", error.c_str());
         }
@@ -1616,6 +1661,39 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             ok          = true;
             ack_message = "正在导出诊断包…";
         }
+    } else if (has_type && type == "check_updates") {
+        std::string url;
+        json::field_string(text, "url", url);
+        if (url.empty()) {
+            url = update::kDefaultUpdateUrl;
+        }
+        if (update_running_.load(std::memory_order_acquire)) {
+            error = "更新检查正在进行";
+        } else {
+            start_update_check(url);
+            ok          = true;
+            ack_message = "正在检查更新…";
+        }
+    } else if (has_type && type == "open_update_page") {
+        std::string url;
+        json::field_string(text, "url", url);
+        constexpr std::string_view kAllowed = "https://github.com/Aqamoe/FaceGaze-Bridge/";
+        if (url.size() < kAllowed.size() || url.compare(0, kAllowed.size(), kAllowed) != 0) {
+            error = "只允许打开本项目的 GitHub 页面";
+        } else {
+            const int length = ::MultiByteToWideChar(CP_UTF8, 0, url.data(),
+                                                     static_cast<int>(url.size()), nullptr, 0);
+            std::wstring wide(static_cast<std::size_t>(length), L'\0');
+            ::MultiByteToWideChar(CP_UTF8, 0, url.data(), static_cast<int>(url.size()),
+                                  wide.data(), length);
+            const auto result = reinterpret_cast<INT_PTR>(
+                ::ShellExecuteW(nullptr, L"open", wide.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+            if (result <= 32) {
+                error = "无法打开浏览器";
+            } else {
+                ok = true;
+            }
+        }
     } else if (has_type && type == "set_log_level") {
         std::string level_text;
         log::Level level = log::level();
@@ -1934,6 +2012,14 @@ void IpcServer::pump(int timeout_ms) {
             server_.broadcast(diag_result_);
             diag_result_.clear();
             diag_result_pending_ = false;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(update_mutex_);
+        if (update_result_pending_) {
+            server_.broadcast(update_result_);
+            update_result_.clear();
+            update_result_pending_ = false;
         }
     }
 

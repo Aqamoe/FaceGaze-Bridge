@@ -14,12 +14,14 @@
 两边各写一遍，协议理解错的那一方会立刻暴露。
 """
 import base64
+import http.server
 import json
 import os
 import socket
 import struct
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
 
@@ -104,7 +106,28 @@ def send_text(sock, text):
     sock.sendall(header + bytes(byte ^ mask[i % 4] for i, byte in enumerate(data)))
 
 
+class ReleaseHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        payload = json.dumps({
+            "tag_name": "v9.9.9",
+            "name": "Probe Release",
+            "html_url": "https://github.com/Aqamoe/FaceGaze-Bridge/releases/tag/v9.9.9",
+        }).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *args):
+        pass
+
+
 def main():
+    release_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ReleaseHandler)
+    release_url = f"http://127.0.0.1:{release_server.server_port}/release.json"
+    threading.Thread(target=release_server.serve_forever, daemon=True).start()
+
     status, content_type, body = http_get("/api/status")
     metrics = json.loads(body)
     print(f"HTTP /api/status -> {status} {content_type}")
@@ -145,6 +168,7 @@ def main():
     ack_ok = None
     diag_result = None
     diag_path = os.path.join(tempfile.gettempdir(), f"fgb-probe-diag-{os.getpid()}.zip")
+    update_result = None
 
     deadline = time.time() + 3.0
     sent_command = False
@@ -189,13 +213,16 @@ def main():
                 print(f"  ack: {message.get('command')} ok={ack_ok}")
             elif kind == "diagnostics":
                 diag_result = message
+            elif kind == "update":
+                update_result = message
 
         if not sent_command and catalog_count and status_msgs >= 2:
             sent_command = True
             send_text(sock, json.dumps({
                 "type": "set_filter", "enabled": True, "min_cutoff": 2.5, "beta": 0.8}))
             send_text(sock, json.dumps({"type": "export_diagnostics", "out": diag_path}))
-            print("  已发送 set_filter 与 export_diagnostics")
+            send_text(sock, json.dumps({"type": "check_updates", "url": release_url}))
+            print("  已发送 set_filter / export_diagnostics / check_updates")
 
     # 再等一小会儿，收 ack 与更新后的 status
     deadline = time.time() + 1.0
@@ -228,7 +255,10 @@ def main():
                 last_gaze = message
             elif kind == "diagnostics":
                 diag_result = message
+            elif kind == "update":
+                update_result = message
     sock.close()
+    release_server.shutdown()
 
     print(f"收到消息类型: {seen}")
     ok = True
@@ -276,6 +306,13 @@ def main():
                 os.remove(diag_path)
             except OSError:
                 pass
+    if not update_result or not update_result.get("ok") or not update_result.get("available") \
+            or update_result.get("latest") != "v9.9.9":
+        print(f"FAIL 更新检查结果异常：{update_result}")
+        ok = False
+    else:
+        print(f"  更新检查：current={update_result.get('current')} "
+              f"latest={update_result.get('latest')} available={update_result.get('available')}")
     if not last_gaze or not gaze_http.get("dir_local") or len(last_gaze.get("dir_local", [])) != 3:
         print("FAIL gaze 消息缺少 dir_local")
         ok = False

@@ -486,6 +486,19 @@
           </article>
 
           <article class="card">
+            <h2 data-i18n="settings.update.title">版本更新</h2>
+            <div class="kv"><span data-i18n="settings.update.current">当前版本</span><b class="mono" id="u-current">—</b></div>
+            <div class="kv"><span data-i18n="settings.update.latest">最新版本</span><b class="mono" id="u-latest">—</b></div>
+            <div class="toolbar" style="margin-top:10px">
+              <button class="btn" id="u-check" data-i18n="settings.update.check">检查更新</button>
+              <button class="btn ghost" id="u-open" data-i18n="settings.update.open" disabled>打开下载页</button>
+              <span class="spinner" id="u-busy" hidden></span>
+            </div>
+            <p class="hint" id="u-status">—</p>
+            <p class="hint" data-i18n="settings.update.hint">只检查 GitHub Releases，不会自动下载或替换程序。</p>
+          </article>
+
+          <article class="card">
             <h2 data-i18n="settings.diag.title">诊断</h2>
             <p class="hint" data-i18n="settings.diag.hint">
               导出日志、配置、崩溃转储和系统信息；不包含模块 DLL 与头像文件。

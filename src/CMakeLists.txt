@@ -27,6 +27,7 @@ add_library(fgb_net STATIC
     net/ws_codec.cpp
     net/ws_server.cpp
     net/http_client.cpp
+    net/update_check.cpp
     net/mdns.cpp)
 target_link_libraries(fgb_net PUBLIC fgb_base)
 if(WIN32)
