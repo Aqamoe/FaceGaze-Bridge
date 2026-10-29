@@ -1,4 +1,4 @@
-// FaceGaze Bridge —— 桌面入口（WebView2 外壳 + 引擎拉起）。
+// FaceGaze Bridge —— 桌面入口（WebView2 外壳 + 引擎拉起 + 托盘常驻）。
 //
 // 产品形态：用户只双击一个 exe。外壳先探一下控制面端口：
 //   - 已经有引擎在跑（例如命令行起的）→ 直接连，不动它
@@ -7,6 +7,9 @@
 //
 // 生命周期用 Job 对象绑定：外壳退出（正常关闭或崩溃）都会带走自己拉起的引擎，
 // 不留后台进程。别人起的引擎不受影响（没有句柄关系）。
+//
+// 关窗语义（ADR-0022 修订 ADR-0016）：关闭窗口 = 收进托盘，追踪继续；托盘「退出」
+// 才停引擎。`--tray` 启动连窗口都不显示，只驻留托盘——SteamVR 自启动要的就是这个。
 //
 // 页面仍从 http://127.0.0.1:<port>/ 加载，外壳里没有业务逻辑：
 //   1. 页面直接连 ws://127.0.0.1:<port>/ws，浏览器打开同一地址也能调试
@@ -50,6 +53,16 @@ constexpr int kIconResource       = 101;
 // 引擎在收到 restart_engine 时用这个退出码结束，外壳据此原地重启而不是关窗
 constexpr DWORD kEngineRestartExit = 3;
 
+// 托盘：图标回调消息与菜单项 id
+constexpr UINT kTrayCallback = WM_APP + 21;
+constexpr UINT kMenuShow     = 501;
+constexpr UINT kMenuEngine   = 502;
+constexpr UINT kMenuRestart  = 503;
+constexpr UINT kMenuExit     = 504;
+// 单实例：第二个进程不该再开一个窗口/托盘图标，只把第一个带到前台
+constexpr wchar_t kInstanceMutex[] = L"Local\\FaceGazeBridge.Shell";
+constexpr wchar_t kRestoreMessage[] = L"FaceGazeBridge.RestoreWindow";
+
 // 逻辑像素；实际尺寸按显示器 DPI 放大。旧版固定 1180x780 在 125%/150% 缩放下显得很小。
 constexpr int kDefaultWidthDip  = 1360;
 constexpr int kDefaultHeightDip = 860;
@@ -83,11 +96,31 @@ struct Host {
     std::wstring engine_log;
     std::wstring default_source;
     std::vector<std::wstring> engine_args;
+
+    // ---- 托盘与生命周期（ADR-0022）----
+    bool tray_mode         = false; // --tray：启动时不显示窗口
+    bool tray_icon         = false;
+    bool quitting          = false; // 只有它为 true 时关窗才真的退出
+    bool webview_requested = false; // 托盘启动时按需创建 WebView2，不先养两个浏览器进程
+    bool close_hint_shown  = false;
+    bool engine_alive      = false; // 托盘菜单据此显示"启动引擎"还是"停止引擎"
+    bool tray_vmc_fallback = false;
+    bool stop_requested    = false; // 我们自己点了「停止引擎」
+    ULONGLONG engine_started_ms = 0;
+    HANDLE instance_mutex  = nullptr;
+    UINT restore_message   = 0;
+    UINT taskbar_created   = 0; // 资源管理器重启后要重新加回托盘图标
+    NOTIFYICONDATAW tray{};
 };
 
 Host g_host;
 
 bool engine_present(std::uint16_t port);
+bool http_control(std::uint16_t port, const char* path);
+HRESULT create_environment();
+void attach_webview();
+void navigate_once();
+bool spawn_engine(const std::wstring& source);
 
 void set_title(const wchar_t* suffix) {
     if (g_host.hwnd == nullptr) {
@@ -143,6 +176,259 @@ void trace_startup(const wchar_t* phase) {
     DWORD written = 0;
     ::WriteFile(log, utf8.data(), static_cast<DWORD>(utf8.size() - 1), &written, nullptr);
     ::CloseHandle(log);
+}
+
+// ---------- 托盘（ADR-0022） ----------
+//
+// 托盘是 SteamVR 自启动的硬前置：自启动拉起时不能弹窗口，只能驻留托盘。
+// 同时它把"关窗"的语义从"停引擎"改成"收进托盘"——这一点必须在文档里说清，
+// 否则用户关了窗口以为追踪停了，实际还在输出。
+
+struct TrayText {
+    const wchar_t* show;
+    const wchar_t* stop;
+    const wchar_t* start;
+    const wchar_t* restart;
+    const wchar_t* quit;
+    const wchar_t* running;
+    const wchar_t* stopped;
+    const wchar_t* first_hide;
+    const wchar_t* engine_failed;
+    const wchar_t* vmc_fallback;
+};
+
+// 托盘文案跟系统 UI 语言走：它是原生外壳，拿不到页面的 localStorage 选择
+const TrayText& tray_text() {
+    static const TrayText zh{
+        L"显示窗口", L"停止引擎", L"启动引擎", L"重启引擎", L"退出",
+        L"引擎运行中", L"引擎已停止",
+        L"FaceGaze Bridge 仍在托盘运行，追踪继续；右键托盘图标可以退出。",
+        L"引擎启动失败，右键托盘图标查看日志或重试。",
+        L"没有可用的 VRCFT 模块，已改用 VMC 输入重试。"};
+    static const TrayText en{
+        L"Show window", L"Stop engine", L"Start engine", L"Restart engine", L"Exit",
+        L"Engine running", L"Engine stopped",
+        L"FaceGaze Bridge keeps running in the tray; tracking continues. Right-click to exit.",
+        L"Engine failed to start. Right-click the tray icon to check the log or retry.",
+        L"No VRCFT module available; retrying with VMC input."};
+    static const TrayText ja{
+        L"ウィンドウを表示", L"エンジンを停止", L"エンジンを起動", L"エンジンを再起動", L"終了",
+        L"エンジン稼働中", L"エンジン停止",
+        L"FaceGaze Bridge はトレイで動作を続けます。右クリックで終了できます。",
+        L"エンジンの起動に失敗しました。トレイを右クリックしてログを確認するか再試行してください。",
+        L"利用できる VRCFT モジュールがないため、VMC 入力で再試行します。"};
+
+    switch (::GetUserDefaultUILanguage() & 0xFF) {
+    case 0x04: // 中文
+        return zh;
+    case 0x11: // 日本語
+        return ja;
+    default:
+        return en;
+    }
+}
+
+void add_tray_icon() {
+    if (g_host.hwnd == nullptr || g_host.tray_icon) {
+        return;
+    }
+    const HINSTANCE module = ::GetModuleHandleW(nullptr);
+    // 小图标尺寸跟系统 DPI 走：固定 32×32 在 150% 缩放下会被托盘缩成糊的
+    const int size = ::GetSystemMetrics(SM_CXSMICON);
+    HICON icon = static_cast<HICON>(::LoadImageW(module, MAKEINTRESOURCEW(kIconResource),
+                                                 IMAGE_ICON, size > 0 ? size : 16,
+                                                 size > 0 ? size : 16, LR_DEFAULTCOLOR));
+    if (icon == nullptr) {
+        icon = ::LoadIconW(module, MAKEINTRESOURCEW(kIconResource));
+    }
+
+    g_host.tray            = {};
+    g_host.tray.cbSize     = sizeof(g_host.tray);
+    g_host.tray.hWnd       = g_host.hwnd;
+    g_host.tray.uID        = 1;
+    g_host.tray.uFlags     = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    g_host.tray.uCallbackMessage = kTrayCallback;
+    g_host.tray.hIcon      = icon;
+    ::wcsncpy_s(g_host.tray.szTip, kWindowTitle, _TRUNCATE);
+
+    g_host.tray_icon = ::Shell_NotifyIconW(NIM_ADD, &g_host.tray) != FALSE;
+    if (g_host.tray_icon) {
+        const std::wstring tip = std::wstring{kWindowTitle} + L" — " +
+                                 (g_host.engine_alive ? tray_text().running : tray_text().stopped);
+        ::wcsncpy_s(g_host.tray.szTip, tip.c_str(), _TRUNCATE);
+        g_host.tray.uFlags = NIF_TIP;
+        ::Shell_NotifyIconW(NIM_MODIFY, &g_host.tray);
+        g_host.tray.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    }
+}
+
+void remove_tray_icon() {
+    if (g_host.tray_icon) {
+        ::Shell_NotifyIconW(NIM_DELETE, &g_host.tray);
+        g_host.tray_icon = false;
+    }
+    if (g_host.tray.hIcon != nullptr) {
+        ::DestroyIcon(g_host.tray.hIcon);
+        g_host.tray.hIcon = nullptr;
+    }
+}
+
+// 托盘气泡：托盘模式没有窗口，引擎失败/首次收进托盘只能靠它说明白
+void show_tray_balloon(const wchar_t* text) {
+    if (text == nullptr || text[0] == L'\0') {
+        return;
+    }
+    if (!g_host.tray_icon) {
+        trace_startup(text);
+        return;
+    }
+    ::wcsncpy_s(g_host.tray.szInfoTitle, kWindowTitle, _TRUNCATE);
+    ::wcsncpy_s(g_host.tray.szInfo, text, _TRUNCATE);
+    g_host.tray.dwInfoFlags = NIIF_INFO;
+    g_host.tray.uFlags      = NIF_INFO;
+    ::Shell_NotifyIconW(NIM_MODIFY, &g_host.tray);
+    g_host.tray.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+}
+
+void update_tray_state() {
+    if (!g_host.tray_icon) {
+        return;
+    }
+    const TrayText& text = tray_text();
+    std::wstring tip{kWindowTitle};
+    tip.append(L" — ");
+    tip.append(g_host.engine_alive ? text.running : text.stopped);
+    ::wcsncpy_s(g_host.tray.szTip, tip.c_str(), _TRUNCATE);
+    g_host.tray.uFlags = NIF_TIP;
+    ::Shell_NotifyIconW(NIM_MODIFY, &g_host.tray);
+    g_host.tray.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+}
+
+void show_main_window() {
+    if (g_host.hwnd == nullptr) {
+        return;
+    }
+    // WebView2 按需创建：托盘常驻时不该为了一个没打开的窗口先起两个浏览器进程
+    if (!g_host.webview_requested) {
+        g_host.webview_requested = true;
+        if (g_host.environment) {
+            attach_webview();
+        } else {
+            create_environment();
+        }
+        if (!g_host.webview_ready) {
+            g_host.status = L"正在加载界面";
+            SetTimer(g_host.hwnd, kLoadingTimer, kLoadingTickMs, nullptr);
+        }
+    }
+    ::ShowWindow(g_host.hwnd, SW_SHOWNORMAL);
+    ::SetForegroundWindow(g_host.hwnd);
+    attach_webview();
+}
+
+void hide_main_window() {
+    if (g_host.hwnd == nullptr) {
+        return;
+    }
+    ::ShowWindow(g_host.hwnd, SW_HIDE);
+    if (!g_host.close_hint_shown) {
+        // 第一次收进托盘必须说一句：否则用户以为"关掉就停了追踪"
+        g_host.close_hint_shown = true;
+        show_tray_balloon(tray_text().first_hide);
+    }
+}
+
+void quit_app() {
+    g_host.quitting = true;
+    if (g_host.hwnd != nullptr) {
+        ::PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
+    } else {
+        ::PostQuitMessage(0);
+    }
+}
+
+// 启动失败时的报错：窗口在就弹窗（用户看得见），在托盘就记日志 + 气泡
+void report_error(const std::wstring& text) {
+    trace_startup(text.c_str());
+    if (g_host.hwnd != nullptr && ::IsWindowVisible(g_host.hwnd)) {
+        ::MessageBoxW(g_host.hwnd, text.c_str(), kWindowTitle, MB_ICONERROR | MB_OK);
+    } else {
+        show_tray_balloon(text.c_str());
+    }
+}
+
+void handle_tray_command(UINT command) {
+    switch (command) {
+    case kMenuShow:
+        show_main_window();
+        break;
+    case kMenuEngine:
+        if (g_host.engine_alive) {
+            g_host.stop_requested = true;
+            http_control(g_host.port, "/api/quit");
+        } else if (spawn_engine(g_host.default_source)) {
+            g_host.engine_alive = true;
+            update_tray_state();
+            if (g_host.webview_requested) {
+                navigate_once();
+            }
+        }
+        break;
+    case kMenuRestart:
+        if (g_host.engine_alive) {
+            // 引擎退出码 3 → on_engine_exit 原地重启，窗口不重新导航
+            http_control(g_host.port, "/api/restart");
+        } else if (spawn_engine(g_host.default_source)) {
+            g_host.engine_alive = true;
+            update_tray_state();
+            if (g_host.webview_requested) {
+                navigate_once();
+            }
+        }
+        break;
+    case kMenuExit:
+        quit_app();
+        break;
+    default:
+        break;
+    }
+}
+
+void show_tray_menu() {
+    if (g_host.hwnd == nullptr) {
+        return;
+    }
+    const TrayText& text = tray_text();
+    HMENU menu = ::CreatePopupMenu();
+    if (menu == nullptr) {
+        return;
+    }
+    ::AppendMenuW(menu, MF_STRING, kMenuShow, text.show);
+    ::SetMenuDefaultItem(menu, kMenuShow, FALSE);
+    ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    UINT engine_flags = MF_STRING;
+    if (!g_host.engine_alive) {
+        // 停止/重启只在引擎活着时可用；"启动引擎"则相反
+        engine_flags = MF_STRING | (g_host.engine_alive ? 0 : MF_GRAYED);
+    }
+    ::AppendMenuW(menu, engine_flags, kMenuEngine,
+                  g_host.engine_alive ? text.stop : text.start);
+    ::AppendMenuW(menu, MF_STRING | (g_host.engine_alive ? 0 : MF_GRAYED), kMenuRestart,
+                  text.restart);
+    ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    ::AppendMenuW(menu, MF_STRING, kMenuExit, text.quit);
+
+    POINT cursor{};
+    ::GetCursorPos(&cursor);
+    // 托盘菜单的经典要求：先把所有者设为前台，否则点别处菜单不消失
+    ::SetForegroundWindow(g_host.hwnd);
+    const UINT command = ::TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
+                                          cursor.x, cursor.y, 0, g_host.hwnd, nullptr);
+    ::DestroyMenu(menu);
+    ::PostMessageW(g_host.hwnd, WM_NULL, 0, 0);
+    if (command != 0) {
+        handle_tray_command(command);
+    }
 }
 
 UINT window_dpi() {
@@ -218,10 +504,10 @@ void on_controller_ready(HRESULT result, ICoreWebView2Controller* controller) {
                       L"WebView2 初始化失败（0x%08lX）。\n\n"
                       L"请确认已安装 Microsoft Edge WebView2 Runtime（Win10/11 通常自带）。",
                       static_cast<unsigned long>(result));
-        MessageBoxW(g_host.hwnd, message, kWindowTitle, MB_ICONERROR | MB_OK);
-        PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
-        return;
-    }
+                      MessageBoxW(g_host.hwnd, message, kWindowTitle, MB_ICONERROR | MB_OK);
+                      quit_app(); // 没有 WebView2 就没有界面，留在托盘没有意义
+                      return;
+                      }
 
     g_host.controller    = controller;
     g_host.webview_ready = true;
@@ -313,7 +599,7 @@ HRESULT create_environment() {
                                   static_cast<unsigned long>(result));
                     if (g_host.hwnd != nullptr) {
                         MessageBoxW(g_host.hwnd, message, kWindowTitle, MB_ICONERROR | MB_OK);
-                        PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
+                        quit_app();
                     } else {
                         // 窗口还没建起来就失败：直接退出，别让进程留在后台
                         MessageBoxW(nullptr, message, kWindowTitle, MB_ICONERROR | MB_OK);
@@ -338,14 +624,8 @@ std::wstring quote(const std::wstring& text) {
     return out;
 }
 
-// 只认自家引擎的 /healthz（{"ok":true,...}）。端口被别的程序占着时返回 false，
-// 让外层去拉引擎——拉不起来会在日志里说清楚，比"界面永远转圈"好排障。
-bool engine_present(std::uint16_t port) {
-    const SOCKET socket_handle = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (socket_handle == INVALID_SOCKET) {
-        return false;
-    }
-
+// 回环 TCP 连接（非阻塞 + 短等待）。连不上就说明没有程序在听这个端口。
+bool connect_loopback(SOCKET socket_handle, std::uint16_t port) {
     sockaddr_in address{};
     address.sin_family      = AF_INET;
     address.sin_port        = htons(port);
@@ -354,21 +634,35 @@ bool engine_present(std::uint16_t port) {
     u_long nonblocking = 1;
     ::ioctlsocket(socket_handle, FIONBIO, &nonblocking);
 
-    bool connected = false;
     if (::connect(socket_handle, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0) {
-        connected = true;
-    } else if (::WSAGetLastError() == WSAEWOULDBLOCK) {
-        fd_set writable;
-        FD_ZERO(&writable);
-        FD_SET(socket_handle, &writable);
-        timeval timeout{0, 200'000};
-        if (::select(0, nullptr, &writable, nullptr, &timeout) > 0) {
-            int error = 0;
-            int length = sizeof(error);
-            ::getsockopt(socket_handle, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&error), &length);
-            connected = error == 0;
-        }
+        return true;
     }
+    if (::WSAGetLastError() != WSAEWOULDBLOCK) {
+        return false;
+    }
+
+    fd_set writable;
+    FD_ZERO(&writable);
+    FD_SET(socket_handle, &writable);
+    timeval timeout{0, 200'000};
+    if (::select(0, nullptr, &writable, nullptr, &timeout) <= 0) {
+        return false;
+    }
+    int error  = 0;
+    int length = sizeof(error);
+    ::getsockopt(socket_handle, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&error), &length);
+    return error == 0;
+}
+
+// 只认自家引擎的 /healthz（{"ok":true,...}）。端口被别的程序占着时返回 false，
+// 让外层去拉引擎——拉不起来会在日志里说清楚，比"界面永远转圈"好排障。
+bool engine_present(std::uint16_t port) {
+    const SOCKET socket_handle = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (socket_handle == INVALID_SOCKET) {
+        return false;
+    }
+
+    const bool connected = connect_loopback(socket_handle, port);
 
     bool found = false;
     if (connected) {
@@ -407,6 +701,47 @@ bool engine_present(std::uint16_t port) {
 
     ::closesocket(socket_handle);
     return found;
+}
+
+// 让引擎自己收尾（停止/重启）。托盘菜单用得到，而外壳不该为此实现一套 WebSocket
+// 客户端：控制面本来就是"本机 HTTP + WebSocket"，外壳只碰这一个动作。
+bool http_control(std::uint16_t port, const char* path) {
+    if (path == nullptr) {
+        return false;
+    }
+    const SOCKET socket_handle = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (socket_handle == INVALID_SOCKET) {
+        return false;
+    }
+    if (!connect_loopback(socket_handle, port)) {
+        ::closesocket(socket_handle);
+        return false;
+    }
+
+    std::string request{"POST "};
+    request.append(path);
+    request.append(" HTTP/1.0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    const bool sent =
+        ::send(socket_handle, request.data(), static_cast<int>(request.size()), 0) > 0;
+
+    // 半关并读干净响应：直接 close 有可能在引擎处理请求前就把连接 RST 掉
+    ::shutdown(socket_handle, SD_SEND);
+    char buffer[256];
+    const ULONGLONG deadline = ::GetTickCount64() + 300;
+    while (::GetTickCount64() < deadline) {
+        fd_set readable;
+        FD_ZERO(&readable);
+        FD_SET(socket_handle, &readable);
+        timeval timeout{0, 50'000};
+        if (::select(0, &readable, nullptr, nullptr, &timeout) <= 0) {
+            continue;
+        }
+        if (::recv(socket_handle, buffer, sizeof(buffer), 0) <= 0) {
+            break;
+        }
+    }
+    ::closesocket(socket_handle);
+    return sent;
 }
 
 // 端口被占用时不要和用户干瞪眼：挑一个能 bind 的端口给引擎用
@@ -508,8 +843,7 @@ bool spawn_engine(const std::wstring& source) {
     const std::filesystem::path engine    = directory / L"fgb-cli.exe";
     std::error_code ec;
     if (engine.empty() || !std::filesystem::exists(engine, ec)) {
-        MessageBoxW(g_host.hwnd, L"找不到 fgb-cli.exe（应与本程序在同一目录）。", kWindowTitle,
-                    MB_ICONERROR | MB_OK);
+        report_error(L"找不到 fgb-cli.exe（应与本程序在同一目录）。");
         return false;
     }
 
@@ -559,8 +893,7 @@ bool spawn_engine(const std::wstring& source) {
         ::CloseHandle(log);
     }
     if (ok == 0) {
-        MessageBoxW(g_host.hwnd, L"启动引擎失败（fgb-cli.exe 无法创建）。", kWindowTitle,
-                    MB_ICONERROR | MB_OK);
+        report_error(L"启动引擎失败（fgb-cli.exe 无法创建）。");
         return false;
     }
 
@@ -581,14 +914,33 @@ bool spawn_engine(const std::wstring& source) {
         ::OutputDebugStringW(L"FaceGaze Bridge: AssignProcessToJobObject failed\n");
     }
 
-    g_host.engine_process = process.hProcess;
-    g_host.engine_owned   = true;
+    g_host.engine_process    = process.hProcess;
+    g_host.engine_owned      = true;
+    g_host.engine_alive      = true;
+    g_host.stop_requested    = false;
+    g_host.engine_started_ms = ::GetTickCount64();
     trace_startup(L"引擎已拉起（fgb-cli）");
+    // 引擎可能已经在跑（我们只是重新拉起），托盘菜单状态立刻跟上
+    update_tray_state();
     ::SetTimer(g_host.hwnd, kEngineTimer, kEnginePollMs, nullptr);
     return true;
 }
 
-// 引擎退出：界面已经连上过 = 用户按了"停止引擎"或引擎自己结束，跟着退出；
+// 切到 VMC 重试：把 --source 的旧值一起丢掉，否则 --source vrcft 与新的 vmc 会同时生效
+void switch_to_vmc() {
+    std::vector<std::wstring> kept;
+    for (std::size_t i = 0; i < g_host.engine_args.size(); ++i) {
+        if (g_host.engine_args[i] == L"--source") {
+            ++i;
+            continue;
+        }
+        kept.push_back(g_host.engine_args[i]);
+    }
+    g_host.engine_args   = std::move(kept);
+    g_host.default_source = L"vmc";
+}
+
+// 引擎退出：界面已经连上过 = 用户按了"停止引擎"或引擎自己结束；
 // 还没连上就退出 = 启动失败（最常见是没装 VRCFT 模块），给一次切 VMC 的机会。
 void on_engine_exit(DWORD exit_code) {
     KillTimer(g_host.hwnd, kEngineTimer);
@@ -596,6 +948,16 @@ void on_engine_exit(DWORD exit_code) {
         ::CloseHandle(g_host.engine_process);
         g_host.engine_process = nullptr;
     }
+    g_host.engine_alive = false;
+    update_tray_state();
+
+    // 分清"用户要它停"与"它启动失败了"：托盘菜单点了停止、界面点了停止、
+    // 或者它已经正常跑了 3 秒以上，都算前者。否则会对着"退出码 0"报启动失败。
+    const bool intentional_stop =
+        g_host.stop_requested ||
+        (g_host.engine_started_ms != 0 &&
+         ::GetTickCount64() - g_host.engine_started_ms > 3000);
+    g_host.stop_requested = false;
 
     // 界面里改了模块配置：原地拉起新引擎，窗口不动
     if (exit_code == kEngineRestartExit && g_host.engine_owned) {
@@ -610,12 +972,41 @@ void on_engine_exit(DWORD exit_code) {
             }
             return;
         }
-        PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
+        if (g_host.tray_icon && !g_host.quitting) {
+            show_tray_balloon(tray_text().engine_failed);
+            return;
+        }
+        quit_app();
         return;
     }
 
-    if (g_host.navigated_ok) {
-        PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
+    if (intentional_stop || g_host.navigated_ok) {
+        // 托盘形态：引擎停了但窗口留在托盘，用户可以再启动（ADR-0022）
+        if (g_host.tray_icon && !g_host.quitting) {
+            set_title(L"引擎已停止");
+            show_tray_balloon(tray_text().stopped);
+            return;
+        }
+        quit_app();
+        return;
+    }
+
+    // ---- 还没起来就退出了：启动失败 ----
+    if (g_host.tray_mode && !g_host.quitting) {
+        // 自启动/托盘场景不该弹模态框（用户不在电脑前），但也不能静默失败：
+        // 先按老规矩尝试一次 VMC（有气泡说明），仍失败就留在托盘等用户处理
+        if (!g_host.tray_vmc_fallback && exit_code != 0) {
+            g_host.tray_vmc_fallback = true;
+            switch_to_vmc();
+            if (spawn_engine(L"vmc")) {
+                show_tray_balloon(tray_text().vmc_fallback);
+                return;
+            }
+        }
+        const std::wstring line = L"引擎启动失败（退出码 " + std::to_wstring(exit_code) +
+                                  L"），留在托盘等待重试";
+        trace_startup(line.c_str());
+        show_tray_balloon(tray_text().engine_failed);
         return;
     }
 
@@ -627,41 +1018,76 @@ void on_engine_exit(DWORD exit_code) {
     const int answer = MessageBoxW(g_host.hwnd, message.c_str(), kWindowTitle,
                                    MB_YESNO | MB_ICONERROR | MB_SETFOREGROUND);
     if (answer != IDYES) {
-        PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
+        quit_app();
         return;
     }
 
-    std::vector<std::wstring> kept;
-    for (std::size_t i = 0; i < g_host.engine_args.size(); ++i) {
-        if (g_host.engine_args[i] == L"--source") {
-            ++i; // 连同取值一起丢掉，否则 --source vrcft 和新加的 vmc 会同时生效
-            continue;
-        }
-        kept.push_back(g_host.engine_args[i]);
-    }
-    g_host.engine_args = std::move(kept);
-    g_host.default_source = L"vmc";
-
+    switch_to_vmc();
     if (spawn_engine(L"vmc")) {
         navigate_once();
     } else {
-        PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
+        quit_app();
     }
 }
 
 void poll_engine() {
-    if (!g_host.engine_owned || g_host.engine_process == nullptr) {
+    if (g_host.engine_owned) {
+        if (g_host.engine_process == nullptr) {
+            return;
+        }
+        DWORD code = 0;
+        if (::GetExitCodeProcess(g_host.engine_process, &code) == 0 || code == STILL_ACTIVE) {
+            return;
+        }
+        on_engine_exit(code);
         return;
     }
-    DWORD code = 0;
-    if (::GetExitCodeProcess(g_host.engine_process, &code) == 0 || code == STILL_ACTIVE) {
-        return;
+
+    // 附着别人起的引擎：只观察、不接管。托盘菜单的状态要跟着变，
+    // 否则用户会对着一个"停止引擎"点下去却什么都没发生。
+    const bool alive = engine_present(g_host.port);
+    if (alive != g_host.engine_alive) {
+        g_host.engine_alive = alive;
+        set_title(alive ? L"" : L"引擎已停止");
+        update_tray_state();
+        if (!alive) {
+            show_tray_balloon(tray_text().stopped);
+        }
     }
-    on_engine_exit(code);
 }
 
 LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+    // 第二个实例发来的"把窗口带出来"：窗口可能在托盘里藏着
+    if (g_host.restore_message != 0 && message == g_host.restore_message) {
+        show_main_window();
+        return 0;
+    }
+
+    // 资源管理器崩溃/重启后托盘图标会消失，这是 Shell_NotifyIcon 的经典问题：
+    // 收到系统的 TaskbarCreated 广播就重新加一次，否则用户会以为程序没了
+    if (g_host.taskbar_created != 0 && message == g_host.taskbar_created) {
+        remove_tray_icon(); // 旧图标属于已经不存在的托盘，顺手把句柄释放掉
+        add_tray_icon();
+        return 0;
+    }
+
     switch (message) {
+    case kTrayCallback:
+        switch (LOWORD(lparam)) {
+        case WM_LBUTTONUP:
+        case WM_LBUTTONDBLCLK:
+            // 单击就能打开：托盘应用最常见的抱怨是"点了没反应"
+            show_main_window();
+            break;
+        case WM_RBUTTONUP:
+        case WM_CONTEXTMENU:
+            show_tray_menu();
+            break;
+        default:
+            break;
+        }
+        return 0;
+
     case WM_SIZE:
         if (g_host.controller) {
             RECT bounds{};
@@ -717,6 +1143,12 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
     }
 
     case WM_CLOSE:
+        // 关窗 ≠ 退出（ADR-0022）：收进托盘，追踪继续；托盘「退出」才停引擎。
+        // 没有托盘图标时不能藏窗口——那会留下一个用户点不到的进程。
+        if (!g_host.quitting && g_host.tray_icon) {
+            hide_main_window();
+            return 0;
+        }
         // WebView2 要求先关控制器再销毁窗口，否则会在退出时留下
         // "msedgewebview2.exe 仍在运行"的尾巴
         if (g_host.controller) {
@@ -727,7 +1159,17 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
         DestroyWindow(hwnd);
         return 0;
 
+    case WM_QUERYENDSESSION:
+        // 关机/注销：允许系统结束我们，否则会被当成"阻止关机"
+        g_host.quitting = true;
+        return TRUE;
+
+    case WM_ENDSESSION:
+        g_host.quitting = true;
+        return 0;
+
     case WM_DESTROY:
+        remove_tray_icon();
         PostQuitMessage(0);
         return 0;
 
@@ -764,7 +1206,9 @@ void apply_dark_title_bar(HWND hwnd) {
 
 struct Options {
     std::uint16_t port = 8787;
+    bool port_explicit = false; // 显式 --port 表示"attach 到这个引擎"，不是普通双击
     int debug_port     = 0;
+    bool tray          = false; // --tray：只驻留托盘，启动时不弹窗口（SteamVR 自启动用）
     std::wstring url;
     std::wstring user_data_dir = default_user_data_dir();
     // 认不出来的参数原样转给引擎：--source vmc / --vmc-out / --vrchat 这类不用外壳理解
@@ -776,18 +1220,52 @@ Options parse_options(int argc, wchar_t** argv) {
     for (int i = 1; i < argc; ++i) {
         const std::wstring arg = argv[i];
         if (arg == L"--port" && i + 1 < argc) {
-            options.port = static_cast<std::uint16_t>(_wtoi(argv[++i]));
+            options.port          = static_cast<std::uint16_t>(_wtoi(argv[++i]));
+            options.port_explicit = true;
         } else if (arg == L"--url" && i + 1 < argc) {
             options.url = argv[++i];
         } else if (arg == L"--user-data" && i + 1 < argc) {
             options.user_data_dir = argv[++i];
         } else if (arg == L"--debug-port" && i + 1 < argc) {
             options.debug_port = _wtoi(argv[++i]);
+        } else if (arg == L"--tray") {
+            // 壳自己的参数，不能转给引擎（那边会当成未知参数退出码 2）
+            options.tray = true;
         } else {
             options.engine_args.push_back(arg);
         }
     }
     return options;
+}
+
+// 已有实例就把它的窗口带到前台，自己退出。返回 true 表示"这次不用继续启动了"。
+//
+// 例外：带了 --debug-port / --url / --port 的是排障、探针或"attach 到指定引擎"的实例，
+// 允许多开（AGENT.md §3.4：CDP 端口要靠单独的 user-data 才监听；
+// fgb-cli --ui 就是用 --port 拉起外壳的，不能让它被已有窗口顶掉）。
+bool restore_existing_instance(const Options& options) {
+    if (options.debug_port > 0 || !options.url.empty() || options.port_explicit) {
+        return false;
+    }
+    // 注册消息号要在两个实例里都注册：窗口自己要认这条消息，第二个实例要发它
+    g_host.restore_message = ::RegisterWindowMessageW(kRestoreMessage);
+
+    g_host.instance_mutex = ::CreateMutexW(nullptr, TRUE, kInstanceMutex);
+    if (g_host.instance_mutex == nullptr || ::GetLastError() != ERROR_ALREADY_EXISTS) {
+        return false; // 第一个实例：继续正常启动，互斥体活着直到进程退出
+    }
+
+    // 用广播而不是 FindWindow：注册消息会送到所有顶层窗口，自家窗口认出后显示自己。
+    // 这样不用先知道对方的 HWND（托盘形态下窗口可能是隐藏的，按类名找并不总是可靠）。
+    if (g_host.restore_message != 0) {
+        ::PostMessageW(HWND_BROADCAST, g_host.restore_message, 0, 0);
+        // 给第一个实例一点时间把窗口显示出来，再退出；否则用户会看到"什么都没发生"
+        ::Sleep(150);
+    }
+    trace_startup(L"已有实例在运行，已请求恢复现有窗口");
+    ::CloseHandle(g_host.instance_mutex);
+    g_host.instance_mutex = nullptr;
+    return true;
 }
 
 } // namespace
@@ -809,6 +1287,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
         LocalFree(argv);
     }
 
+    // 单实例守卫必须在 COM/WebView2 之前：第二个进程只该是一次"叫醒"
+    if (restore_existing_instance(options)) {
+        return 0;
+    }
+    g_host.taskbar_created = ::RegisterWindowMessageW(L"TaskbarCreated");
+
     WSADATA wsa{};
     const bool wsa_ok = ::WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
 
@@ -821,9 +1305,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
         return 1;
     }
 
-    g_host.user_data_dir = options.user_data_dir;
-    g_host.port          = options.port;
-    g_host.engine_args   = options.engine_args;
+    g_host.user_data_dir  = options.user_data_dir;
+    g_host.port           = options.port;
+    g_host.engine_args    = options.engine_args;
+    g_host.tray_mode      = options.tray;
     // 产品默认走 VRCFT 模块；没模块时失败弹窗可以一键切 VMC
     g_host.default_source = L"vrcft";
     if (options.debug_port > 0) {
@@ -831,19 +1316,26 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
                               std::to_wstring(options.debug_port);
     }
 
-    // 先把 WebView2 运行时叫醒：窗口、引擎都很快，剩下的等待几乎全在它身上
-    const HRESULT environment_hr = create_environment();
-    if (FAILED(environment_hr)) {
-        trace_startup(L"WebView2 加载器调用失败");
-        wchar_t message[256];
-        std::swprintf(message, 256, L"WebView2 加载器调用失败（0x%08lX）。",
-                      static_cast<unsigned long>(environment_hr));
-        MessageBoxW(nullptr, message, kWindowTitle, MB_ICONERROR | MB_OK);
-        CoUninitialize();
-        if (wsa_ok) {
-            ::WSACleanup();
+    // 先把 WebView2 运行时叫醒：窗口、引擎都很快，剩下的等待几乎全在它身上。
+    // 托盘启动时反过来——用户可能整晚都不开窗口，没必要先养两个浏览器进程，
+    // 等第一次「显示窗口」再按需创建（show_main_window）。
+    if (!g_host.tray_mode) {
+        g_host.webview_requested = true;
+        const HRESULT environment_hr = create_environment();
+        if (FAILED(environment_hr)) {
+            trace_startup(L"WebView2 加载器调用失败");
+            wchar_t message[256];
+            std::swprintf(message, 256, L"WebView2 加载器调用失败（0x%08lX）。",
+                          static_cast<unsigned long>(environment_hr));
+            MessageBoxW(nullptr, message, kWindowTitle, MB_ICONERROR | MB_OK);
+            CoUninitialize();
+            if (wsa_ok) {
+                ::WSACleanup();
+            }
+            return 1;
         }
-        return 1;
+    } else {
+        trace_startup(L"托盘启动：WebView2 与窗口都按需创建");
     }
 
     const HINSTANCE module = instance != nullptr ? instance : GetModuleHandleW(nullptr);
@@ -901,53 +1393,70 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     }
 
     apply_dark_title_bar(g_host.hwnd);
-    ShowWindow(g_host.hwnd, show_command == 0 ? SW_SHOWNORMAL : show_command);
-    UpdateWindow(g_host.hwnd);
-    g_host.status = L"正在加载界面";
-    SetTimer(g_host.hwnd, kLoadingTimer, kLoadingTickMs, nullptr);
-    trace_startup(L"窗口已显示");
+    if (!g_host.tray_mode) {
+        ShowWindow(g_host.hwnd, show_command == 0 ? SW_SHOWNORMAL : show_command);
+        UpdateWindow(g_host.hwnd);
+        g_host.status = L"正在加载界面";
+        SetTimer(g_host.hwnd, kLoadingTimer, kLoadingTickMs, nullptr);
+        trace_startup(L"窗口已显示");
+    } else {
+        g_host.status = L"正在启动";
+        trace_startup(L"托盘模式：窗口保持隐藏");
+    }
+    // 托盘图标两种模式都要有：发版形态下关闭窗口 = 收进托盘（ADR-0022）
+    add_tray_icon();
 
     // 先看有没有自家引擎（可能在新端口上），没有再挑一个空闲端口新建。
     // 8787 被别的程序占用时自动用 8788/8789…，界面地址跟着变。
     bool attached = false;
+    bool fatal    = false;
     if (options.url.empty()) {
         const PortChoice choice = choose_engine_port(options.port);
         if (!choice.ok) {
-            MessageBoxW(g_host.hwnd,
-                        L"8787–8796 端口都被占用了，无法启动控制面。\n"
-                        L"请关闭占用这些端口的程序，或用 --port 指定别的起始端口。",
-                        kWindowTitle, MB_ICONERROR | MB_OK);
-            CoUninitialize();
-            if (wsa_ok) {
-                ::WSACleanup();
-            }
-            return 1;
+            report_error(L"8787–8796 端口都被占用了，无法启动控制面。\n"
+                         L"请关闭占用这些端口的程序，或用 --port 指定别的起始端口。");
+            fatal = true;
+        } else {
+            g_host.port = choice.port;
+            attached    = choice.attached;
+            trace_startup(L"引擎端口已选定");
+            wchar_t buffer[128];
+            std::swprintf(buffer, 128, L"http://127.0.0.1:%u/",
+                          static_cast<unsigned>(g_host.port));
+            g_host.url = buffer;
         }
-        g_host.port = choice.port;
-        attached    = choice.attached;
-        trace_startup(L"引擎端口已选定");
-        wchar_t buffer[128];
-        std::swprintf(buffer, 128, L"http://127.0.0.1:%u/",
-                      static_cast<unsigned>(g_host.port));
-        g_host.url = buffer;
     } else {
         g_host.url = options.url;
         attached   = wsa_ok && engine_present(g_host.port);
     }
 
-    // 已有引擎（例如命令行起的）就只连不动；否则拉一个，藏在后台。
-    if (attached) {
-        trace_startup(L"已有引擎在跑，直接连接");
-    } else if (!spawn_engine(g_host.default_source)) {
-        // 拉不起来就别留一块永远转圈的窗口；spawn_engine 已经弹过原因
-        PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
-    } else {
-        // 只有页面在我们自己的端口上时才等引擎应答；--url 指到别处就照旧直接导航
-        g_host.expect_engine = options.url.empty();
+    if (!fatal) {
+        // 已有引擎（例如命令行起的）就只连不动；否则拉一个，藏在后台。
+        if (attached) {
+            g_host.engine_alive = true;
+            trace_startup(L"已有引擎在跑，直接连接");
+        } else if (!spawn_engine(g_host.default_source)) {
+            // 拉不起来就别留一块永远转圈的窗口；spawn_engine 已经报过原因
+            fatal = true;
+        } else {
+            // 只有页面在我们自己的端口上时才等引擎应答；--url 指到别处就照旧直接导航
+            g_host.expect_engine = options.url.empty();
+        }
     }
 
-    // 环境可能已就绪，也可能还在起；两条路都会走到 attach_webview
-    attach_webview();
+    if (fatal) {
+        // 托盘形态下留在托盘里（用户可以重试或退出），窗口形态直接退出
+        if (!g_host.tray_mode) {
+            g_host.quitting = true;
+            PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
+        }
+    } else {
+        // 附着别人的引擎时也要能发现它退出了：托盘菜单的状态来自这个轮询
+        ::SetTimer(g_host.hwnd, kEngineTimer, kEnginePollMs, nullptr);
+
+        // 环境可能已就绪，也可能还在起；两条路都会走到 attach_webview
+        attach_webview();
+    }
 
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0) > 0) {
@@ -960,6 +1469,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
         g_host.controller.Reset();
     }
     g_host.webview.Reset();
+    remove_tray_icon();
 
     // Job 句柄一关，自己拉起的引擎（及其模块子进程）随之结束
     if (g_host.engine_job != nullptr) {
@@ -969,6 +1479,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     if (g_host.engine_process != nullptr) {
         ::CloseHandle(g_host.engine_process);
         g_host.engine_process = nullptr;
+    }
+    if (g_host.instance_mutex != nullptr) {
+        ::CloseHandle(g_host.instance_mutex);
+        g_host.instance_mutex = nullptr;
     }
 
     CoUninitialize();

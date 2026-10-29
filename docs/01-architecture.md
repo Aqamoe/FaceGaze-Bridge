@@ -714,8 +714,9 @@ SetApplicationAutoLaunch("com.facegazebridge.desktop", true)
 GetApplicationAutoLaunch(...)       ← 读回校验，失败给具体原因
 ```
 
-OpenVR 调用放在引擎而不是外壳：外壳仍然只负责窗口与引擎生命周期，开关通过
-WebSocket 走控制面；命令行/探针/未来的托盘共用同一套入口。
+OpenVR 调用放在引擎而不是外壳：外壳仍然只负责窗口、托盘与引擎生命周期，开关通过
+WebSocket 走控制面；命令行/探针/托盘共用同一套入口（托盘已实现，见
+[ADR-0022](adr/0022-tray-shell-and-close-semantics.md)）。
 
 关键约束：
 
@@ -724,8 +725,9 @@ WebSocket 走控制面；命令行/探针/未来的托盘共用同一套入口�
 - `VRApplication_Background` 在 SteamVR 未运行时初始化失败——设置开关必须在
   SteamVR 正在运行时操作；界面要把"先启动 SteamVR"说清楚。
 - 自启动拉起的是 `FaceGaze Bridge.exe --tray`，维持单入口与 Job 生命周期；
-  不直接拉起 `fgb-cli`（控制台黑框、生命周期脱钩）。**托盘是上线前置**：
-  启动后只进托盘、不弹窗口；托盘完成前不开放此功能。
+  不直接拉起 `fgb-cli`（控制台黑框、生命周期脱钩）。**托盘这一前置已完成**
+  （[ADR-0022](adr/0022-tray-shell-and-close-semantics.md)）：`--tray` 只进托盘、
+  不弹窗口；关窗也只是收进托盘。
 - 不自动注册、不写注册表、不注册 Steam 库应用。完整状态机与风险见
   [ADR-0020](adr/0020-steamvr-autostart.md)。
 

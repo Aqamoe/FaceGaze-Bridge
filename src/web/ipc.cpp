@@ -950,8 +950,28 @@ bool IpcServer::handle_http(const net::ws::HttpHead& head, std::string& body,
                             std::string& content_type) {
     content_type = "application/json; charset=utf-8";
 
-    if (head.method != "GET") {
+    // 控制类接口只给本机回环，GET/POST 都接受：外壳用最简单的 socket 发 POST，
+    // curl 排障时懒得带 -X 也能用（照旧只绑 127.0.0.1）。
+    if (head.method != "GET" && head.method != "POST") {
         return false;
+    }
+
+    if (head.path == "/api/quit" || head.path == "/api/restart") {
+        // 托盘外壳据此实现「停止引擎 / 重启引擎」，不需要理解 WebSocket 协议
+        if (ctx_.quit == nullptr) {
+            return false;
+        }
+        const bool restart = head.path == "/api/restart";
+        if (restart && ctx_.restart_engine == nullptr) {
+            return false;
+        }
+        ctx_.quit->store(true, std::memory_order_release);
+        if (restart) {
+            ctx_.restart_engine->store(true, std::memory_order_release);
+        }
+        FGB_INFO(kTag, "%s", restart ? "收到控制面请求：重启引擎" : "收到控制面请求：停止引擎");
+        body = R"({"ok":true})";
+        return true;
     }
 
     if (head.path == "/api/status") {

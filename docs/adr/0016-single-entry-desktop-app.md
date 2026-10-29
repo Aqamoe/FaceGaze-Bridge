@@ -1,7 +1,11 @@
 # ADR-0016 · 单入口桌面应用：窗口拉起引擎，关窗即停
 
+> **后续**：关窗语义已由 [ADR-0022](0022-tray-shell-and-close-semantics.md) 修订——
+> 现在"关闭窗口 = 收进托盘，追踪继续；托盘「退出」才停引擎"。本文其余决定
+> （单入口、Job 生命周期、端口扫描、默认 VRCFT 输入源）不变。
+
 - 状态：已采纳（对打包发行版取代 [ADR-0010](0010-webview2-ui-and-websocket-ipc.md) 里"界面可单独关闭、
-  引擎继续跑"的使用方式）
+  引擎继续跑"的使用方式；关窗语义见 ADR-0022）
 - 日期：2026-10-29
 - 影响：`src/ui/main.cpp`、`fgb-ui` 输出名改为 `FaceGaze Bridge.exe`、`packaging/`（新增 `icon.ico` /
   `app.rc.in`，删除两个 `.cmd`）、install 规则、`launch_ui` 查找的名字、`--panel` 启动失败改为致命
@@ -48,7 +52,8 @@ fgb-cli run --source vmc   --ui
 外壳创建 `CreateJobObject` + `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`，把**自己拉起的**引擎放进去。
 外壳正常关闭、崩溃、被任务管理器结束，句柄一关引擎（及其模块子进程）跟着结束：
 
-- 关闭窗口 = 停止追踪。这是普通桌面软件的预期，也避免"界面没了但输出还在发"的黑盒状态
+- 关闭窗口 = 停止追踪（**已被 ADR-0022 修订为"收进托盘"**）。这是普通桌面软件的预期，
+  也避免"界面没了但输出还在发"的黑盒状态；引入托盘后这条改用托盘菜单的「退出」表达
 - `restart_engine`（退出码 3）时外壳只重新拉起引擎，**不重新导航**：页面保持原样，
   WebSocket 自己重连；避免重启时白屏/丢页面
 - 别人起的引擎没有句柄关系，外壳退出不会误杀它（命令行/自动化排查时依然可以"关界面不停追踪"）
@@ -92,5 +97,6 @@ fgb-cli run --source vmc   --ui
 
 - `cmake --install` 后双击 `dist/FaceGaze Bridge.exe`：窗口出现、页面连上、图标为项目图标
 - `"FaceGaze Bridge.exe" --debug-port 9222` + `python tools/probe_ui.py 9222 8787` 断言页面渲染
-- 关闭窗口后，任务管理器里没有残留的 `fgb-cli.exe` / `msedgewebview2.exe`
+- 托盘「退出」后，任务管理器里没有残留的 `fgb-cli.exe` / `msedgewebview2.exe`
+  （关闭窗口只是收进托盘，引擎继续跑，见 ADR-0022）
 - 无模块环境：弹窗出现，选"是"后以 VMC 启动并连上
