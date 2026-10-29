@@ -8,14 +8,14 @@ add_executable(fgb-tests
     test_oscquery.cpp
     test_outputs.cpp
     test_stream_out.cpp
+    test_sinks_stress.cpp
     test_vrcft_protocol.cpp
     test_v1_params.cpp
     test_capture.cpp
     test_calibration.cpp
     test_gaze.cpp
-    test_crash.cpp
     test_engine_stats.cpp
-    test_sinks_stress.cpp
+    test_crash.cpp
     test_ws.cpp
     test_json.cpp
     test_modules.cpp
