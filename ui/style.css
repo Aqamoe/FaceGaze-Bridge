@@ -604,3 +604,45 @@ body {
 
 .mod-toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--dim); }
 .mod-toggle input { accent-color: var(--acc); }
+
+/* ---------- 提示条 ---------- */
+.toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  max-width: 460px;
+  padding: 11px 16px;
+  border-radius: 10px;
+  border: 1px solid #2c4260;
+  background: #101c36;
+  color: var(--fg);
+  font-size: 12.5px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / .45);
+  z-index: 50;
+  animation: toast-in .18s ease-out;
+}
+.toast.error {
+  border-color: rgb(251 113 133 / .45);
+  color: #ffb3bd;
+  background: #2a1620;
+}
+@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* 可勾选的导入候选 */
+.import-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+.import-card .import-check {
+  margin-top: 4px;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  accent-color: var(--acc);
+}
+.import-body { flex: 1; min-width: 0; }
+
+/* 模块异常经常是 .NET 堆栈：允许换行，避免把卡片撑破 */
+.module-error { white-space: pre-wrap; word-break: break-word; max-height: 180px; overflow-y: auto; }

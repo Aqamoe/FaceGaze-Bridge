@@ -156,7 +156,9 @@
 
         <div class="section-head" id="importable-head" hidden>
           <h2 data-i18n="modules.importable.title">检测到本机模块</h2>
-          <button class="btn small" id="mod-import-all" data-i18n="modules.import_all">全部导入</button>
+          <span class="muted" id="importable-count">—</span>
+          <label class="switch"><input type="checkbox" id="import-select-all"> <span data-i18n="modules.import_select_all">全选</span></label>
+          <button class="btn small" id="mod-import-selected" disabled data-i18n="modules.import_selected">导入所选</button>
         </div>
         <div class="module-list" id="importable-list"></div>
         <p class="hint" id="importable-hint" hidden data-i18n="modules.importable.hint">
@@ -279,6 +281,7 @@
     </div>
   </main>
 </div>
+<div class="toast" id="toast" hidden></div>
 <script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>

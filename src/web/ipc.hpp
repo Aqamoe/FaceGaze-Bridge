@@ -81,6 +81,9 @@ public:
     // 引擎主循环里每帧调用。内部自带节流：状态与参数各 10 Hz 推送。
     void pump(int timeout_ms);
 
+    // 删除正在运行的模块：引擎停下、DLL 解锁之后再执行，返回要删除的 id
+    std::string take_pending_delete();
+
 private:
     struct LogLine {
         int level = 2;
@@ -130,6 +133,7 @@ private:
     std::deque<LogLine> recent_logs_; // 最近若干行，新连接建立时补发
     std::mutex log_mutex_;
     std::unique_ptr<vrcft::ModuleLibrary> library_;
+    std::string pending_delete_id_;
     std::shared_ptr<PickerState> picker_;
     std::chrono::steady_clock::time_point last_library_push_{};
 };

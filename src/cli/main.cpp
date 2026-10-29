@@ -714,6 +714,19 @@ int cmd_run(int argc, char** argv) {
     engine.stop();
     fgb::clock::restore_timer_resolution();
 
+    // 删除正在运行的模块：DLL 在 engine.stop() 后才解锁，这里补做删除再重启
+    if (ipc) {
+        const std::string pending_delete = ipc->take_pending_delete();
+        if (!pending_delete.empty() && module_registry) {
+            std::string remove_error;
+            if (module_registry->remove_module(pending_delete, remove_error)) {
+                FGB_INFO("modules", "停机后删除模块：%s", pending_delete.c_str());
+            } else {
+                FGB_WARN("modules", "停机后删除模块失败：%s", remove_error.c_str());
+            }
+        }
+    }
+
     const auto st = engine.stats();
     std::fprintf(stderr, "[done] tick=%llu frames=%llu late=%llu\n",
                  static_cast<unsigned long long>(st.ticks),

@@ -14,6 +14,18 @@
 
 const $ = (id) => document.getElementById(id);
 
+let toast_timer = null;
+function show_toast(text, kind) {
+  const node = $("toast");
+  node.textContent = text;
+  node.className = "toast" + (kind === "error" ? " error" : "");
+  node.hidden = false;
+  clearTimeout(toast_timer);
+  toast_timer = setTimeout(() => {
+    node.hidden = true;
+  }, 4200);
+}
+
 // ---------- 本地化 ----------
 //
 // 文案在 ui/i18n.js，这里只做查表与"缺键回落到中文"。
@@ -116,6 +128,7 @@ const state = {
   modules: null,
   library: null,
   library_requested: false,
+  import_selection: new Set(),
   status: null,
   source_rows: [],
   running_rows: [],
@@ -239,7 +252,13 @@ function handle(message) {
       break;
     case "ack":
       if (!message.ok && message.error) {
+        show_toast(`${message.command}: ${message.error}`, "error");
         push_log({ level: "warn", tag: "ui", message: `${message.command}: ${message.error}` });
+      } else if (message.ok && message.message) {
+        show_toast(message.message);
+        if (message.command === "import_modules") {
+          state.import_selection.clear();
+        }
       } else if (message.command === "reload_avatar" && message.ok) {
         push_log({ level: "info", tag: "ui", message: t("log.avatar_reloaded") });
       }
@@ -651,7 +670,13 @@ function installed_card(item) {
 
   const remove = el("button", "btn danger small", t("modules.delete"));
   remove.addEventListener("click", () => {
-    if (window.confirm(t("modules.delete_confirm", { name: item.name || item.id }))) {
+    const live = ((state.status && state.status.modules) || [])
+      .find((entry) => entry.module_id === item.id);
+    const running = !!(item.running || live);
+    const text = running
+      ? t("modules.delete_confirm_running", { name: item.name || item.id })
+      : t("modules.delete_confirm", { name: item.name || item.id });
+    if (window.confirm(text)) {
       send({ type: "delete_module", id: item.id });
     }
   });
@@ -664,13 +689,36 @@ function render_importable(items) {
   const list = $("importable-list");
   const head = $("importable-head");
   const hint = $("importable-hint");
+  const available = new Set(items.map((item) => item.id));
+  for (const id of [...state.import_selection]) {
+    if (!available.has(id)) {
+      state.import_selection.delete(id);
+    }
+  }
+
   list.textContent = "";
   head.hidden = !items.length;
   hint.hidden = !items.length;
-  $("mod-import-all").disabled = !items.length;
+  $("importable-count").textContent = items.length
+    ? t("modules.importable.count", { count: items.length })
+    : "";
 
   for (const item of items) {
-    const card = el("article", "import-card");
+    const card = el("label", "import-card");
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.className = "import-check";
+    check.checked = state.import_selection.has(item.id);
+    check.addEventListener("change", () => {
+      if (check.checked) {
+        state.import_selection.add(item.id);
+      } else {
+        state.import_selection.delete(item.id);
+      }
+      update_import_selection_ui();
+    });
+
+    const body = el("div", "import-body");
     const header = el("div", "module-head");
     header.append(el("strong", "", item.name || item.id));
     if (item.version) {
@@ -680,27 +728,37 @@ function render_importable(items) {
       header.append(el("span", "module-author", item.author));
     }
     header.append(el("span", "chip", item.origin || "VRCFT"));
-    card.append(header);
+    body.append(header);
 
     if (item.description) {
-      card.append(el("p", "module-desc", item.description));
+      body.append(el("p", "module-desc", item.description));
     }
     const meta = el("div", "module-meta");
     meta.append(el("span", "", `${t("modules.id")}  ${item.id}`));
     meta.append(el("span", "", item.dir || ""));
-    card.append(meta);
-
-    const actions = el("div", "module-actions");
-    const import_button = el("button", "btn small", t("modules.import"));
-    import_button.disabled = !!item.broken;
-    import_button.addEventListener("click", () => send({ type: "import_module", id: item.id }));
-    actions.append(import_button);
+    body.append(meta);
     if (item.broken) {
-      actions.append(el("span", "muted", t("state.broken")));
+      body.append(el("div", "module-error", t("state.broken")));
     }
-    card.append(actions);
+
+    card.append(check, body);
     list.append(card);
   }
+  update_import_selection_ui();
+}
+
+function update_import_selection_ui() {
+  const items = (state.modules && state.modules.importable) || [];
+  const total = items.length;
+  const selected = state.import_selection.size;
+  const button = $("mod-import-selected");
+  button.disabled = selected === 0;
+  button.textContent = selected
+    ? t("modules.import_selected_count", { count: selected })
+    : t("modules.import_selected");
+  const all = $("import-select-all");
+  all.checked = total > 0 && selected === total;
+  all.indeterminate = selected > 0 && selected < total;
 }
 
 function rating_stars(value) {
@@ -1060,8 +1118,24 @@ function wire() {
       send({ type: "restart_engine" });
     }
   });
-  $("mod-import-all").addEventListener("click", () => {
-    send({ type: "import_all" });
+  $("import-select-all").addEventListener("change", () => {
+    const items = (state.modules && state.modules.importable) || [];
+    const all = $("import-select-all").checked;
+    state.import_selection.clear();
+    if (all) {
+      for (const item of items) {
+        state.import_selection.add(item.id);
+      }
+    }
+    if (state.modules) {
+      render_importable(items);
+    }
+  });
+  $("mod-import-selected").addEventListener("click", () => {
+    if (!state.import_selection.size) {
+      return;
+    }
+    send({ type: "import_modules", ids: [...state.import_selection].join(",") });
   });
   $("lib-refresh").addEventListener("click", () => {
     send({ type: "refresh_library" });

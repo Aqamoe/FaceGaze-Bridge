@@ -628,6 +628,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     bool modules_dirty_only = false;
     bool library_touched    = false;
     std::string modules_message;
+    std::string ack_message;
 
     const bool has_type = json::field_string(text, "type", type);
     FGB_DEBUG(kTag, "命令：%.*s", static_cast<int>(text.size()), text.data());
@@ -665,7 +666,10 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             ctx_.active_module_id = ctx_.modules->active_id();
             modules_touched       = true;
             modules_message       = "模块列表已刷新";
-            ok                    = true;
+            ack_message = "扫描完成：" + std::to_string(ctx_.modules->modules().size()) +
+                          " 个已安装，" + std::to_string(ctx_.modules->importable().size()) +
+                          " 个可导入";
+            ok = true;
         }
     } else if (has_type && type == "set_module") {
         std::string id;
@@ -704,7 +708,17 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         if (ctx_.modules == nullptr) {
             error = "module registry not available";
         } else if (running) {
-            error = "模块正在运行，请先在设置页停止引擎再删除";
+            // DLL 正被模块进程加载，直接删会失败。标记为"停机后删除"，
+            // 引擎停止（模块进程退出）后由 cmd_run 执行，然后自动重启。
+            pending_delete_id_ = id;
+            if (ctx_.restart_engine != nullptr) {
+                ctx_.restart_engine->store(true, std::memory_order_release);
+            }
+            if (ctx_.quit != nullptr) {
+                ctx_.quit->store(true, std::memory_order_release);
+            }
+            ack_message = "模块正在运行：停止引擎、删除文件后会自动重启";
+            ok          = true;
         } else {
             std::string remove_error;
             const bool removed = ctx_.modules->remove_module(id, remove_error);
@@ -730,6 +744,46 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             ok                    = imported;
             if (!imported) {
                 error = import_error;
+            }
+        }
+    } else if (has_type && type == "import_modules") {
+        std::string ids_text;
+        json::field_string(text, "ids", ids_text);
+        if (ctx_.modules == nullptr) {
+            error = "module registry not available";
+        } else if (ids_text.empty()) {
+            error = "missing module ids";
+        } else {
+            std::vector<std::string> ids;
+            std::size_t begin = 0;
+            while (begin <= ids_text.size()) {
+                const std::size_t comma = ids_text.find(',', begin);
+                const std::size_t end = comma == std::string::npos ? ids_text.size() : comma;
+                if (end > begin) {
+                    ids.push_back(ids_text.substr(begin, end - begin));
+                }
+                if (comma == std::string::npos) {
+                    break;
+                }
+                begin = comma + 1;
+            }
+            std::size_t done = 0;
+            std::string first_error;
+            for (const std::string& id : ids) {
+                std::string import_error;
+                if (ctx_.modules->import_module(id, import_error)) {
+                    ++done;
+                } else if (first_error.empty()) {
+                    first_error = import_error;
+                }
+            }
+            ctx_.active_module_id = ctx_.modules->active_id();
+            modules_touched       = true;
+            modules_message       = "已导入 " + std::to_string(done) + " 个模块";
+            ack_message           = modules_message;
+            ok                    = done == ids.size();
+            if (!ok) {
+                error = first_error.empty() ? "部分模块导入失败" : first_error;
             }
         }
     } else if (has_type && type == "import_all") {
@@ -839,6 +893,9 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     writer.key("ok").boolean(ok);
     if (!error.empty()) {
         writer.key("error").str(error);
+    }
+    if (!ack_message.empty()) {
+        writer.key("message").str(ack_message);
     }
     writer.obj_end();
     server_.send_text(conn, reply);
@@ -990,6 +1047,12 @@ void IpcServer::start_picker() {
     state->running.store(false);
     picker_ = state;
 #endif
+}
+
+std::string IpcServer::take_pending_delete() {
+    std::string id = std::move(pending_delete_id_);
+    pending_delete_id_.clear();
+    return id;
 }
 
 void IpcServer::poll_picker() {

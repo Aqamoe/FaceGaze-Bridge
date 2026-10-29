@@ -220,7 +220,7 @@ docs/          方案、ADR、路线图
 | →UI | `params`（数值数组，顺序同 `catalog`） | 10 Hz |
 | →UI | `log`（级别/tag/正文；连接时补发最近 120 行） | 有日志时 |
 | UI→ | `set_filter` / `set_module` / `set_module_enabled` / `scan_modules` / `reload_avatar` / `set_log_level` / `quit` | 按操作 |
-| UI→ | `import_module` / `import_all` / `install_module_archive` / `delete_module` / `open_modules_dir` | 模块管理 |
+| UI→ | `import_module` / `import_modules`（逗号分隔 id）/ `import_all` / `install_module_archive` / `delete_module` / `open_modules_dir` | 模块管理 |
 | UI→ | `refresh_library` / `install_library` / `restart_engine` | 模块库与重启（退出码 3） |
 | →UI | `ack`（命令、ok、error） | 每条命令 |
 
