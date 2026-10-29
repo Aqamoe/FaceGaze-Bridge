@@ -270,10 +270,12 @@ jobs:
   `CMakeLists.txt` 版本一致，再执行同样的构建/测试/打包，上传 workflow artifact 并
   创建 draft Release。
 - **CI 的 VRCFT 运行时**：runner 上没有 VRCFT。工作流优先读仓库变量
-  `VRCFT_RUNTIME_URL`（指向 `vrcft-runtime.zip`），否则从最近一个**已发布** Release
-  下载同名资产。首次发布（或更换 VRCFT 版本）时，用本地
-  `packaging/release.ps1` 生成 `dist-installer/vrcft-runtime.zip` 并上传到 Release，
-  或在仓库 Settings → Variables 里配置 `VRCFT_RUNTIME_URL`。
+  `VRCFT_RUNTIME_URL`，否则从最近一个**已发布** Release 下载同名资产。仓库是私有的，
+  该变量要填 Release 资产的 **API 地址**
+  （`https://api.github.com/repos/<owner>/<repo>/releases/assets/<id>`），工作流会带
+  token 与 `Accept: application/octet-stream`；重新上传资产后需要更新变量。首次发布
+  或更换 VRCFT 版本时，用本地 `packaging/release.ps1` 生成
+  `dist-installer/vrcft-runtime.zip` 并上传到 Release。
 - **签名**仍未接入：当前 Release 说明里会提示 SmartScreen 与 SHA256 校验方式。
 
 ```powershell

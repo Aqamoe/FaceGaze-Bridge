@@ -75,12 +75,23 @@ jobs:
             Write-Host "下载 runtime_url"
             $curlArgs = @("-fsSL", "-o", $zip)
             # 私有仓库的 Release 资产需要鉴权；不要把这个 token 发给第三方主机。
-            if ($env:RUNTIME_URL -match '^https://(api\.)?github\.com/') {
+            if ($env:RUNTIME_URL -match '^https://api\.github\.com/') {
+              $curlArgs += @("-H", "Authorization: Bearer $env:GH_TOKEN")
+              $curlArgs += @("-H", "Accept: application/octet-stream")
+            } elseif ($env:RUNTIME_URL -match '^https://github\.com/') {
               $curlArgs += @("-H", "Authorization: Bearer $env:GH_TOKEN")
             }
             $curlArgs += $env:RUNTIME_URL
             & curl.exe @curlArgs
-            if ($LASTEXITCODE -ne 0) { throw "下载运行时失败：$env:RUNTIME_URL" }
+            if ($LASTEXITCODE -ne 0) {
+              # 私有仓库的浏览器下载地址即便带 token 也会 404，回退到 gh release download。
+              if ($env:RUNTIME_URL -match '^https://github\.com/([^/]+)/([^/]+)/releases/download/([^/]+)/([^/?]+)$') {
+                Remove-Item $zip -Force -ErrorAction SilentlyContinue
+                & gh release download $Matches[3] --repo "$($Matches[1])/$($Matches[2])" `
+                  --pattern $Matches[4] --output $zip --clobber
+              }
+              if ($LASTEXITCODE -ne 0) { throw "下载运行时失败：$env:RUNTIME_URL" }
+            }
           } else {
             Write-Host "从最近一个已发布 Release 下载 vrcft-runtime.zip"
             & gh release download --pattern "vrcft-runtime.zip" --output $zip
