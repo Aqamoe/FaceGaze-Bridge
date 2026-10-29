@@ -106,6 +106,14 @@
           <span class="pill" data-i18n="modules.config">配置文件</span>
           <span class="muted mono" id="mod-config">—</span>
         </div>
+        <article class="card" style="margin-bottom:12px">
+          <h2 data-i18n="modules.running.title">运行中的实例</h2>
+          <div class="running-list" id="running-list"></div>
+          <div class="hint" data-i18n="modules.running.hint">
+            一个模块可以被多个实例加载（如 vrcft[1] 供眼追、vrcft[2] 供表情），每路状态单独显示
+          </div>
+        </article>
+
         <div class="module-list" id="module-list"></div>
         <p class="hint" data-i18n="modules.note">引擎一次只加载一个模块：点「设为启动模块」写进配置文件，重启引擎后生效。眼追与表情分属两个模块的并发加载还在 M4 计划里。</p>
       </section>

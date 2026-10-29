@@ -32,6 +32,15 @@
 
 namespace fgb::web {
 
+// 一个正在跑的模块实例。多实例（两个 vrcft 各加载一个模块，分别供眼追/表情）时，
+// 界面上必须能按实例看状态——只显示"第一个"会让另一路的问题被藏起来。
+struct RunningModule {
+    std::string display_name; // "vrcft[1]"，与 --eye-source 里用的名字一致
+    std::string module_id;    // 注册表 id（GUID）
+    std::string module_name;  // 展示名（VRCFTPicoModule）
+    const vrcft::VrcftSource* source = nullptr;
+};
+
 struct IpcContext {
     Engine* engine     = nullptr;
     VrchatSink* sink   = nullptr; // 可能为空（没配 OSC 输出）
@@ -43,10 +52,10 @@ struct IpcContext {
     std::string eye_mode;
     std::filesystem::path ui_dir; // 静态页面根目录，空表示不发页面
 
-    // 模块管理：非 vrcft 输入时为空。列表是"磁盘上有什么"，运行态在 vrcft 那边。
-    vrcft::ModuleRegistry* modules    = nullptr;
-    const vrcft::VrcftSource* vrcft   = nullptr;
-    std::string active_module_id;
+    // 模块管理：非 vrcft 输入时为空。列表是"磁盘上有什么"，运行态在每个实例那边。
+    vrcft::ModuleRegistry* modules = nullptr;
+    std::vector<RunningModule> running_modules;
+    std::string active_module_id; // 注册表里"下次启动加载"的那个，与运行态不是一回事
 
     std::atomic<bool>* quit = nullptr;
 };
@@ -81,7 +90,8 @@ private:
     void build_params(std::string& out);
     void build_modules(std::string& out);
     void build_metrics(std::string& out); // status 的公共部分，HTTP 接口复用
-    const char* module_state() const noexcept;
+    // per-instance 运行态；state/error 都来自对应的 VrcftSource
+    const char* module_state(const RunningModule& module) const noexcept;
 
     void send_backlog(std::intptr_t conn);
     void handle_text(std::intptr_t conn, std::string_view text);

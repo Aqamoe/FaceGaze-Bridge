@@ -290,21 +290,28 @@ void IpcServer::build_metrics(std::string& out) {
     writer.key("eye_mode").str(ctx_.eye_mode);
     writer.key("clients").integer(static_cast<long long>(server_.ready_count()));
 
-    writer.key("module");
-    writer.obj_begin();
-    writer.key("id").str(ctx_.active_module_id);
-    writer.key("state").str(module_state());
-    // 模块自己报的错优先：它比"等待初始化超时"这类描述具体
-    std::string module_error;
-    if (ctx_.vrcft != nullptr) {
-        module_error = !ctx_.vrcft->module_error().empty() ? ctx_.vrcft->module_error()
-                                                           : ctx_.vrcft->last_error();
+    // 每个模块实例的运行态。多实例时按 display_name 区分（与 --eye-source 用的是同一个名字）
+    writer.key("modules").arr_begin();
+    for (const RunningModule& module : ctx_.running_modules) {
+        writer.obj_begin();
+        writer.key("name").str(module.display_name);
+        writer.key("module_id").str(module.module_id);
+        writer.key("module_name").str(module.module_name);
+        writer.key("state").str(module_state(module));
+
+        // 模块自己报的错优先：它比"等待初始化超时"这类描述具体
+        std::string error;
+        if (module.source != nullptr) {
+            error = !module.source->module_error().empty() ? module.source->module_error()
+                                                           : module.source->last_error();
+        }
+        writer.key("error").str(error);
+        writer.key("restarts").integer(
+            static_cast<long long>(module.source != nullptr ? module.source->restart_count() : 0));
+        writer.key("alive").boolean(module.source != nullptr && module.source->module_alive());
+        writer.obj_end();
     }
-    writer.key("error").str(module_error);
-    writer.key("restarts").integer(
-        static_cast<long long>(ctx_.vrcft != nullptr ? ctx_.vrcft->restart_count() : 0));
-    writer.key("alive").boolean(ctx_.vrcft != nullptr && ctx_.vrcft->module_alive());
-    writer.obj_end();
+    writer.arr_end();
 
     // 第二路输出（VMC）：界面上要能确认"确实发出去了多少"，否则联调只能靠猜
     writer.key("vmc_out");
@@ -389,26 +396,24 @@ void IpcServer::build_params(std::string& out) {
     writer.obj_end();
 }
 
-// 当前模块的运行态。界面上的红点必须配一句人话，
-// 所以这里只给四种状态，其余细节靠 status.module.error。
-const char* IpcServer::module_state() const noexcept {
-    if (ctx_.active_module_id.empty()) {
-        return "none";
-    }
-    if (ctx_.vrcft == nullptr) {
+// 单个实例的运行态。界面上的红点必须配一句人话，
+// 所以这里只回有限几种状态，细节靠 modules[].error。
+const char* IpcServer::module_state(const RunningModule& module) const noexcept {
+    const vrcft::VrcftSource* source = module.source;
+    if (source == nullptr) {
         return "external"; // 模块不归我们管（例如 --module-dll 手工指定）
     }
     // 模块自己报了错就是故障，哪怕进程还活着（它在重试）
-    if (!ctx_.vrcft->module_error().empty() && ctx_.vrcft->stats().frames == 0) {
+    if (!source->module_error().empty() && source->stats().frames == 0) {
         return "error";
     }
-    if (!ctx_.vrcft->last_error().empty()) {
+    if (!source->last_error().empty()) {
         return "error";
     }
-    if (ctx_.vrcft->stats().frames > 0 && ctx_.vrcft->module_alive()) {
+    if (source->stats().frames > 0 && source->module_alive()) {
         return "active";
     }
-    return ctx_.vrcft->module_alive() ? "starting" : "stopped";
+    return source->module_alive() ? "starting" : "stopped";
 }
 
 void IpcServer::build_modules(std::string& out) {
@@ -420,7 +425,14 @@ void IpcServer::build_modules(std::string& out) {
     const vrcft::ModuleRegistry* registry = ctx_.modules;
     writer.key("active").str(ctx_.active_module_id);
     writer.key("config").str(registry != nullptr ? registry->config_path().string() : std::string{});
-    writer.key("state").str(module_state());
+    // 这个字段描述的是"注册表中的选择是否有对应实例在跑"，不是某个实例的状态
+    const bool selected_running =
+        !ctx_.active_module_id.empty() &&
+        std::any_of(ctx_.running_modules.begin(), ctx_.running_modules.end(),
+                    [this](const RunningModule& module) {
+                        return module.module_id == ctx_.active_module_id;
+                    });
+    writer.key("state").str(selected_running ? "active" : (ctx_.active_module_id.empty() ? "none" : "installed"));
 
     writer.key("roots").arr_begin();
     if (registry != nullptr) {
@@ -449,13 +461,25 @@ void IpcServer::build_modules(std::string& out) {
             writer.key("broken").boolean(module.broken);
             writer.key("active").boolean(module.active);
 
+            // 这个模块现在是不是被某个实例加载着？是的话状态来自那个实例，
+            // 而不是注册表里"下次启动加载"的选择——两者可能不一致（用户刚改过选择还没重启）。
+            const RunningModule* running = nullptr;
+            for (const RunningModule& candidate : ctx_.running_modules) {
+                if (candidate.module_id == module.id) {
+                    running = &candidate;
+                    break;
+                }
+            }
+
             const char* state = "installed";
             if (module.broken) {
                 state = "broken";
-            } else if (module.active) {
-                state = module_state();
+            } else if (running != nullptr) {
+                state = module_state(*running);
             }
             writer.key("state").str(state);
+            writer.key("running").boolean(running != nullptr);
+            writer.key("instance").str(running != nullptr ? running->display_name : std::string{});
             writer.obj_end();
         }
     }

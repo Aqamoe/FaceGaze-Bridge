@@ -185,7 +185,9 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > ① 多输入源合并层：按表情 / 眼追 / 头姿三通道选提供者，可重复 `--source`
 > （[ADR-0013](adr/0013-source-merging.md)）；
 > ② VMC 第二路输出：`--vmc-out`，与 VRChat 并行且共享同一份 blendshape 名字表
-> （[ADR-0014](adr/0014-vmc-output-sink.md)）。共享内存 Sink 未做。
+> （[ADR-0014](adr/0014-vmc-output-sink.md)）；
+> ③ 模块页按实例显示运行态，多实例（两个模块）不再是黑盒（[ADR-0015](adr/0015-multi-instance-modules.md)）。
+> 共享内存 Sink 未做。
 > 3.10 / 3.11 / 3.12 已完成——`fgb-ui`（WebView2 外壳）+
 > 本机 WebSocket IPC，六个页面（状态 / 模块 / 参数热力图 / 输出 / 日志 / 设置）已接真实数据，
 > 见 [ADR-0010](adr/0010-webview2-ui-and-websocket-ipc.md)；模块页含扫描、选择与故障原因，

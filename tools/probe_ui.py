@@ -220,6 +220,20 @@ def main():
         "})()"))
     print(f"模块页：{modules}")
 
+    # 运行中的模块实例：多实例时不能只显示第一个
+    running = json.loads(cdp.evaluate(
+        "(() => {"
+        "  document.querySelector('.nav-item[data-page=\"modules\"]').click();"
+        "  const rows = [...document.querySelectorAll('.running-row')];"
+        "  return JSON.stringify({"
+        "    rows: rows.length,"
+        "    expected: state.status && state.status.modules ? state.status.modules.length : 0,"
+        "    names: rows.map(row => row.querySelector('.running-name').textContent),"
+        "    chips: rows.map(row => row.querySelector('.chip').textContent)"
+        "  });"
+        "})()"))
+    print(f"运行实例：{running}")
+
     # 输入源卡片：多源合并后，"谁在喂哪一路"必须能在界面上看见
     sources = json.loads(cdp.evaluate(
         "(() => {"
@@ -229,7 +243,8 @@ def main():
         "    rows: rows.length,"
         "    expected: (state.status && state.status.sources ? state.status.sources.length : 0),"
         "    names: rows.map(row => row.querySelector('.source-name').textContent),"
-        "    live: rows.map(row => [...row.querySelectorAll('.source-chip.on')].length)"
+        "    live: rows.map(row => [...row.querySelectorAll('.source-chip.on')].length),"
+        "    frames: state.status ? state.status.frames_in : 0"
         "  });"
         "})()"))
     print(f"输入源：{sources}")
@@ -292,6 +307,9 @@ def main():
     if modules.get("active") != "modules" or modules.get("cards") != modules.get("expected"):
         print("FAIL 模块页与 catalog 不一致（期望渲染的卡片数对不上）")
         ok = False
+    if running.get("rows") != running.get("expected"):
+        print("FAIL 运行实例列表与 status.modules 不一致")
+        ok = False
     if output.get("active") != "output" or not output.get("text"):
         print("FAIL 输出页的 VMC 行没有渲染")
         ok = False
@@ -301,8 +319,10 @@ def main():
     if sources.get("rows") != sources.get("expected"):
         print("FAIL 输入源卡片行数与 status.sources 不一致")
         ok = False
-    if sources.get("rows", 0) > 0 and all(count == 0 for count in sources.get("live", [])):
-        print("FAIL 没有任何输入源被标记为在用")
+    # 有帧进来说明至少应该有一路被选中；一帧都没有（例如模块起不来）时全灰是对的
+    if sources.get("frames", 0) > 0 and sources.get("rows", 0) > 0 and all(
+            count == 0 for count in sources.get("live", [])):
+        print("FAIL 有输入帧但没有任何源被标记为在用")
         ok = False
     if langs["en"]["nav"][0] != "Status" or langs["ja"]["nav"][0] != "状態":
         print("FAIL 三语文案没生效（检查 ui/i18n.js 与 set_lang）")

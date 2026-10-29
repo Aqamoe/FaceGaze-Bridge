@@ -178,7 +178,7 @@ docs/          方案、ADR、路线图
 | →UI | `hello`（协议版本、版本号、端口） | 连接时 |
 | →UI | `catalog`（365 个参数名 + 是否已绑定） | 连接时 / 换头像后 |
 | →UI | `modules`（模块列表 + 当前选择 + 配置文件） | 连接时 / 扫描或改选择后 |
-| →UI | `status`（帧率、tick、OSC、头像、滤波、`module{state,error}`、`sources[]` 每源贡献） | 10 Hz |
+| →UI | `status`（帧率、tick、OSC、头像、滤波、`modules[]` 每实例状态、`sources[]` 每源贡献） | 10 Hz |
 | →UI | `params`（数值数组，顺序同 `catalog`） | 10 Hz |
 | →UI | `log`（级别/tag/正文；连接时补发最近 120 行） | 有日志时 |
 | UI→ | `set_filter` / `set_module` / `scan_modules` / `reload_avatar` / `set_log_level` / `quit` | 按操作 |

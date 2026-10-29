@@ -252,7 +252,8 @@ int cmd_run(int argc, char** argv) {
     std::filesystem::path module_dll;
     std::string active_module_id;
     std::unique_ptr<fgb::vrcft::ModuleRegistry> module_registry;
-    const fgb::vrcft::VrcftSource* vrcft_raw = nullptr;
+    // 每个 vrcft 实例的展示信息：界面按实例显示运行态
+    std::vector<fgb::web::RunningModule> running_modules;
     int tick_hz      = 120;
     int duration_sec = 0;
     bool verbose     = false;
@@ -451,6 +452,7 @@ int cmd_run(int argc, char** argv) {
 
             std::filesystem::path instance_dll = module_dll;
             std::string instance_module_id    = index < module_ids.size() ? module_ids[index] : std::string{};
+            std::string instance_module_name;
 
             if (instance_dll.empty()) {
                 const fgb::vrcft::ModuleInfo* module = module_registry->pick_active(instance_module_id);
@@ -480,11 +482,13 @@ int cmd_run(int argc, char** argv) {
                     std::fputs(message.c_str(), stderr);
                     return 2;
                 }
-                instance_dll       = module->dll;
-                instance_module_id = module->id;
+                instance_dll         = module->dll;
+                instance_module_id   = module->id;
+                instance_module_name = module->name;
                 FGB_INFO("vrcft", "%s 加载模块：%s (%s)", display.c_str(), module->name.c_str(),
                          module->version.c_str());
             } else {
+                instance_module_name = instance_dll.stem().string();
                 FGB_INFO("vrcft", "%s 加载模块（--module-dll 指定）：%s", display.c_str(),
                          instance_dll.string().c_str());
             }
@@ -505,9 +509,15 @@ int cmd_run(int argc, char** argv) {
                 cfg.record_path = record_path;
             }
             auto vrcft_source = std::make_unique<fgb::vrcft::VrcftSource>(cfg);
-            if (vrcft_raw == nullptr) {
-                vrcft_raw = vrcft_source.get(); // 状态页只显示第一个模块的运行态
-            }
+
+            // 每个实例单独登记：界面按实例显示状态，而不是只显示第一个
+            fgb::web::RunningModule running;
+            running.display_name = display;
+            running.module_id    = instance_module_id;
+            running.module_name  = instance_module_name;
+            running.source       = vrcft_source.get();
+            running_modules.push_back(std::move(running));
+
             engine.add_source(std::move(vrcft_source));
             source_names.push_back(display);
         } else if (kind == "replay") {
@@ -599,7 +609,7 @@ int cmd_run(int argc, char** argv) {
         ctx.quit        = &g_stop;
 
         ctx.modules          = module_registry.get();
-        ctx.vrcft            = vrcft_raw;
+        ctx.running_modules  = running_modules;
         ctx.active_module_id = active_module_id;
 
         ipc = std::make_unique<fgb::web::IpcServer>(std::move(ctx));

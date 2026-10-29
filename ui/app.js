@@ -113,6 +113,7 @@ const state = {
   modules: null,
   status: null,
   source_rows: [],
+  running_rows: [],
   view: "status",
   retry: 0,
   timer: null,
@@ -273,8 +274,8 @@ function render_status(status) {
   $("c-source").textContent = `${status.source || "—"} · ${(status.fps || 0).toFixed(1)} fps`;
   $("s-clients").textContent = status.clients || 0;
 
-  if (status.module && state.view === "modules") {
-    sync_active_module(status.module);
+  if (state.view === "modules") {
+    render_running_modules(status.modules);
   }
   render_sources(status.sources || []);
 
@@ -515,6 +516,9 @@ function render_modules() {
   for (const item of items) {
     list.append(module_card(item, data));
   }
+
+  // 运行态来自 status（10 Hz），切页时也要立刻画一次
+  render_running_modules(state.status ? state.status.modules : []);
 }
 
 function module_card(item, data) {
@@ -535,11 +539,16 @@ function module_card(item, data) {
   if (item.author) {
     head.append(el("span", "module-author", item.author));
   }
-  const chip_state = format_state(item.state);
+  // 运行中就用运行态，否则用磁盘状态（"已安装" / "缺少 DLL"）
+  const chip_state = format_state(running_state_of(item.id) || item.state);
   const chip = el("span", `chip ${chip_state.cls}`.trim(), chip_state.label);
   chip.dataset.role = "chip";
   head.append(chip);
   card.append(head);
+
+  if (item.running && item.instance) {
+    card.append(el("div", "module-desc", t("modules.instance", { name: item.instance })));
+  }
 
   if (item.description) {
     card.append(el("p", "module-desc", item.description));
@@ -570,31 +579,64 @@ function module_card(item, data) {
   return card;
 }
 
-// 运行态在 status 里（10 Hz），模块列表只在变化时推一次：
-// 这里只更新"当前那个"的 chip 与错误行，避免整页重建抢走按钮焦点。
-function sync_active_module(module) {
-  if (!module || !state.modules) {
+// 运行中的实例：多实例时"谁在跑、哪一路坏了"要分开看，所以单独一块，
+// 而不是把状态塞进"磁盘上的模块"卡片里（那两者可能不一致：改了选择还没重启）。
+function render_running_modules(modules) {
+  const list = $("running-list");
+  if (!list) {
     return;
   }
-  const card = document.querySelector(`.module-card[data-id="${CSS.escape(module.id || "")}"]`);
-  if (!card) {
+  const running = modules || [];
+
+  if (!running.length) {
+    list.textContent = "";
+    list.dataset.count = "0";
+    state.running_rows = [];
+    list.append(el("div", "muted", t("modules.running.empty")));
     return;
   }
-  const chip = card.querySelector('[data-role="chip"]');
-  // 变量名不能叫 state：会遮蔽上面那个全局 state，而全局的那行 const 更晚执行，
-  // 于是最前面的 `!state.modules` 直接 TDZ 报错（"Cannot access 'state' before initialization"）。
-  const chip_state = format_state(module.state);
-  if (chip) {
-    chip.className = `chip ${chip_state.cls}`.trim();
-    chip.textContent = chip_state.label;
+
+  if (list.dataset.count !== String(running.length)) {
+    list.textContent = "";
+    list.dataset.count = String(running.length);
+    state.running_rows = running.map((item) => {
+      const row = el("div", "running-row");
+      const name = el("b", "running-name", item.name);
+      const module_name = el("span", "running-module", item.module_name || item.module_id);
+      const chip = el("span", "chip", "");
+      row.append(name, module_name, chip);
+      list.append(row);
+
+      const extra = el("div", "running-extra");
+      list.append(extra);
+      return { row, chip, extra };
+    });
   }
-  const error = card.querySelector('[data-role="error"]');
-  if (error) {
-    error.hidden = !module.error;
-    // 模块抛出来的经常是整段 .NET 栈：卡片里只放前几行，全文挂到 title 上
-    error.textContent = (module.error || "").slice(0, 400);
-    error.title = module.error || "";
-  }
+
+  running.forEach((item, index) => {
+    const ui = state.running_rows[index];
+    if (!ui) {
+      return;
+    }
+    const chip_state = format_state(item.state);
+    ui.chip.className = `chip ${chip_state.cls}`.trim();
+    ui.chip.textContent = chip_state.label;
+
+    const parts = [t("modules.restarts", { count: item.restarts || 0 })];
+    if (item.error) {
+      // 模块抛出来的经常是整段 .NET 栈：只放前几行，全文挂 title
+      parts.push(item.error.slice(0, 160));
+    }
+    ui.extra.textContent = parts.join(" · ");
+    ui.extra.title = item.error || "";
+  });
+}
+
+// 卡片上的 chip 也反映运行态（"已安装"和"运行中"不该混淆）
+function running_state_of(module_id) {
+  const running = (state.status && state.status.modules) || [];
+  const hit = running.find((item) => item.module_id === module_id);
+  return hit ? hit.state : null;
 }
 
 // ---------- 日志 ----------
