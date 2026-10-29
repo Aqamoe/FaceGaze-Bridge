@@ -81,7 +81,7 @@
 cmake -S . -B build/test -G "Visual Studio 16 2019" -A x64
 cmake --build build/test --config Debug --parallel
 
-# 单测（当前 144 个用例）
+# 单测（当前 147 个用例）
 ./build/test/bin/Debug/fgb-tests.exe
 # 或
 ctest --test-dir build/test -C Debug --output-on-failure
@@ -159,7 +159,7 @@ python tools/build_vrcft_runtime.py --dest dist/runtime/vrcft
 ### 3.4 探针（比截图可靠）
 
 ```powershell
-# 控制面 IPC：HTTP 诊断 + WebSocket 推送/命令
+# 控制面 IPC：HTTP 诊断 + WebSocket 推送/命令（含 /api/gaze 与 30 Hz gaze）
 python tools/probe_ipc.py 8787
 
 # 界面：通过 WebView2 远程调试端口跑 JS，验证页面真的渲染了数据
@@ -254,7 +254,7 @@ gh run watch <id> --exit-status
 
 ```
 src/base/      日志（含订阅回调）、时钟、极简 JSON
-src/core/      数据模型、无锁容器（SPSC ring / seqlock）、滤波与校准
+src/core/      数据模型（含 GazeState）、无锁容器、滤波、校准与 GazeEstimator
 src/osc/       OSC 编解码（零分配写入器）
 src/net/       UDP / TCP / WebSocket 服务端（自写 RFC 6455 子集）、WinHTTP 下载、mDNS 发现
 src/config/    INI 与输出设置（outputs.ini：目标/开关/帧率，命令行可覆盖）
@@ -272,7 +272,7 @@ samples/       native-sine：无硬件的原生模块示例
 ui/            页面资源（无构建步骤；face.js 是 WebGL2 渲染器，face/ 是模型与映射表）
 tools/         抓包、冒烟、探针，以及 build_vrcft_runtime.py（出精简运行时）、
                gen_face_model.py / check_face_model.py（3D 资产生成与校验）
-docs/          方案、ADR、路线图、原生模块指南（05）、共享内存指南（06）、流式输出（07）
+docs/          方案、ADR、路线图、原生模块指南（05）、共享内存（06）、流式输出（07）、注视服务（08）
 ```
 
 ## 7. IPC 协议速查（`ws://127.0.0.1:<port>/ws`）
@@ -285,11 +285,12 @@ docs/          方案、ADR、路线图、原生模块指南（05）、共享内
 | →UI | `library`（模块库列表 + 缓存状态 + 下载进度） | 连接时 / 刷新或安装过程中 5 Hz |
 | →UI | `status`（帧率、tick、OSC、头像、滤波、`modules[]` 每实例状态、`sources[]` 每源贡献） | 10 Hz |
 | →UI | `params`（数值数组，顺序同 `catalog`） | 10 Hz |
+| →UI | `gaze`（方向/俯仰偏航/聚散/置信度/fixation/saccade/head_pose） | 30 Hz |
 | →UI | `calibration`（88 个形状的 lo/hi/active + 视线 + 路径 + 未保存标记） | 连接时 / 任何校准改动后 |
 | →UI | `preview`（校准前 `raw[88]` + 校准后 `out[88]` + 视线 + seq） | 30 Hz，**只在校准页订阅时** |
 | →UI | `steamvr`（状态/原因/路径/registered/autolaunch/busy） | 连接时快照；每次检测/开关/移除完成后 |
 | →UI | `log`（级别/tag/正文；连接时补发最近 120 行） | 有日志时 |
-| UI→ | `set_filter` / `set_module` / `set_module_enabled` / `scan_modules` / `reload_avatar` / `set_log_level` / `quit` | 按操作 |
+| UI→ | `set_filter` / `set_outputs` / `set_module` / `set_module_enabled` / `scan_modules` / `reload_avatar` / `set_log_level` / `quit` | 按操作 |
 | UI→ | `import_module` / `import_modules`（逗号分隔 id）/ `import_all` / `install_module_archive` / `delete_module` / `open_modules_dir` | 模块管理 |
 | UI→ | `refresh_library` / `install_library` / `restart_engine` | 模块库与重启（退出码 3） |
 | UI→ | `set_preview` / `set_calibration_shape` / `set_calibration_eye` / `capture_calibration` / `save_calibration` / `reload_calibration` / `reset_calibration` | 校准（实时生效，显式保存） |
@@ -297,7 +298,7 @@ docs/          方案、ADR、路线图、原生模块指南（05）、共享内
 | →UI | `ack`（命令、ok、error） | 每条命令 |
 
 HTTP（同一端口，只绑回环）：`/healthz`、`/api/status`、`/api/params`、
-`/api/calibration`、`/api/preview`、`/api/steamvr` 只读；`/api/quit`、`/api/restart`
+`/api/calibration`、`/api/preview`、`/api/gaze`、`/api/steamvr` 只读；`/api/quit`、`/api/restart`
 是控制动作，只给托盘外壳与排障用（外壳不实现 WebSocket 客户端，见 ADR-0022 §5）。
 
 ## 8. 完成的定义（DoD）

@@ -198,6 +198,20 @@ def main():
         time.sleep(0.7)
     print(f"状态页：{summary}")
 
+    gaze = json.loads(cdp.evaluate(
+        "(() => {"
+        "  const g = state.gaze || null;"
+        "  return JSON.stringify({"
+        "    valid: g ? !!g.valid : null,"
+        "    fixation: g ? !!g.fixation : null,"
+        "    saccade: g ? g.saccade_vel_deg_s : null,"
+        "    dir: document.getElementById('g-dir').textContent,"
+        "    fixation_text: document.getElementById('g-fixation').textContent,"
+        "    dot_visible: !document.getElementById('g-dot').hidden"
+        "  });"
+        "})()"))
+    print(f"注视卡片：{gaze}")
+
     params = json.loads(cdp.evaluate(
         "(() => {"
         "  document.querySelector('.nav-item[data-page=\"params\"]').click();"
@@ -561,6 +575,15 @@ def main():
     elif not outputs_saved.get("ws") or outputs_saved.get("port") != 9113 \
             or outputs_saved.get("rate") != 25:
         print(f"FAIL 保存的输出设置没有回读成功：{outputs_saved}")
+        ok = False
+    if not gaze.get("valid"):
+        print("FAIL 注视卡片没有收到有效眼追（回放数据应带眼追）")
+        ok = False
+    elif (gaze.get("dir") or "").strip() in ("", "—"):
+        print("FAIL 注视方向没有渲染")
+        ok = False
+    elif not gaze.get("dot_visible"):
+        print("FAIL 注视圆点没有显示")
         ok = False
     if sources.get("rows") != sources.get("expected"):
         print("FAIL 输入源卡片行数与 status.sources 不一致")

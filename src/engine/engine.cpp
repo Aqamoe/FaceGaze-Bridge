@@ -52,6 +52,7 @@ bool Engine::start() {
             return false;
         }
     }
+    gaze_estimator_.reset();
     started_ = true;
     FGB_INFO(kTag, "引擎启动，tick %d Hz，%zu 个输入，%zu 个输出", config_.tick_hz, sources_.size(),
              sinks_.size());
@@ -118,6 +119,7 @@ void Engine::tick_once(std::uint64_t now_ns) {
         last_frame_        = merged;
         snapshot_.publish(last_frame_);
         last_gaze_ = compute_gaze(last_frame_);
+        gaze_estimator_.update(last_frame_, last_gaze_, now_ns);
     }
 
     for (auto& sink : sinks_) {

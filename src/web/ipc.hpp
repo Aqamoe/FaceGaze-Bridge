@@ -118,6 +118,7 @@ private:
     void build_catalog(std::string& out);
     void build_status(std::string& out);
     void build_params(std::string& out);
+    void build_gaze(std::string& out);
     void build_modules(std::string& out);
     void build_library(std::string& out);
     void build_metrics(std::string& out); // status 的公共部分，HTTP 接口复用
@@ -147,6 +148,7 @@ private:
 
     std::chrono::steady_clock::time_point last_status_{};
     std::chrono::steady_clock::time_point last_params_{};
+    std::chrono::steady_clock::time_point last_gaze_{};
     std::chrono::steady_clock::time_point last_preview_{};
     std::uint64_t last_frames_  = 0; // fps 用两次推送之间的增量算
     double last_fps_            = 0.0;

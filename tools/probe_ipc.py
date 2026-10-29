@@ -111,6 +111,12 @@ def main():
           f"params={metrics['param_count']} targets={metrics['target_count']}")
     print(f"  filter={metrics['filter']}")
 
+    status, _, body = http_get("/api/gaze")
+    gaze_http = json.loads(body)
+    print(f"HTTP /api/gaze -> {status}：valid={gaze_http.get('valid')} "
+          f"pitch={gaze_http.get('pitch_deg')} yaw={gaze_http.get('yaw_deg')} "
+          f"vergence={gaze_http.get('vergence_distance')}")
+
     status, _, page = http_get("/")
     print(f"HTTP / -> {status}，{len(page)} 字节，引用 app.js: {b'app.js' in page}")
     status, _, script = http_get("/app.js")
@@ -124,6 +130,8 @@ def main():
     catalog_count = 0
     params_len = 0
     status_msgs = 0
+    gaze_msgs = 0
+    last_gaze = None
     filter_enabled = None
     ack_ok = None
 
@@ -162,6 +170,9 @@ def main():
                 filter_enabled = message["filter"]["enabled"]
             elif kind == "params":
                 params_len = len(message["values"])
+            elif kind == "gaze":
+                gaze_msgs += 1
+                last_gaze = message
             elif kind == "ack":
                 ack_ok = message.get("ok")
                 print(f"  ack: {message.get('command')} ok={ack_ok}")
@@ -198,6 +209,9 @@ def main():
                 ack_ok = message.get("ok")
             elif kind == "status":
                 filter_enabled = message["filter"]["enabled"]
+            elif kind == "gaze":
+                gaze_msgs += 1
+                last_gaze = message
     sock.close()
 
     print(f"收到消息类型: {seen}")
@@ -214,6 +228,19 @@ def main():
     if filter_enabled is not True:
         print("FAIL 滤波开关没有生效")
         ok = False
+    if gaze_msgs < 10:
+        print(f"FAIL gaze 推送不足（3 秒只有 {gaze_msgs} 条，期望 ~90 条 @30 Hz）")
+        ok = False
+    if not last_gaze or not gaze_http.get("dir_local") or len(last_gaze.get("dir_local", [])) != 3:
+        print("FAIL gaze 消息缺少 dir_local")
+        ok = False
+    elif "fixation" not in last_gaze or "saccade_vel_deg_s" not in last_gaze:
+        print("FAIL gaze 消息缺少 fixation / saccade_vel_deg_s")
+        ok = False
+    else:
+        print(f"  gaze WS：{gaze_msgs} 条，最后 valid={last_gaze.get('valid')} "
+              f"fixation={last_gaze.get('fixation')} "
+              f"saccade={last_gaze.get('saccade_vel_deg_s')}°/s")
     print("PASS" if ok else "FAILED")
     return 0 if ok else 1
 

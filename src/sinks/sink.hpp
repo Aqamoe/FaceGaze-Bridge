@@ -5,21 +5,11 @@
 #pragma once
 
 #include "core/model/frame.hpp"
+#include "core/model/gaze.hpp"
 
 #include <cstdint>
 
 namespace fgb {
-
-// 供渲染/音频/外部消费者使用的注视状态。头像驱动用不到它，但注视点服务要用。
-struct GazeState {
-    bool valid = false;
-    Vec3 dir_local{0.0f, 0.0f, -1.0f}; // HMD 局部单位向量
-    float pitch_deg = 0.0f;            // 正 = 向上
-    float yaw_deg   = 0.0f;            // 正 = 向右
-    float vergence_m = 0.0f;
-    float confidence = 0.0f;
-    bool fixation    = false;
-};
 
 struct SinkStats {
     std::uint64_t messages  = 0;

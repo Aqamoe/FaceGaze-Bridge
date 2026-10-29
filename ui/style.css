@@ -473,6 +473,48 @@ body {
 .chain b { display: block; font-weight: 600; }
 .chain span { color: var(--dim); }
 
+/* ---------- 注视卡片 ---------- */
+.gaze-layout {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 16px;
+  align-items: center;
+}
+.gaze-pad {
+  position: relative;
+  width: 200px;
+  height: 120px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: radial-gradient(circle at 50% 50%, #172541, #0e1730 70%);
+  overflow: hidden;
+}
+.gaze-pad::before,
+.gaze-pad::after { content: ""; position: absolute; background: var(--line); }
+.gaze-pad::before { left: 0; right: 0; top: 50%; height: 1px; }
+.gaze-pad::after { top: 0; bottom: 0; left: 50%; width: 1px; }
+.gaze-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--acc);
+  box-shadow: 0 0 12px var(--acc);
+  transform: translate(-50%, -50%);
+}
+.gaze-kv {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 4px 18px;
+}
+@media (max-width: 900px) {
+  .gaze-layout { grid-template-columns: 1fr; }
+  .gaze-pad { width: 100%; }
+  .gaze-kv { grid-template-columns: 1fr; }
+}
+
 /* ---------- 输出设置表单 ---------- */
 .out-grid {
   display: grid;

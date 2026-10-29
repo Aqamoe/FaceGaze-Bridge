@@ -125,6 +125,27 @@
             多源时表情 / 眼追 / 头姿分别取哪一路；灰掉表示这一路没在用它
           </div>
         </article>
+
+        <article class="card" style="margin-top:14px">
+          <h2 data-i18n="status.gaze.title">注视</h2>
+          <div class="gaze-layout">
+            <div class="gaze-pad">
+              <span class="gaze-dot" id="g-dot" hidden></span>
+            </div>
+            <div class="gaze-kv">
+              <div class="kv"><span data-i18n="status.gaze.dir">方向</span><b id="g-dir" class="mono">—</b></div>
+              <div class="kv"><span data-i18n="status.gaze.pitch_yaw">俯仰 / 偏航</span><b id="g-pitch-yaw" class="mono">—</b></div>
+              <div class="kv"><span data-i18n="status.gaze.vergence">聚散距离</span><b id="g-vergence">—</b></div>
+              <div class="kv"><span data-i18n="status.gaze.fixation">注视状态</span><b id="g-fixation">—</b></div>
+              <div class="kv"><span data-i18n="status.gaze.saccade">扫视速度</span><b id="g-saccade">—</b></div>
+              <div class="kv"><span data-i18n="status.gaze.confidence">置信度</span><b id="g-confidence">—</b></div>
+              <div class="kv"><span data-i18n="status.gaze.head">头姿</span><b id="g-head" class="mono">—</b></div>
+            </div>
+          </div>
+          <p class="hint" data-i18n="status.gaze.hint">
+            眼追无效时显示 —。目前给的是 HMD 局部方向，不含世界坐标。
+          </p>
+        </article>
       </section>
 
       <!-- 模块 -->

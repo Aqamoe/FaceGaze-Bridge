@@ -9,6 +9,7 @@
 
 #include "core/cont/seqlock.hpp"
 #include "core/process/face_processor.hpp"
+#include "core/process/gaze_estimator.hpp"
 #include "engine/source_merger.hpp"
 #include "sinks/sink.hpp"
 #include "sources/source.hpp"
@@ -75,6 +76,7 @@ private:
     std::vector<std::unique_ptr<ISink>> sinks_;
     std::vector<std::unique_ptr<IFaceProcessor>> processors_;
     SourceMerger merger_;
+    GazeEstimator gaze_estimator_;
     std::uint64_t last_tick_ns_ = 0;
 
     SeqLock<FaceFrame> snapshot_;

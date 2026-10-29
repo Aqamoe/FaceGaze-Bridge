@@ -39,6 +39,8 @@ constexpr char kTag[] = "ipc";
 // 又远低于引擎 120 Hz，不会把主循环的时间预算吃掉。
 constexpr auto kStatusPeriod = std::chrono::milliseconds(100);
 constexpr auto kParamsPeriod = std::chrono::milliseconds(100);
+// 注视点比热力图需要更细的时间分辨率：扫视只有几十毫秒
+constexpr auto kGazePeriod = std::chrono::milliseconds(33);
 // 校准页的面部动画需要比热力图更顺：100 ms 台阶在动态表情上肉眼可见（ADR-0021）
 constexpr auto kPreviewPeriod = std::chrono::milliseconds(33);
 
@@ -199,6 +201,8 @@ IpcServer::IpcServer(IpcContext context) : ctx_(std::move(context)) {
         build_status(message);
         server_.send_text(conn, message);
         build_params(message);
+        server_.send_text(conn, message);
+        build_gaze(message);
         server_.send_text(conn, message);
         build_calibration(message);
         server_.send_text(conn, message);
@@ -520,6 +524,52 @@ void IpcServer::build_status(std::string& out) {
     build_metrics(metrics);
     out.assign(R"({"type":"status",)");
     out.append(metrics, 1, metrics.size() - 1); // 跳过 metrics 自己的 '{'
+}
+
+void IpcServer::build_gaze(std::string& out) {
+    const FaceFrame frame = ctx_.engine != nullptr ? ctx_.engine->latest() : FaceFrame::neutral();
+    const GazeState gaze  = ctx_.engine != nullptr ? ctx_.engine->current_gaze() : GazeState{};
+
+    out.clear();
+    JsonWriter writer{out};
+    writer.obj_begin();
+    writer.key("type").str("gaze");
+    writer.key("ts_ns").integer(static_cast<long long>(gaze.ts_ns));
+    writer.key("valid").boolean(gaze.valid);
+    // 眼原点还没有建模（FaceFrame 只带方向）；先固定 0，别假装有世界坐标
+    writer.key("origin_local").arr_begin();
+    writer.num(0.0, 3);
+    writer.num(0.0, 3);
+    writer.num(0.0, 3);
+    writer.arr_end();
+    writer.key("dir_local").arr_begin();
+    writer.num(gaze.dir_local.x, 3);
+    writer.num(gaze.dir_local.y, 3);
+    writer.num(gaze.dir_local.z, 3);
+    writer.arr_end();
+    writer.key("pitch_deg").num(gaze.pitch_deg, 3);
+    writer.key("yaw_deg").num(gaze.yaw_deg, 3);
+    writer.key("vergence_distance").num(gaze.vergence_m, 3);
+    writer.key("confidence").num(gaze.confidence, 3);
+    writer.key("fixation").boolean(gaze.fixation);
+    writer.key("fixation_ms").num(gaze.fixation_ms, 1);
+    writer.key("saccade_vel_deg_s").num(gaze.saccade_vel_deg_s, 1);
+    if (frame.hasHeadPose) {
+        writer.key("head_pose").obj_begin();
+        writer.key("q").arr_begin();
+        writer.num(frame.headRotLocal.x, 3);
+        writer.num(frame.headRotLocal.y, 3);
+        writer.num(frame.headRotLocal.z, 3);
+        writer.num(frame.headRotLocal.w, 3);
+        writer.arr_end();
+        writer.key("p").arr_begin();
+        writer.num(frame.headPosLocal.x, 3);
+        writer.num(frame.headPosLocal.y, 3);
+        writer.num(frame.headPosLocal.z, 3);
+        writer.arr_end();
+        writer.obj_end();
+    }
+    writer.obj_end();
 }
 
 void IpcServer::build_params(std::string& out) {
@@ -1503,6 +1553,11 @@ bool IpcServer::handle_http(const net::ws::HttpHead& head, std::string& body,
         return true;
     }
 
+    if (head.path == "/api/gaze") {
+        build_gaze(body);
+        return true;
+    }
+
     if (head.path == "/api/params") {
         // curl 用：名字与数值一次给全，不依赖先收 catalog
         const FaceFrame frame       = ctx_.engine != nullptr ? ctx_.engine->latest()
@@ -1750,6 +1805,13 @@ void IpcServer::pump(int timeout_ms) {
         build_params(message);
         server_.broadcast(message);
         last_params_ = now;
+    }
+
+    if (now - last_gaze_ >= kGazePeriod) {
+        std::string message;
+        build_gaze(message);
+        server_.broadcast(message);
+        last_gaze_ = now;
     }
 }
 

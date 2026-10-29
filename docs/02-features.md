@@ -43,7 +43,7 @@
 | **诊断** | 端到端延迟测量 | P1 |
 | | 录制 / 回放（`.fgbcap`） | P1 |
 | | 丢帧与健康度统计 | P0 |
-| **增值** | 注视点数据服务（对外 API） | P1 |
+| **增值** | 注视点数据服务（对外 API；已实现基础版） | P1 |
 | | OpenXR API Layer（眼追注入 + ETFR 宿主） | P2 |
 | | D3D VRS 注入（实验） | P3 |
 | | 眼动输入（注视光标 / 停留点击） | P3 |
@@ -305,6 +305,11 @@ GET /api/gaze
 1. **串流软件**：把眼追喂给 VD / Steam Link / ALVR 的注视点编码（见 §5.2）
 2. **研究/开发**：Python/Unity 直接读，做注意力分析、UI 评估
 3. **无障碍**：gaze cursor、dwell click
+
+**已实现（2026-10-30）**：`GET /api/gaze` + 控制面 WS 30 Hz `gaze` 消息；
+`GazeEstimator` 用角速度判断扫视/注视（30°/s 入口、80°/s 退出、80 ms 停留、0.5 s 断档复位）。
+字段见 [08-gaze-service.md](08-gaze-service.md) 与 [ADR-0026](adr/0026-gaze-estimator-and-api.md)。
+当前返回 HMD **局部**方向和头姿，不返回世界坐标；预测与 OpenXR 注入仍未做。
 
 ### 4.2 为什么这个能力有市场
 

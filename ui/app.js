@@ -196,6 +196,7 @@ const state = {
   outputs_dirty: false,
   pending_outputs_restart: false,
   status: null,
+  gaze: null,
   source_rows: [],
   running_rows: [],
   view: "status",
@@ -342,6 +343,12 @@ function handle(message) {
     case "params":
       render_params(message.values || []);
       break;
+    case "gaze":
+      state.gaze = message;
+      if (state.view === "status") {
+        render_gaze(message);
+      }
+      break;
     case "calibration":
       state.calibration = message;
       if (state.view === "calibration") {
@@ -396,6 +403,42 @@ function handle(message) {
 }
 
 // ---------- 渲染：状态 ----------
+
+function render_gaze(gaze) {
+  const valid = !!(gaze && gaze.valid);
+  $("g-dir").textContent = valid
+    ? `(${gaze.dir_local.map((v) => Number(v).toFixed(2)).join(", ")})`
+    : "—";
+  $("g-pitch-yaw").textContent = valid
+    ? `${Number(gaze.pitch_deg).toFixed(1)}° / ${Number(gaze.yaw_deg).toFixed(1)}°`
+    : "—";
+  $("g-vergence").textContent = valid && gaze.vergence_distance > 0
+    ? `${Number(gaze.vergence_distance).toFixed(2)} m`
+    : "—";
+  $("g-fixation").textContent = valid
+    ? (gaze.fixation
+        ? t("status.gaze.fixating", { ms: Math.round(gaze.fixation_ms || 0) })
+        : t("status.gaze.saccade_state"))
+    : t("status.gaze.none");
+  $("g-saccade").textContent = valid
+    ? `${Number(gaze.saccade_vel_deg_s || 0).toFixed(0)} °/s`
+    : "—";
+  $("g-confidence").textContent = valid ? `${Math.round((gaze.confidence || 0) * 100)}%` : "—";
+  $("g-head").textContent = gaze && gaze.head_pose
+    ? `p (${gaze.head_pose.p.map((v) => Number(v).toFixed(2)).join(", ")})`
+    : "—";
+
+  const dot = $("g-dot");
+  if (valid) {
+    const x = 50 + (Number(gaze.yaw_deg) / 30) * 50;
+    const y = 50 - (Number(gaze.pitch_deg) / 20) * 50;
+    dot.style.left = `${Math.max(0, Math.min(100, x))}%`;
+    dot.style.top = `${Math.max(0, Math.min(100, y))}%`;
+    dot.hidden = false;
+  } else {
+    dot.hidden = true;
+  }
+}
 
 function sync_output_form() {
   const vmc = $("o-vmc-on").checked;
@@ -515,6 +558,9 @@ function render_status(status) {
     : t("output.udp.off");
   $("c-source").textContent = `${status.source || "—"} · ${(status.fps || 0).toFixed(1)} fps`;
   $("s-clients").textContent = status.clients || 0;
+  if (state.gaze) {
+    render_gaze(state.gaze);
+  }
 
   if (state.view === "modules") {
     render_running_modules(status.modules);

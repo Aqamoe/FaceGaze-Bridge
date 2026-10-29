@@ -91,6 +91,7 @@ VRCFT 运行时
   sdk/fgb_udp_frame.h    UDP 二进制输出布局（592 字节固定帧）
   sdk/SHARED-MEMORY.md   共享内存读取指南
   sdk/STREAMING-OUTPUTS.md  WebSocket JSON / UDP 二进制协议与读取示例
+  sdk/GAZE-SERVICE.md    /api/gaze 与 WS gaze 的字段和边界
   sdk/NATIVE-MODULE-GUIDE.md  原生模块开发指南（含示例工程）
   sdk/sample-native-sine/     可运行的示例模块（正弦波，无硬件）
   runtime\vrcft\        VRCFT 模块宿主运行时（Apache-2.0，含 LICENSE/NOTICE）

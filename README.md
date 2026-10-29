@@ -24,6 +24,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | [docs/05-native-module-guide.md](docs/05-native-module-guide.md) | 原生模块 C ABI v1：生命周期、帧提交、编译、打包安装与排障 | 模块开发者 |
 | [docs/06-shared-memory.md](docs/06-shared-memory.md) | 共享内存输出的开启、读取协议与字段速查 | 集成开发者 |
 | [docs/07-streaming-outputs.md](docs/07-streaming-outputs.md) | WebSocket JSON 与 UDP 二进制的协议、字段表和读取示例 | 集成开发者 |
+| [docs/08-gaze-service.md](docs/08-gaze-service.md) | `/api/gaze` 与 WS `gaze` 的字段、注视判定和能力边界 | 集成开发者 |
 
 ---
 
@@ -47,6 +48,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 共享内存输出（M4） | ✅ 命名映射 + 双缓冲 seqlock，`--shm <name>` 显式开启（[ADR-0019](docs/adr/0019-shared-memory-output.md)） |
 | 多输出（M4） | ✅ VRChat OSC + VMC（`--vmc-out`）+ 共享内存（`--shm`）+ WebSocket JSON（`--ws-out`）+ UDP 二进制（`--udp-out`）；5 个 sink 独立节流，状态页可见目标/计数（[ADR-0024](docs/adr/0024-streaming-outputs.md)） |
 | 输出设置 | ✅ 输出页可改 VRChat/眼追模式/参数集/VMC/共享内存/WS/UDP，保存到 `%LOCALAPPDATA%\FaceGazeBridge\outputs.ini`，保存并重启引擎生效；命令行参数优先（[ADR-0025](docs/adr/0025-output-settings-persistence.md)） |
+| 注视点服务（M5） | ✅ `/api/gaze` + 控制面 30 Hz `gaze` 推送；扫视/注视估计、聚散、头姿；状态页有注视卡片（[ADR-0026](docs/adr/0026-gaze-estimator-and-api.md)） |
 | 托盘常驻 + 关窗语义 | ✅ 托盘图标与菜单（显示窗口 / 启动·停止引擎 / 重启引擎 / 退出）、`--tray` 无窗口启动、单实例恢复、关窗收托盘（[ADR-0022](docs/adr/0022-tray-shell-and-close-semantics.md)） |
 | 校准（P1/P2） | ✅ 「校准」页：88 个形状的 lo/hi 与视线 gain/center，拖动实时生效、原子保存 + `.bak`、默认档案自动加载（[ADR-0021](docs/adr/0021-calibration-workbench-3d-preview.md)） |
 | 校准 3D 预览 | ✅ `.fgbface` 模型 + 原生 WebGL2 渲染（旋转/缩放/预设）、32 morph、选中形状区域高亮、2D SVG 降级；模型为程序化占位头，正式美术待补（[ADR-0021](docs/adr/0021-calibration-workbench-3d-preview.md)） |
@@ -83,6 +85,8 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
   两者默认关闭，格式见 [docs/07-streaming-outputs.md](docs/07-streaming-outputs.md)
 - 输出设置：输出页可以直接改目标/开关，保存到 `outputs.ini`，点「保存并重启引擎」
   生效；命令行参数优先，`--no-saved-outputs` 可让某次启动忽略保存值
+- 注视点服务：`GET /api/gaze` 或控制面 WS 的 `gaze` 消息（30 Hz）能拿到合并注视方向、
+  俯仰/偏航、聚散、置信度和注视/扫视状态；状态页有实时注视卡片与小圆点
 - 托盘常驻：`--tray` 不弹窗口只驻留托盘（SteamVR 自启动形态）；关窗进托盘、
   托盘「退出」才停引擎；已有实例时再启动只恢复现有窗口
 - 校准页：88 个形状的 lo/hi 与视线中心可拖可存，实时生效，保存到
@@ -93,7 +97,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 - SteamVR 启动项：设置页显式开关 + 状态/原因；只在 SteamVR 运行时可用，绝不自动注册，
   移除注册后不残留启动项（真实注册待 SteamVR 运行环境验收）
 - 界面三语（简中 / 英 / 日）+ 双击即用的发布包（`cmake --install` 到 `dist/`）
-- 144 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面/VMC/WS/UDP/OSCQuery 探针
+- 147 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面/VMC/WS/UDP/OSCQuery 探针
   （`tools/probe_ipc.py`、`tools/probe_ui.py`）
 
 ```bash
@@ -118,6 +122,7 @@ fgb-cli modules use VRCFTPicoModule   # 启动模块，重启引擎后生效
 - Unity C# 示例包与 5 个 Sink 的并发压力测试（输出协议已就绪，见 ADR-0024）
 - 自动启用 VRChat OSC（实测 `config.json` 里没有 OSC 字段，开关在游戏内 Options > OSC，
   写入位置未确认；暂不动用户配置）
+- 注视点预测（M5.4）与世界坐标（需要头姿 + 场景深度/平面；当前只给 HMD 局部方向）
 - OpenXR API Layer / 眼追注入（共享内存与 VMC 输出已做）
 - 随 SteamVR 启动的真实注册验收（代码与设置页已完成，`not_running` 已实测；见 ADR-0020）
 - 与 VRCFT 输出的逐参数对齐（量化"替代"的最后一道关口）

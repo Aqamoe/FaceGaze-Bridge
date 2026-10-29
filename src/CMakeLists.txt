@@ -76,7 +76,8 @@ if(WIN32)
 endif()
 
 add_library(fgb_process STATIC
-    core/process/one_euro.cpp)
+    core/process/one_euro.cpp
+    core/process/gaze_estimator.cpp)
 target_link_libraries(fgb_process PUBLIC fgb_core)
 
 # VMC 协议的共享部分（blendshape 名字表）：输入和输出都用它，
@@ -202,6 +203,8 @@ if(WIN32)
         DESTINATION sdk RENAME SHARED-MEMORY.md)
     install(FILES "${CMAKE_SOURCE_DIR}/docs/07-streaming-outputs.md"
         DESTINATION sdk RENAME STREAMING-OUTPUTS.md)
+    install(FILES "${CMAKE_SOURCE_DIR}/docs/08-gaze-service.md"
+        DESTINATION sdk RENAME GAZE-SERVICE.md)
     install(FILES
         "${CMAKE_SOURCE_DIR}/samples/native-sine/native_sine.cpp"
         "${CMAKE_SOURCE_DIR}/samples/native-sine/fgb-native.json"

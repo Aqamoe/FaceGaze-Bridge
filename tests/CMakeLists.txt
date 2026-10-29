@@ -12,6 +12,7 @@ add_executable(fgb-tests
     test_v1_params.cpp
     test_capture.cpp
     test_calibration.cpp
+    test_gaze.cpp
     test_ws.cpp
     test_json.cpp
     test_modules.cpp

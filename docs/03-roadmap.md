@@ -261,6 +261,12 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 | 5.8 | 与 1 个串流方案对接验证（ALVR 优先，开源可改） | 4 | 中 |
 | | **合计** | **26** | |
 
+> **进度（2026-10-30）**：5.1 基础 `GazeEstimator`（角速度扫视 / 80 ms 注视迟滞）与
+> 5.2 `/api/gaze` + 30 Hz WebSocket `gaze` 推送已完成，状态页有注视卡片；
+> 5.3 的头姿已在 `FaceFrame` 里（VMC/模块来源），OpenXR 头姿接入未做；
+> 5.4 预测、5.5–5.8 OpenXR Layer / ETFR / ALVR 未做。
+> 见 [ADR-0026](adr/0026-gaze-estimator-and-api.md)、[08-gaze-service.md](08-gaze-service.md)。
+
 **验收**：在 1 个原本不支持眼追的 Unity OpenXR 游戏里，`XR_EXT_eye_gaze_interaction` 能返回 FGB 的注视数据且延迟 < 30 ms。
 
 **砍功能建议**：若进度紧张，5.7 直接砍到 v1.x；5.8 若 ALVR 侧不配合，改为"提供 UDP 输出 + 文档，等社区接入"。
