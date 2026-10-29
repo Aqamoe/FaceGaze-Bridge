@@ -4,13 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FaceGaze Bridge</title>
+<link rel="icon" href="logo.png">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="app">
   <aside class="sidebar">
     <div class="brand">
-      <div class="brand-mark">FG</div>
+      <img class="brand-logo" src="logo.png" alt="FaceGaze Bridge">
       <div class="brand-text">
         <strong>FaceGaze Bridge</strong>
         <span id="brand-version" data-i18n="app.subtitle">控制面板</span>
@@ -18,25 +19,43 @@
     </div>
 
     <nav class="nav">
-      <button class="nav-item active" data-page="status"><span class="dot"></span><span data-i18n="nav.status">状态</span></button>
-      <button class="nav-item" data-page="modules"><span class="dot"></span><span data-i18n="nav.modules">模块</span></button>
-      <button class="nav-item" data-page="params"><span class="dot"></span><span data-i18n="nav.params">参数</span></button>
-      <button class="nav-item" data-page="output"><span class="dot"></span><span data-i18n="nav.output">输出</span></button>
-      <button class="nav-item" data-page="logs"><span class="dot"></span><span data-i18n="nav.logs">日志</span></button>
-      <button class="nav-item" data-page="settings"><span class="dot"></span><span data-i18n="nav.settings">设置</span></button>
+      <button class="nav-item active" data-page="status">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg>
+        <span data-i18n="nav.status">状态</span>
+      </button>
+      <button class="nav-item" data-page="modules">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>
+        <span data-i18n="nav.modules">模块</span>
+      </button>
+      <button class="nav-item" data-page="params">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 12h4M12 12h8M4 17h12M20 17h0"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="17" r="2"/></svg>
+        <span data-i18n="nav.params">参数</span>
+      </button>
+      <button class="nav-item" data-page="output">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 8-8M4 12a8 8 0 0 0 8 8M12 4a8 8 0 0 1 0 16"/><circle cx="12" cy="12" r="2.2"/></svg>
+        <span data-i18n="nav.output">输出</span>
+      </button>
+      <button class="nav-item" data-page="logs">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M5 10h14M5 14h9M5 18h6"/></svg>
+        <span data-i18n="nav.logs">日志</span>
+      </button>
+      <button class="nav-item" data-page="settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/></svg>
+        <span data-i18n="nav.settings">设置</span>
+      </button>
     </nav>
 
     <div class="sidebar-foot">
       <div class="link-state" id="link-state">
         <i class="led"></i><span id="link-text">连接中…</span>
       </div>
-      <div class="muted" id="link-detail">—</div>
+      <div class="muted mono" id="link-detail">—</div>
     </div>
   </aside>
 
   <main class="main">
     <header class="topbar">
-      <div>
+      <div class="topbar-title">
         <h1 id="page-title">运行状态</h1>
         <p class="subtitle" id="page-subtitle">实时指标来自引擎主循环，10 Hz 推送</p>
       </div>
@@ -90,7 +109,7 @@
           </article>
         </div>
 
-        <article class="card" style="margin-top:12px">
+        <article class="card" style="margin-top:14px">
           <h2 data-i18n="status.sources.title">输入源</h2>
           <div class="source-list" id="source-list"></div>
           <div class="hint" data-i18n="status.sources.hint">
@@ -106,7 +125,7 @@
           <span class="pill" data-i18n="modules.config">配置文件</span>
           <span class="muted mono" id="mod-config">—</span>
         </div>
-        <article class="card" style="margin-bottom:12px">
+        <article class="card" style="margin-bottom:14px">
           <h2 data-i18n="modules.running.title">运行中的实例</h2>
           <div class="running-list" id="running-list"></div>
           <div class="hint" data-i18n="modules.running.hint">
@@ -151,7 +170,7 @@
               <li><b data-i18n="output.chain.derive">派生</b><span data-i18n="output.chain.derive.desc">88 形状 → v2 / v1 参数</span></li>
               <li><b data-i18n="output.chain.out">输出</b><span>OSC /avatar/parameters/*</span></li>
             </ol>
-            <p class="hint" data-i18n="output.chain.note">引擎与界面是两个进程：关掉界面不影响追踪数据继续输出。</p>
+            <p class="hint" data-i18n="output.chain.note">引擎由窗口拉起：关闭本窗口会同时停止追踪输出。</p>
           </article>
         </div>
       </section>
@@ -194,6 +213,7 @@
             <h2 data-i18n="settings.engine.title">引擎</h2>
             <div class="kv"><span data-i18n="settings.engine.control">控制面</span><b class="mono" id="s-link">—</b></div>
             <div class="kv"><span data-i18n="settings.engine.clients">界面连接数</span><b id="s-clients">—</b></div>
+            <div class="kv"><span data-i18n="settings.engine.log_file">引擎日志</span><b class="mono">%LOCALAPPDATA%\FaceGazeBridge\engine.log</b></div>
             <div class="kv"><span data-i18n="settings.engine.log_level">日志级别</span><b>
               <select id="s-level">
                 <option value="debug">debug</option>
@@ -203,7 +223,7 @@
               </select>
             </b></div>
             <button class="btn danger" id="s-quit" data-i18n="settings.engine.stop">停止引擎</button>
-            <p class="hint" data-i18n="settings.engine.stop.hint">停止后追踪输出立即中断；重启用命令行 fgb-cli run。</p>
+            <p class="hint" data-i18n="settings.engine.stop.hint">停止后追踪输出立即中断；重新打开 FaceGaze Bridge 即可再次启动。</p>
           </article>
 
           <article class="card">

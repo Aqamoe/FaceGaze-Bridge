@@ -1,18 +1,23 @@
-// fgb-ui —— WebView2 外壳。
+// FaceGaze Bridge —— 桌面入口（WebView2 外壳 + 引擎拉起）。
 //
-// 这一层刻意做得极薄：建窗口、起 WebView2、导航到引擎的控制面地址，剩下的都在页面里。
-// 为什么不让 C++ 自己发 WebSocket、再用 postMessage 转发给页面？
-//   1. 页面直接连 ws://127.0.0.1:<port>/ws，浏览器里打开同一个地址也能用，调试不用两边跑
-//   2. 外壳里没有协议逻辑，就不会出现"页面能连、外壳连不上"这类只有一方复现的问题
-//   3. 引擎与 UI 是两个进程，外壳挂了不影响追踪数据流
+// 产品形态：用户只双击一个 exe。外壳先探一下控制面端口：
+//   - 已经有引擎在跑（例如命令行起的）→ 直接连，不动它
+//   - 没有 → 隐藏控制台拉起同目录的 fgb-cli.exe，并把它的输出写进
+//     %LOCALAPPDATA%\FaceGazeBridge\engine.log
 //
-// 页面从 http://127.0.0.1:<port>/ 加载（而不是把资源塞进 exe），原因：
-//   - 页面与 WebSocket 同源同端口，绕开 https 页面连 ws:// 回环时的 mixed-content 限制
-//   - 改 UI 不用重编 C++，热刷新即可
-//   - 资源在哪、改了没有，一眼能看见（发布时随包放在 ui/ 目录）
+// 生命周期用 Job 对象绑定：外壳退出（正常关闭或崩溃）都会带走自己拉起的引擎，
+// 不留后台进程。别人起的引擎不受影响（没有句柄关系）。
+//
+// 页面仍从 http://127.0.0.1:<port>/ 加载，外壳里没有业务逻辑：
+//   1. 页面直接连 ws://127.0.0.1:<port>/ws，浏览器打开同一地址也能调试
+//   2. 引擎与界面是两个进程，改 UI 不用重编 C++
+//   3. 页面与 WebSocket 同源同端口，绕开 mixed-content 限制
 //
 // 运行时依赖：WebView2 Evergreen Runtime。Win10/11 通常已随 Edge 预装。
+#include <winsock2.h>
+
 #include <windows.h>
+#include <dwmapi.h>
 #include <shellapi.h>
 #include <wrl.h>
 #include <WebView2.h>
@@ -22,17 +27,28 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
+#include <vector>
 
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
 
 namespace {
 
-constexpr wchar_t kWindowClass[] = L"FgbUiWindow";
-constexpr wchar_t kWindowTitle[] = L"FaceGaze Bridge";
-constexpr UINT_PTR kRetryTimer   = 1;
-constexpr UINT kRetryIntervalMs  = 1500;
+constexpr wchar_t kWindowClass[]  = L"FgbUiWindow";
+constexpr wchar_t kWindowTitle[]  = L"FaceGaze Bridge";
+constexpr UINT_PTR kRetryTimer    = 1;
+constexpr UINT_PTR kEngineTimer   = 2;
+constexpr UINT kRetryIntervalMs   = 1500;
+constexpr UINT kEnginePollMs      = 1000;
+constexpr int kIconResource       = 101;
+
+// 逻辑像素；实际尺寸按显示器 DPI 放大。旧版固定 1180x780 在 125%/150% 缩放下显得很小。
+constexpr int kDefaultWidthDip  = 1360;
+constexpr int kDefaultHeightDip = 860;
+constexpr int kMinWidthDip      = 1100;
+constexpr int kMinHeightDip     = 700;
 
 struct Host {
     HWND hwnd                        = nullptr;
@@ -42,7 +58,15 @@ struct Host {
     std::wstring user_data_dir;
     // 非空时把 --remote-debugging-port 传给 WebView2：自动化验证和现场排障都靠它
     std::wstring browser_args;
-    bool navigated_ok = false;
+    std::uint16_t port = 8787;
+    bool navigated_ok  = false;
+    bool engine_owned  = false;
+
+    HANDLE engine_process = nullptr;
+    HANDLE engine_job     = nullptr;
+    std::wstring engine_log;
+    std::wstring default_source;
+    std::vector<std::wstring> engine_args;
 };
 
 Host g_host;
@@ -59,17 +83,32 @@ void set_title(const wchar_t* suffix) {
     SetWindowTextW(g_host.hwnd, title.c_str());
 }
 
-std::wstring default_user_data_dir() {
+std::wstring local_app_data() {
     wchar_t buffer[MAX_PATH]{};
     const DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
-    std::wstring dir;
     if (length > 0 && length < MAX_PATH) {
-        dir.assign(buffer, length);
-    } else {
-        dir = L".";
+        return std::wstring{buffer, length};
     }
+    return L".";
+}
+
+std::wstring default_user_data_dir() {
+    std::wstring dir = local_app_data();
     dir.append(L"\\FaceGazeBridge\\WebView2");
     return dir;
+}
+
+UINT window_dpi() {
+    using GetDpiForWindowFn = UINT(WINAPI*)(HWND);
+    static const auto get_dpi = reinterpret_cast<GetDpiForWindowFn>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForWindow")));
+    if (get_dpi != nullptr && g_host.hwnd != nullptr) {
+        const UINT dpi = get_dpi(g_host.hwnd);
+        if (dpi != 0) {
+            return dpi;
+        }
+    }
+    return 96;
 }
 
 void navigate_once() {
@@ -98,7 +137,7 @@ void on_controller_ready(HRESULT result, ICoreWebView2Controller* controller) {
     ComPtr<ICoreWebView2Controller2> controller2;
     if (SUCCEEDED(controller->QueryInterface(IID_PPV_ARGS(&controller2)))) {
         // 与页面 CSS 的底色一致，避免页面加载前的白闪
-        const COREWEBVIEW2_COLOR background{255, 0x14, 0x16, 0x1a};
+        const COREWEBVIEW2_COLOR background{255, 0x07, 0x0d, 0x1c};
         controller2->put_DefaultBackgroundColor(background);
     }
 
@@ -184,6 +223,254 @@ void create_webview() {
     }
 }
 
+// ---------- 引擎：探测 / 拉起 / 生命周期 ----------
+
+std::wstring quote(const std::wstring& text) {
+    std::wstring out{L"\""};
+    out.append(text);
+    out.push_back(L'"');
+    return out;
+}
+
+// 只认自家引擎的 /healthz（{"ok":true,...}）。端口被别的程序占着时返回 false，
+// 让外层去拉引擎——拉不起来会在日志里说清楚，比"界面永远转圈"好排障。
+bool engine_present(std::uint16_t port) {
+    const SOCKET socket_handle = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (socket_handle == INVALID_SOCKET) {
+        return false;
+    }
+
+    sockaddr_in address{};
+    address.sin_family      = AF_INET;
+    address.sin_port        = htons(port);
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    u_long nonblocking = 1;
+    ::ioctlsocket(socket_handle, FIONBIO, &nonblocking);
+
+    bool connected = false;
+    if (::connect(socket_handle, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0) {
+        connected = true;
+    } else if (::WSAGetLastError() == WSAEWOULDBLOCK) {
+        fd_set writable;
+        FD_ZERO(&writable);
+        FD_SET(socket_handle, &writable);
+        timeval timeout{0, 200'000};
+        if (::select(0, nullptr, &writable, nullptr, &timeout) > 0) {
+            int error = 0;
+            int length = sizeof(error);
+            ::getsockopt(socket_handle, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&error), &length);
+            connected = error == 0;
+        }
+    }
+
+    bool found = false;
+    if (connected) {
+        const char request[] = "GET /healthz HTTP/1.0\r\nConnection: close\r\n\r\n";
+        ::send(socket_handle, request, static_cast<int>(sizeof(request) - 1), 0);
+
+        std::string response;
+        const ULONGLONG deadline = ::GetTickCount64() + 300;
+        char buffer[512];
+        for (;;) {
+            fd_set readable;
+            FD_ZERO(&readable);
+            FD_SET(socket_handle, &readable);
+            timeval timeout{0, 50'000};
+            const int ready = ::select(0, &readable, nullptr, nullptr, &timeout);
+            if (ready < 0) {
+                break;
+            }
+            if (ready == 0) {
+                if (::GetTickCount64() > deadline) {
+                    break;
+                }
+                continue;
+            }
+            const int received = ::recv(socket_handle, buffer, sizeof(buffer), 0);
+            if (received <= 0) {
+                break;
+            }
+            response.append(buffer, static_cast<std::size_t>(received));
+            if (response.size() > 4096) {
+                break;
+            }
+        }
+        found = response.find("\"ok\":true") != std::string::npos;
+    }
+
+    ::closesocket(socket_handle);
+    return found;
+}
+
+std::filesystem::path exe_directory() {
+    wchar_t buffer[MAX_PATH]{};
+    const DWORD length = ::GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) {
+        return {};
+    }
+    return std::filesystem::path{buffer}.parent_path();
+}
+
+void write_log_header(HANDLE log, const std::wstring& command) {
+    SYSTEMTIME now{};
+    ::GetLocalTime(&now);
+
+    wchar_t line[600];
+    std::swprintf(line, 600, L"[shell] %04u-%02u-%02u %02u:%02u:%02u 启动引擎: %s\r\n",
+                  static_cast<unsigned>(now.wYear), static_cast<unsigned>(now.wMonth),
+                  static_cast<unsigned>(now.wDay), static_cast<unsigned>(now.wHour),
+                  static_cast<unsigned>(now.wMinute), static_cast<unsigned>(now.wSecond),
+                  command.c_str());
+
+    const int bytes = ::WideCharToMultiByte(CP_UTF8, 0, line, -1, nullptr, 0, nullptr, nullptr);
+    if (bytes <= 0) {
+        return;
+    }
+    std::string utf8(static_cast<std::size_t>(bytes), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, line, -1, utf8.data(), bytes, nullptr, nullptr);
+    DWORD written = 0;
+    ::WriteFile(log, utf8.data(), static_cast<DWORD>(utf8.size() - 1), &written, nullptr);
+}
+
+bool spawn_engine(const std::wstring& source) {
+    const std::filesystem::path directory = exe_directory();
+    const std::filesystem::path engine    = directory / L"fgb-cli.exe";
+    std::error_code ec;
+    if (engine.empty() || !std::filesystem::exists(engine, ec)) {
+        MessageBoxW(g_host.hwnd, L"找不到 fgb-cli.exe（应与本程序在同一目录）。", kWindowTitle,
+                    MB_ICONERROR | MB_OK);
+        return false;
+    }
+
+    std::wstring command = quote(engine.wstring()) + L" run --panel " +
+                           std::to_wstring(static_cast<unsigned>(g_host.port));
+
+    bool forwarded_source = false;
+    for (const std::wstring& arg : g_host.engine_args) {
+        if (arg == L"--source") {
+            forwarded_source = true;
+        }
+    }
+    if (!forwarded_source) {
+        command.append(L" --source ");
+        command.append(source);
+    }
+    for (const std::wstring& arg : g_host.engine_args) {
+        command.push_back(L' ');
+        command.append(quote(arg));
+    }
+
+    g_host.engine_log = local_app_data() + L"\\FaceGazeBridge\\engine.log";
+    std::filesystem::create_directories(std::filesystem::path{g_host.engine_log}.parent_path(), ec);
+
+    SECURITY_ATTRIBUTES inherit{};
+    inherit.nLength        = sizeof(inherit);
+    inherit.bInheritHandle = TRUE;
+    HANDLE log = ::CreateFileW(g_host.engine_log.c_str(), FILE_APPEND_DATA,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, OPEN_ALWAYS,
+                               FILE_ATTRIBUTE_NORMAL, nullptr);
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    if (log != INVALID_HANDLE_VALUE) {
+        write_log_header(log, command);
+        startup.dwFlags    = STARTF_USESTDHANDLES;
+        startup.hStdInput  = INVALID_HANDLE_VALUE;
+        startup.hStdOutput = log;
+        startup.hStdError  = log;
+    }
+
+    PROCESS_INFORMATION process{};
+    // 日志打不开就不重定向，照样把引擎拉起来——没有输出不该挡住启动
+    const BOOL ok = ::CreateProcessW(engine.c_str(), command.data(), nullptr, nullptr,
+                                     log != INVALID_HANDLE_VALUE, CREATE_NO_WINDOW, nullptr,
+                                     directory.c_str(), &startup, &process);
+    if (log != INVALID_HANDLE_VALUE) {
+        ::CloseHandle(log);
+    }
+    if (ok == 0) {
+        MessageBoxW(g_host.hwnd, L"启动引擎失败（fgb-cli.exe 无法创建）。", kWindowTitle,
+                    MB_ICONERROR | MB_OK);
+        return false;
+    }
+
+    ::CloseHandle(process.hThread);
+
+    if (g_host.engine_job == nullptr) {
+        const HANDLE job = ::CreateJobObjectW(nullptr, nullptr);
+        if (job != nullptr) {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION info{};
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            ::SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info, sizeof(info));
+            g_host.engine_job = job;
+        }
+    }
+    if (g_host.engine_job != nullptr &&
+        ::AssignProcessToJobObject(g_host.engine_job, process.hProcess) == 0) {
+        // 失败也能跑，只是关窗时可能留下引擎进程；不为此拦住启动
+        ::OutputDebugStringW(L"FaceGaze Bridge: AssignProcessToJobObject failed\n");
+    }
+
+    g_host.engine_process = process.hProcess;
+    g_host.engine_owned   = true;
+    ::SetTimer(g_host.hwnd, kEngineTimer, kEnginePollMs, nullptr);
+    return true;
+}
+
+// 引擎退出：界面已经连上过 = 用户按了"停止引擎"或引擎自己结束，跟着退出；
+// 还没连上就退出 = 启动失败（最常见是没装 VRCFT 模块），给一次切 VMC 的机会。
+void on_engine_exit(DWORD exit_code) {
+    KillTimer(g_host.hwnd, kEngineTimer);
+    if (g_host.engine_process != nullptr) {
+        ::CloseHandle(g_host.engine_process);
+        g_host.engine_process = nullptr;
+    }
+    if (g_host.navigated_ok) {
+        PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
+        return;
+    }
+
+    const std::wstring message =
+        L"引擎启动失败（退出码 " + std::to_wstring(exit_code) + L"）。\n\n" +
+        L"日志：" + g_host.engine_log + L"\n\n" +
+        L"常见原因：没安装 VRCFT 模块、VRCFT 本体仍占用模块端口、8787 端口被其它程序占用。\n\n" +
+        L"是否改用 VMC 输入重试？（需要 VSeeFace 等程序发 VMC 数据）";
+    const int answer = MessageBoxW(g_host.hwnd, message.c_str(), kWindowTitle,
+                                   MB_YESNO | MB_ICONERROR | MB_SETFOREGROUND);
+    if (answer != IDYES) {
+        PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
+        return;
+    }
+
+    std::vector<std::wstring> kept;
+    for (std::size_t i = 0; i < g_host.engine_args.size(); ++i) {
+        if (g_host.engine_args[i] == L"--source") {
+            ++i; // 连同取值一起丢掉，否则 --source vrcft 和新加的 vmc 会同时生效
+            continue;
+        }
+        kept.push_back(g_host.engine_args[i]);
+    }
+    g_host.engine_args = std::move(kept);
+
+    if (spawn_engine(L"vmc")) {
+        navigate_once();
+    } else {
+        PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
+    }
+}
+
+void poll_engine() {
+    if (!g_host.engine_owned || g_host.engine_process == nullptr) {
+        return;
+    }
+    DWORD code = 0;
+    if (::GetExitCodeProcess(g_host.engine_process, &code) == 0 || code == STILL_ACTIVE) {
+        return;
+    }
+    on_engine_exit(code);
+}
+
 LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
     case WM_SIZE:
@@ -197,13 +484,16 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
     case WM_TIMER:
         if (wparam == kRetryTimer && !g_host.navigated_ok) {
             navigate_once();
+        } else if (wparam == kEngineTimer) {
+            poll_engine();
         }
         return 0;
 
     case WM_GETMINMAXINFO: {
-        auto* info             = reinterpret_cast<MINMAXINFO*>(lparam);
-        info->ptMinTrackSize.x = 820;
-        info->ptMinTrackSize.y = 560;
+        auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
+        const UINT dpi = window_dpi();
+        info->ptMinTrackSize.x = ::MulDiv(kMinWidthDip, static_cast<int>(dpi), 96);
+        info->ptMinTrackSize.y = ::MulDiv(kMinHeightDip, static_cast<int>(dpi), 96);
         return 0;
     }
 
@@ -241,11 +531,25 @@ void enable_dpi_awareness() {
     }
 }
 
+void apply_dark_title_bar(HWND hwnd) {
+    // DWMWA_USE_IMMERSIVE_DARK_MODE = 20（Win10 1809+）；老系统失败就保持系统配色
+    const BOOL enabled = TRUE;
+    using DwmSetWindowAttributeFn = HRESULT(WINAPI*)(HWND, DWORD, LPCVOID, DWORD);
+    static const auto set_attribute = reinterpret_cast<DwmSetWindowAttributeFn>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"dwmapi.dll"),
+                                               "DwmSetWindowAttribute")));
+    if (set_attribute != nullptr) {
+        set_attribute(hwnd, 20, &enabled, sizeof(enabled));
+    }
+}
+
 struct Options {
     std::uint16_t port = 8787;
     int debug_port     = 0;
     std::wstring url;
     std::wstring user_data_dir = default_user_data_dir();
+    // 认不出来的参数原样转给引擎：--source vmc / --vmc-out / --vrchat 这类不用外壳理解
+    std::vector<std::wstring> engine_args;
 };
 
 Options parse_options(int argc, wchar_t** argv) {
@@ -260,6 +564,8 @@ Options parse_options(int argc, wchar_t** argv) {
             options.user_data_dir = argv[++i];
         } else if (arg == L"--debug-port" && i + 1 < argc) {
             options.debug_port = _wtoi(argv[++i]);
+        } else {
+            options.engine_args.push_back(arg);
         }
     }
     if (options.url.empty()) {
@@ -282,9 +588,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
         LocalFree(argv);
     }
 
+    WSADATA wsa{};
+    const bool wsa_ok = ::WSAStartup(MAKEWORD(2, 2), &wsa) == 0;
+
     const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(com)) {
         MessageBoxW(nullptr, L"COM 初始化失败。", kWindowTitle, MB_ICONERROR | MB_OK);
+        if (wsa_ok) {
+            ::WSACleanup();
+        }
         return 1;
     }
 
@@ -296,27 +608,50 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     window_class.lpfnWndProc   = window_proc;
     window_class.hInstance     = module;
     window_class.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
-    window_class.hbrBackground = CreateSolidBrush(RGB(0x14, 0x16, 0x1a));
+    window_class.hbrBackground = CreateSolidBrush(RGB(0x07, 0x0d, 0x1c));
     window_class.lpszClassName = kWindowClass;
+    window_class.hIcon         = LoadIconW(module, MAKEINTRESOURCEW(kIconResource));
+    window_class.hIconSm       = reinterpret_cast<HICON>(LoadImageW(
+        module, MAKEINTRESOURCEW(kIconResource), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR));
     if (RegisterClassExW(&window_class) == 0) {
         CoUninitialize();
+        if (wsa_ok) {
+            ::WSACleanup();
+        }
         return 1;
     }
 
     g_host.url           = options.url;
     g_host.user_data_dir = options.user_data_dir;
+    g_host.port          = options.port;
+    g_host.engine_args   = options.engine_args;
+    // 产品默认走 VRCFT 模块；没模块时失败弹窗可以一键切 VMC
+    g_host.default_source = L"vrcft";
     if (options.debug_port > 0) {
         g_host.browser_args = L"--remote-debugging-port=" +
                               std::to_wstring(options.debug_port);
     }
 
-    // 默认尺寸按工作区收一下：小屏/远程桌面下 1180x780 会被截掉一截
+    // 默认尺寸按 DPI 放大后再收进工作区：高分屏上 1180x780 的物理像素只有 ~940 DIP
+    UINT dpi = 96;
+    using GetDpiForSystemFn = UINT(WINAPI*)();
+    const auto get_system_dpi = reinterpret_cast<GetDpiForSystemFn>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForSystem")));
+    if (get_system_dpi != nullptr) {
+        const UINT value = get_system_dpi();
+        if (value != 0) {
+            dpi = value;
+        }
+    }
+
     RECT work{};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
     const int work_width  = static_cast<int>(work.right - work.left);
     const int work_height = static_cast<int>(work.bottom - work.top);
-    const int width       = std::min(1180, work_width > 0 ? work_width - 80 : 1180);
-    const int height      = std::min(780, work_height > 0 ? work_height - 80 : 780);
+    const int wanted_w    = ::MulDiv(kDefaultWidthDip, static_cast<int>(dpi), 96);
+    const int wanted_h    = ::MulDiv(kDefaultHeightDip, static_cast<int>(dpi), 96);
+    const int width       = std::min(wanted_w, work_width > 0 ? work_width - 80 : wanted_w);
+    const int height      = std::min(wanted_h, work_height > 0 ? work_height - 80 : wanted_h);
     const int x           = work.left + (work_width - width) / 2;
     const int y           = work.top + (work_height - height) / 2;
 
@@ -324,11 +659,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
                                   height, nullptr, nullptr, module, nullptr);
     if (g_host.hwnd == nullptr) {
         CoUninitialize();
+        if (wsa_ok) {
+            ::WSACleanup();
+        }
         return 1;
     }
 
+    apply_dark_title_bar(g_host.hwnd);
     ShowWindow(g_host.hwnd, show_command == 0 ? SW_SHOWNORMAL : show_command);
     UpdateWindow(g_host.hwnd);
+
+    // 已有引擎（例如命令行起的）就只连不动；否则拉一个，藏在后台。
+    if (!wsa_ok || !engine_present(options.port)) {
+        spawn_engine(g_host.default_source);
+    }
 
     create_webview();
 
@@ -343,6 +687,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
         g_host.controller.Reset();
     }
     g_host.webview.Reset();
+
+    // Job 句柄一关，自己拉起的引擎（及其模块子进程）随之结束
+    if (g_host.engine_job != nullptr) {
+        ::CloseHandle(g_host.engine_job);
+        g_host.engine_job = nullptr;
+    }
+    if (g_host.engine_process != nullptr) {
+        ::CloseHandle(g_host.engine_process);
+        g_host.engine_process = nullptr;
+    }
+
     CoUninitialize();
+    if (wsa_ok) {
+        ::WSACleanup();
+    }
     return 0;
 }

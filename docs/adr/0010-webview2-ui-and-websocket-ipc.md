@@ -1,5 +1,8 @@
 # ADR-0010 · 界面回到 WebView2 外壳 + WebSocket IPC
 
+> 后续：发版形态在 [ADR-0016](0016-single-entry-desktop-app.md) 收敛为单入口
+> `FaceGaze Bridge.exe`（窗口拉起引擎、关窗即停）。本文关于 IPC 与页面同源的所有决定不变。
+
 - 状态：已采纳（取代 [ADR-0009](0009-local-control-panel.md) 的"浏览器 + HTTP 轮询"形态）
 - 日期：2026-10-29
 - 影响：新增 `net/ws_codec`、`net/ws_server`、`web/ipc`、`ui/`、`src/ui`（`fgb-ui`）；删除 `web/panel.*`

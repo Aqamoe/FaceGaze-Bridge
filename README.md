@@ -35,7 +35,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 参数层（M3） | ✅ v2 + v1 legacy + 地址发现 + binary；**真机验收通过**（[ADR-0006](docs/adr/0006-hardware-acceptance.md)） |
 | 录制回放（M4 之一） | ✅ 录原始包 + 回放 + 参数导出 CSV（[ADR-0007](docs/adr/0007-capture-replay.md)） |
 | 校准与滤波（M3 剩余） | ✅ 逐形状校准（从两份抓包推导）+ One Euro 滤波（[ADR-0008](docs/adr/0008-calibration-and-filtering.md)） |
-| 界面（WebView2） | ✅ `fgb-ui` 原生窗口 + WebSocket IPC：状态 / 模块 / 参数热力图 / 输出 / 日志 / 设置（[ADR-0010](docs/adr/0010-webview2-ui-and-websocket-ipc.md)） |
+| 界面（WebView2） | ✅ 单入口 `FaceGaze Bridge.exe`（窗口自己拉起引擎）+ WebSocket IPC：状态 / 模块 / 参数热力图 / 输出 / 日志 / 设置（[ADR-0010](docs/adr/0010-webview2-ui-and-websocket-ipc.md)、[ADR-0016](docs/adr/0016-single-entry-desktop-app.md)） |
 | 界面本地化 | ✅ 简中 / 英 / 日三语，界面内切换并记住选择（[ADR-0012](docs/adr/0012-ui-localization.md)） |
 | 模块管理 | ✅ 扫描 VRCFT `CustomLibs` + FGB `vrcft-libs`、解析 `module.json`、选择启动模块并持久化（[ADR-0011](docs/adr/0011-module-management.md)） |
 | 多源合并（M4） | ✅ 表情 / 眼追 / 头姿三通道分别选提供者，可重复 `--source`（[ADR-0013](docs/adr/0013-source-merging.md)） |
@@ -52,8 +52,8 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 - 无锁核心：SPSC ring、seqlock 快照
 - VRChat 输出端：死区过滤、bundle 聚合、1200 字节主动分包、1 Hz 心跳
 - 眼追参数派生（`EyeLeftX/Y`、`EyeLidLeft/Right`），`parameters` / `native` / `both` 三模式
-- 界面：WebView2 窗口（`fgb-ui`）↔ 引擎走本机 WebSocket，10 Hz 推送状态与 365 个参数值，
-  滤波滑杆/重新读取头像/日志实时回传
+- 界面：`FaceGaze Bridge.exe` 双击即用（窗口拉起隐藏引擎，关窗即停），↔ 引擎走本机 WebSocket，
+  10 Hz 推送状态与 365 个参数值，滤波滑杆/重新读取头像/日志实时回传
 - 模块管理：自动发现 VRCFT 的 `CustomLibs` 与 FGB 的 `vrcft-libs`，解析 `module.json`，
   界面里选启动模块（写 `%APPDATA%\FaceGazeBridge\fgb.ini`），故障时显示模块自己报的原因
 - 多源合并：多个输入可同时工作（如模块给眼追、VMC 给表情），
@@ -117,6 +117,10 @@ fgb-cli run --vmc-port 39539 --vrchat 127.0.0.1:9000 --eye-mode parameters
 `build/_deps`；内网环境可以自己解压好再 `-DFGB_WEBVIEW2_DIR=<目录>`，或者 `-DFGB_BUILD_UI=OFF` 只编引擎。
 页面资源在 `ui/`，构建时复制到 `fgb-cli.exe` 旁边；改 UI 不用重编。
 
+发布包（`cmake --install build/release --prefix dist`）里只有一个入口：
+双击 `dist/FaceGaze Bridge.exe`，窗口会自己拉起引擎，关掉窗口即停止追踪。
+想用命令行/自动化测试时仍可直接跑 `fgb-cli run --source vmc --panel 8787`。
+
 ---
 
 ## 关键设计摘要
@@ -171,7 +175,7 @@ src/sources   输入（VMC / VRCFT 模块 / 抓包回放）
 src/sinks     输出（VRChat / 待接入 VMC、共享内存）
 src/engine    合并、快照发布、扇出
 src/web       控制面 IPC：WS 协议、状态/参数/日志推送、静态页面
-src/ui        fgb-ui：WebView2 外壳（Win32 窗口，不含业务逻辑）
+src/ui        FaceGaze Bridge.exe：桌面入口（WebView2 窗口 + 拉起/回收引擎）
 src/cli       fgb-cli
 ui/           界面资源（index.html / app.js / style.css，无构建步骤）
 tests         单元测试 + 金样测试

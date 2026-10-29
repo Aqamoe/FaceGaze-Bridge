@@ -79,16 +79,18 @@ cmake --install build/release --config Release --prefix dist
 产物在 `dist/`：
 
 ```
-dist/fgb-cli.exe        引擎（控制台）
-dist/fgb-ui.exe         WebView2 界面外壳
-dist/ui/                页面资源（index.html / app.js / style.css / i18n.js）
-dist/启动 - VRCFT 模块.cmd   双击：接管 VRCFT 模块 + 开界面
-dist/启动 - VMC.cmd          双击：VMC 输入 + 开界面
-dist/README.txt         怎么用、日志在哪
+dist/FaceGaze Bridge.exe   唯一入口：界面窗口 + 拉起引擎（图标/版本信息在资源里）
+dist/fgb-cli.exe           引擎（命令行用；外壳启动时会调用它）
+dist/ui/                   页面资源（index.html / app.js / style.css / i18n.js / logo.png）
+dist/README.txt            怎么用、日志在哪
 ```
 
-发布前**必须**真的启动一次 `dist` 里的 .cmd，确认窗口起来、界面连上（`tools/probe_ui.py`
-可以顶替肉眼）。发布包不随仓库提交（`/dist/` 已忽略）。
+入口只有一个（[ADR-0016](docs/adr/0016-single-entry-desktop-app.md)）：
+外壳探到 8787 没有引擎就隐藏启动 `fgb-cli run --source vrcft --panel 8787`，
+用 Job 对象把引擎绑在窗口生命周期上，关窗即停。不再有 `.cmd`。
+
+发布前**必须**真的启动一次 `dist/FaceGaze Bridge.exe`，确认窗口起来、界面连上
+（`tools/probe_ui.py` 可以顶替肉眼）。发布包不随仓库提交（`/dist/` 已忽略）。
 
 ### 3.4 探针（比截图可靠）
 
@@ -97,7 +99,7 @@ dist/README.txt         怎么用、日志在哪
 python tools/probe_ipc.py 8787
 
 # 界面：通过 WebView2 远程调试端口跑 JS，验证页面真的渲染了数据
-fgb-ui.exe --port 8787 --debug-port 9222
+"FaceGaze Bridge.exe" --debug-port 9222        # 引擎已由窗口拉起
 python tools/probe_ui.py 9222 8787
 
 # VMC 第二路输出：按接收端视角收包，检查 Blend/Val + Apply + 头姿
@@ -165,7 +167,7 @@ src/sources/   输入（VMC / VRCFT 模块 / 抓包回放）
 src/sinks/     输出（VRChat OSC）
 src/engine/    合并、快照发布、扇出
 src/web/       控制面 IPC（WS 消息 + 静态页面）
-src/ui/        fgb-ui：WebView2 外壳（Win32 窗口，无业务逻辑）
+src/ui/        FaceGaze Bridge.exe：WebView2 窗口 + 拉起/回收引擎（无业务逻辑）
 ui/            页面资源（无构建步骤）
 tools/         抓包、冒烟与探针脚本
 docs/          方案、ADR、路线图

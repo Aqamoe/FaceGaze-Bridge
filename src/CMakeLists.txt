@@ -83,11 +83,25 @@ add_library(fgb_web STATIC
 target_link_libraries(fgb_web PUBLIC fgb_engine fgb_net fgb_process)
 target_compile_definitions(fgb_web PRIVATE FGB_VERSION="${PROJECT_VERSION}")
 
+# 版本信息 + 图标：两个 exe 共用一份模板，内部名/原始文件名各自填
+function(fgb_add_windows_resources target internal_name original_filename)
+    if(NOT WIN32)
+        return()
+    endif()
+    set(FGB_RC_ICON_PATH "${CMAKE_SOURCE_DIR}/packaging/icon.ico")
+    set(FGB_RC_INTERNAL_NAME "${internal_name}")
+    set(FGB_RC_FILENAME "${original_filename}")
+    configure_file("${CMAKE_SOURCE_DIR}/packaging/app.rc.in"
+                   "${CMAKE_CURRENT_BINARY_DIR}/res/${target}.rc" @ONLY)
+    target_sources(${target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/res/${target}.rc")
+endfunction()
+
 if(FGB_BUILD_CLI)
     add_executable(fgb-cli cli/main.cpp)
     target_link_libraries(fgb-cli PRIVATE fgb_engine fgb_web)
     target_compile_definitions(fgb-cli PRIVATE FGB_VERSION="${PROJECT_VERSION}")
     set_target_properties(fgb-cli PROPERTIES OUTPUT_NAME "fgb-cli")
+    fgb_add_windows_resources(fgb-cli "fgb-cli" "fgb-cli.exe")
 
     # 页面资源随可执行文件走：fgb-cli 是发页面的那一侧，fgb-ui 只是外壳
     add_custom_command(TARGET fgb-cli POST_BUILD
@@ -96,15 +110,18 @@ if(FGB_BUILD_CLI)
         COMMENT "复制 UI 资源 → $<TARGET_FILE_DIR:fgb-cli>/ui")
 endif()
 
-# WebView2 外壳。sdk 缺失（离线/下载失败）时只跳过这一个目标，不影响引擎
-option(FGB_BUILD_UI "Build fgb-ui (WebView2 shell)" ON)
+# 产品入口：FaceGaze Bridge.exe（WebView2 外壳，同时负责把引擎拉起来）。
+# sdk 缺失（离线/下载失败）时只跳过这一个目标，不影响引擎
+option(FGB_BUILD_UI "Build the FaceGaze Bridge window shell (WebView2)" ON)
 if(WIN32 AND FGB_BUILD_UI)
     include(${CMAKE_SOURCE_DIR}/cmake/WebView2.cmake)
     fgb_webview2_target(FGB_WEBVIEW2_TARGET)
     if(FGB_WEBVIEW2_TARGET)
         add_executable(fgb-ui WIN32 ui/main.cpp)
-        target_link_libraries(fgb-ui PRIVATE ${FGB_WEBVIEW2_TARGET} fgb_options)
-        set_target_properties(fgb-ui PROPERTIES OUTPUT_NAME "fgb-ui")
+        target_link_libraries(fgb-ui PRIVATE ${FGB_WEBVIEW2_TARGET} fgb_options ws2_32)
+        # 用户双击的那个文件就叫产品名；命令行/探针里仍可按 fgb-ui 目标名引用
+        set_target_properties(fgb-ui PROPERTIES OUTPUT_NAME "FaceGaze Bridge")
+        fgb_add_windows_resources(fgb-ui "fgb-ui" "FaceGaze Bridge.exe")
     endif()
 endif()
 
@@ -112,8 +129,8 @@ endif()
 #
 #   cmake --install build/release --config Release --prefix dist
 #
-# 目录布局固定（见 AGENT.md §3.3）：exe 平铺在根，页面在 ui/，
-# 两个 .cmd 是入口——引擎需要参数，双击 exe 是起不来的。
+# 目录布局（见 AGENT.md §3.3）：exe 平铺在根，页面在 ui/。
+# 唯一入口是「FaceGaze Bridge.exe」——它会自己拉起 fgb-cli，不再需要 .cmd。
 if(WIN32)
     if(TARGET fgb-cli)
         install(TARGETS fgb-cli RUNTIME DESTINATION .)
@@ -123,9 +140,5 @@ if(WIN32)
         install(TARGETS fgb-ui RUNTIME DESTINATION .)
     endif()
     install(DIRECTORY "${CMAKE_SOURCE_DIR}/ui/" DESTINATION ui)
-    install(FILES
-        "${CMAKE_SOURCE_DIR}/packaging/README.txt"
-        "${CMAKE_SOURCE_DIR}/packaging/启动 (VRCFT 模块).cmd"
-        "${CMAKE_SOURCE_DIR}/packaging/启动 (VMC).cmd"
-        DESTINATION .)
+    install(FILES "${CMAKE_SOURCE_DIR}/packaging/README.txt" DESTINATION .)
 endif()

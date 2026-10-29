@@ -76,7 +76,7 @@ void print_usage() {
                  "  --replay-speed <倍率>   回放速度，0 = 不限 (默认 1.0)\n"
                  "  --replay-loop           回放到末尾后重新开始\n"
                  "  --panel <端口>          启动控制面 IPC（ws://127.0.0.1:<端口>/ws）\n"
-                 "  --ui                    启动时拉起 WebView2 界面（隐含 --panel 8787）\n"
+                 "  --ui                    启动时拉起 FaceGaze Bridge 窗口（隐含 --panel 8787）\n"
                  "  --ui-dir <目录>         页面资源目录（默认 <exe>/ui）\n"
                  "  --calibration <文件>    应用校准档案（见 calibrate 命令）\n"
                  "  --filter <on|off>       一欧元滤波（默认 off，与 VRCFT 一致）\n"
@@ -189,10 +189,15 @@ bool launch_ui(std::uint16_t port) {
     if (length == 0 || length >= MAX_PATH) {
         return false;
     }
-    const auto exe = std::filesystem::path{buffer}.parent_path() / L"fgb-ui.exe";
+    const auto dir = std::filesystem::path{buffer}.parent_path();
     std::error_code ec;
+    // 发版后的外壳叫产品名；开发目录里可能还是旧的 fgb-ui.exe
+    std::filesystem::path exe = dir / L"FaceGaze Bridge.exe";
     if (!std::filesystem::exists(exe, ec)) {
-        std::fprintf(stderr, "找不到 fgb-ui.exe（和 fgb-cli 放在同一目录），界面已跳过\n");
+        exe = dir / L"fgb-ui.exe";
+    }
+    if (!std::filesystem::exists(exe, ec)) {
+        std::fprintf(stderr, "找不到 FaceGaze Bridge.exe（和 fgb-cli 放在同一目录），界面已跳过\n");
         return false;
     }
 
@@ -202,7 +207,7 @@ bool launch_ui(std::uint16_t port) {
     PROCESS_INFORMATION process{};
     if (::CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr,
                          &startup, &process) == 0) {
-        std::fprintf(stderr, "启动 fgb-ui 失败（错误码 %lu）\n", ::GetLastError());
+        std::fprintf(stderr, "启动界面失败（错误码 %lu）\n", ::GetLastError());
         return false;
     }
     ::CloseHandle(process.hThread);
@@ -615,8 +620,10 @@ int cmd_run(int argc, char** argv) {
         ipc = std::make_unique<fgb::web::IpcServer>(std::move(ctx));
         std::string ipc_error;
         if (!ipc->start(panel_port, ipc_error)) {
+            // 显式要了控制面却起不来（端口被占是最常见原因），继续跑只会变成一个
+            // 没人看得见的后台引擎——桌面入口那边也无从判断，直接失败更诚实。
             std::fprintf(stderr, "%s%s\n", "控制面启动失败：", ipc_error.c_str());
-            ipc.reset();
+            return 1;
         }
     }
 
