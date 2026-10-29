@@ -40,6 +40,7 @@ constexpr wchar_t kWindowClass[]  = L"FgbUiWindow";
 constexpr wchar_t kWindowTitle[]  = L"FaceGaze Bridge";
 constexpr UINT_PTR kRetryTimer    = 1;
 constexpr UINT_PTR kEngineTimer   = 2;
+constexpr UINT_PTR kRestartTimer  = 3;
 constexpr UINT kRetryIntervalMs   = 1500;
 constexpr UINT kEnginePollMs      = 1000;
 constexpr int kIconResource       = 101;
@@ -305,6 +306,58 @@ bool engine_present(std::uint16_t port) {
     return found;
 }
 
+// 端口被占用时不要和用户干瞪眼：挑一个能 bind 的端口给引擎用
+bool port_is_free(std::uint16_t port) {
+    const SOCKET handle = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (handle == INVALID_SOCKET) {
+        return false;
+    }
+    BOOL exclusive = TRUE;
+    ::setsockopt(handle, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                 reinterpret_cast<const char*>(&exclusive), sizeof(exclusive));
+
+    sockaddr_in address{};
+    address.sin_family      = AF_INET;
+    address.sin_port        = htons(port);
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    const bool free = ::bind(handle, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0;
+    ::closesocket(handle);
+    return free;
+}
+
+struct PortChoice {
+    std::uint16_t port = 0;
+    bool attached      = false; // 已有自家引擎在跑
+    bool ok            = false;
+};
+
+// 从 base 起扫 10 个端口：先找已有引擎（可以附着），再找空闲端口（可以新建）
+PortChoice choose_engine_port(std::uint16_t base) {
+    PortChoice choice;
+    for (unsigned candidate = base; candidate < static_cast<unsigned>(base) + 10; ++candidate) {
+        if (candidate > 65535) {
+            break;
+        }
+        if (engine_present(static_cast<std::uint16_t>(candidate))) {
+            choice.port     = static_cast<std::uint16_t>(candidate);
+            choice.attached = true;
+            choice.ok       = true;
+            return choice;
+        }
+    }
+    for (unsigned candidate = base; candidate < static_cast<unsigned>(base) + 10; ++candidate) {
+        if (candidate > 65535) {
+            break;
+        }
+        if (port_is_free(static_cast<std::uint16_t>(candidate))) {
+            choice.port = static_cast<std::uint16_t>(candidate);
+            choice.ok   = true;
+            return choice;
+        }
+    }
+    return choice;
+}
+
 std::filesystem::path exe_directory() {
     wchar_t buffer[MAX_PATH]{};
     const DWORD length = ::GetModuleFileNameW(nullptr, buffer, MAX_PATH);
@@ -432,7 +485,14 @@ void on_engine_exit(DWORD exit_code) {
     // 界面里改了模块配置：原地拉起新引擎，窗口不动
     if (exit_code == kEngineRestartExit && g_host.engine_owned) {
         if (spawn_engine(g_host.default_source)) {
-            navigate_once();
+            if (g_host.navigated_ok) {
+                // 页面已经加载过：不要重新导航，让它自己的 WebSocket 重连，
+                // 避免重启时闪一下白屏/丢页面。
+                set_title(L"重启引擎…");
+                SetTimer(g_host.hwnd, kRestartTimer, 900, nullptr);
+            } else {
+                navigate_once();
+            }
             return;
         }
         PostMessageW(g_host.hwnd, WM_CLOSE, 0, 0);
@@ -500,6 +560,11 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
             navigate_once();
         } else if (wparam == kEngineTimer) {
             poll_engine();
+        } else if (wparam == kRestartTimer) {
+            if (engine_present(g_host.port)) {
+                set_title(L"");
+                KillTimer(hwnd, kRestartTimer);
+            }
         }
         return 0;
 
@@ -582,11 +647,6 @@ Options parse_options(int argc, wchar_t** argv) {
             options.engine_args.push_back(arg);
         }
     }
-    if (options.url.empty()) {
-        wchar_t buffer[128];
-        std::swprintf(buffer, 128, L"http://127.0.0.1:%u/", static_cast<unsigned>(options.port));
-        options.url = buffer;
-    }
     return options;
 }
 
@@ -635,7 +695,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
         return 1;
     }
 
-    g_host.url           = options.url;
     g_host.user_data_dir = options.user_data_dir;
     g_host.port          = options.port;
     g_host.engine_args   = options.engine_args;
@@ -683,8 +742,35 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
     ShowWindow(g_host.hwnd, show_command == 0 ? SW_SHOWNORMAL : show_command);
     UpdateWindow(g_host.hwnd);
 
+    // 先看有没有自家引擎（可能在新端口上），没有再挑一个空闲端口新建。
+    // 8787 被别的程序占用时自动用 8788/8789…，界面地址跟着变。
+    bool attached = false;
+    if (options.url.empty()) {
+        const PortChoice choice = choose_engine_port(options.port);
+        if (!choice.ok) {
+            MessageBoxW(g_host.hwnd,
+                        L"8787–8796 端口都被占用了，无法启动控制面。\n"
+                        L"请关闭占用这些端口的程序，或用 --port 指定别的起始端口。",
+                        kWindowTitle, MB_ICONERROR | MB_OK);
+            CoUninitialize();
+            if (wsa_ok) {
+                ::WSACleanup();
+            }
+            return 1;
+        }
+        g_host.port = choice.port;
+        attached    = choice.attached;
+        wchar_t buffer[128];
+        std::swprintf(buffer, 128, L"http://127.0.0.1:%u/",
+                      static_cast<unsigned>(g_host.port));
+        g_host.url = buffer;
+    } else {
+        g_host.url = options.url;
+        attached   = wsa_ok && engine_present(g_host.port);
+    }
+
     // 已有引擎（例如命令行起的）就只连不动；否则拉一个，藏在后台。
-    if (!wsa_ok || !engine_present(options.port)) {
+    if (!attached) {
         spawn_engine(g_host.default_source);
     }
 

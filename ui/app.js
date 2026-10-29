@@ -26,6 +26,42 @@ function show_toast(text, kind) {
   }, 4200);
 }
 
+let modal_resolve = null;
+function ask_confirm({ title, message, confirmText, danger = true }) {
+  return new Promise((resolve) => {
+    modal_resolve = resolve;
+    $("modal-title").textContent = title || t("common.confirm");
+    $("modal-message").textContent = message || "";
+    $("modal-ok").textContent = confirmText || t("common.confirm");
+    $("modal-cancel").textContent = t("common.cancel");
+    $("modal-ok").className = "btn" + (danger ? " danger" : "");
+    $("modal").hidden = false;
+    requestAnimationFrame(() => $("modal-ok").focus());
+  });
+}
+
+function close_modal(result) {
+  if (!modal_resolve) {
+    return;
+  }
+  $("modal").hidden = true;
+  const resolve = modal_resolve;
+  modal_resolve = null;
+  resolve(result);
+}
+
+let restart_timer = null;
+function set_restarting(active) {
+  const banner = $("restart-banner");
+  banner.hidden = !active;
+  clearTimeout(restart_timer);
+  if (active) {
+    restart_timer = setTimeout(() => {
+      banner.hidden = true;
+    }, 30000);
+  }
+}
+
 // ---------- 本地化 ----------
 //
 // 文案在 ui/i18n.js，这里只做查表与"缺键回落到中文"。
@@ -128,7 +164,9 @@ const state = {
   modules: null,
   library: null,
   library_requested: false,
+  library_waiting: false,
   import_selection: new Set(),
+  restarting: false,
   status: null,
   source_rows: [],
   running_rows: [],
@@ -171,6 +209,8 @@ function connect() {
   socket.onopen = () => {
     state.connected = true;
     state.retry = 0;
+    state.restarting = false;
+    set_restarting(false);
     set_link(true, t("link.connected"));
   };
 
@@ -238,12 +278,31 @@ function handle(message) {
         render_modules();
       }
       break;
-    case "library":
+    case "library": {
+      const prev = (state.library && state.library.status) || {};
+      const prev_phase = prev.phase;
+      const prev_id = prev.install_id;
       state.library = message;
-      if (state.view === "modules") {
+      const next = message.status || {};
+      if (next.phase !== "refreshing") {
+        state.library_waiting = false;
+      }
+      const finished = prev_phase === "downloading" || prev_phase === "installing";
+      const entry = (message.items || []).find((item) => item.id === prev_id);
+      if (finished && next.phase === "idle") {
+        show_toast(t("modules.library.install_ok", { name: entry ? entry.name : prev_id }));
+      }
+      if (finished && next.phase === "error") {
+        show_toast(t("modules.library.install_failed", {
+          name: entry ? entry.name : prev_id,
+          error: next.error || "?",
+        }), "error");
+      }
+      if (state.view === "library") {
         render_library();
       }
       break;
+    }
     case "params":
       render_params(message.values || []);
       break;
@@ -251,6 +310,9 @@ function handle(message) {
       push_log(message);
       break;
     case "ack":
+      if (message.ok && message.restarting) {
+        set_restarting(true);
+      }
       if (!message.ok && message.error) {
         show_toast(`${message.command}: ${message.error}`, "error");
         push_log({ level: "warn", tag: "ui", message: `${message.command}: ${message.error}` });
@@ -669,14 +731,14 @@ function installed_card(item) {
   }
 
   const remove = el("button", "btn danger small", t("modules.delete"));
-  remove.addEventListener("click", () => {
+  remove.addEventListener("click", async () => {
     const live = ((state.status && state.status.modules) || [])
       .find((entry) => entry.module_id === item.id);
     const running = !!(item.running || live);
     const text = running
       ? t("modules.delete_confirm_running", { name: item.name || item.id })
       : t("modules.delete_confirm", { name: item.name || item.id });
-    if (window.confirm(text)) {
+    if (await ask_confirm({ title: t("confirm.delete_title"), message: text, danger: true })) {
       send({ type: "delete_module", id: item.id });
     }
   });
@@ -816,10 +878,11 @@ function library_card(item, installed, status) {
       installed.version === item.version;
     button.textContent = same ? t("modules.library.installed") :
       (installed ? t("modules.library.update") : t("modules.library.install"));
-    button.disabled = same || (status && (status.phase === "downloading" ||
+    button.disabled = same || state.library_waiting || (status && (status.phase === "downloading" ||
       status.phase === "installing" || status.phase === "refreshing"));
-    button.addEventListener("click", () => {
-      if (window.confirm(t("modules.library.confirm", { name: item.name || item.id }))) {
+    button.addEventListener("click", async () => {
+      const question = t("modules.library.confirm", { name: item.name || item.id });
+      if (await ask_confirm({ title: t("confirm.install_title"), message: question, danger: true })) {
         send({ type: "install_library", id: item.id });
       }
     });
@@ -866,8 +929,17 @@ function render_library() {
   }
 
   const status = lib.status || {};
-  if (status.phase === "refreshing") {
+  if (status.phase === "refreshing" || state.library_waiting) {
     status_el.textContent = t("modules.library.refreshing");
+  } else if (status.phase === "downloading" || status.phase === "installing") {
+    const percent = status.total > 0 ? Math.min(100, (status.received / status.total) * 100) : 0;
+    status_el.textContent = status.phase === "installing"
+      ? t("modules.library.installing")
+      : t("modules.library.downloading", {
+          percent: percent.toFixed(0),
+          received: (status.received / 1048576).toFixed(1),
+          total: status.total ? (status.total / 1048576).toFixed(1) : "?",
+        });
   } else if (status.phase === "error") {
     status_el.textContent = t("modules.library.error", { error: status.error || "?" });
   } else if (lib.stale) {
@@ -1064,6 +1136,7 @@ function switch_page(page) {
     // 第一次打开时自动拉一次；之后手动点"刷新"
     if (!state.library_requested) {
       state.library_requested = true;
+      state.library_waiting = true;
       send({ type: "refresh_library" });
     }
     render_library();
@@ -1113,8 +1186,12 @@ function wire() {
   $("mod-open").addEventListener("click", () => {
     send({ type: "open_modules_dir" });
   });
-  $("mod-restart").addEventListener("click", () => {
-    if (window.confirm(t("modules.restart_confirm"))) {
+  $("mod-restart").addEventListener("click", async () => {
+    if (await ask_confirm({
+      title: t("modules.restart"),
+      message: t("modules.restart_confirm"),
+      danger: false,
+    })) {
       send({ type: "restart_engine" });
     }
   });
@@ -1156,8 +1233,12 @@ function wire() {
     send({ type: "set_log_level", level: $("s-level").value });
   });
 
-  $("s-quit").addEventListener("click", () => {
-    if (window.confirm(t("confirm.quit"))) {
+  $("s-quit").addEventListener("click", async () => {
+    if (await ask_confirm({
+      title: t("settings.engine.stop"),
+      message: t("confirm.quit"),
+      danger: true,
+    })) {
       send({ type: "quit" });
     }
   });
@@ -1173,6 +1254,26 @@ function wire() {
   lang_select.value = lang;
   lang_select.addEventListener("change", () => {
     set_lang(lang_select.value);
+  });
+
+  $("modal-ok").addEventListener("click", () => close_modal(true));
+  $("modal-cancel").addEventListener("click", () => close_modal(false));
+  $("modal").addEventListener("click", (event) => {
+    if (event.target === $("modal")) {
+      close_modal(false);
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if ($("modal").hidden) {
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close_modal(false);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      close_modal(true);
+    }
   });
 
   window.addEventListener("beforeunload", () => {

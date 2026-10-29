@@ -77,7 +77,7 @@ VRCFT 运行时
 --------
   界面一直"等待引擎…"
      先看 %LOCALAPPDATA%\FaceGazeBridge\engine.log 的最后几行。
-     最常见的是没有模块、8787 端口被别的程序占用，或者内置运行时缺失。
+     最常见的是没有模块、内置运行时缺失，或 8787–8796 都被占用。
 
   模块页是空的 / 没有输入源
      点「重新扫描」看有没有"检测到本机模块"，导入后设为启动并重启引擎；
@@ -106,7 +106,8 @@ VRCFT 运行时
 
 日志与配置
 ----------
-  控制面地址：http://127.0.0.1:8787/（浏览器也能打开，方便对照）
+  控制面地址：默认 http://127.0.0.1:8787/，端口被其它程序占用时自动顺延到 8788/8789…
+  （界面「设置」页会显示实际地址；浏览器也能打开，方便对照）
   引擎日志：%LOCALAPPDATA%\FaceGazeBridge\engine.log
   模块仓：%LOCALAPPDATA%\FaceGazeBridge\modules
   模块库缓存：%LOCALAPPDATA%\FaceGazeBridge\library.json

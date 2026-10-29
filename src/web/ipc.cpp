@@ -629,6 +629,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     bool library_touched    = false;
     std::string modules_message;
     std::string ack_message;
+    bool engine_restarting = false;
 
     const bool has_type = json::field_string(text, "type", type);
     FGB_DEBUG(kTag, "命令：%.*s", static_cast<int>(text.size()), text.data());
@@ -717,8 +718,9 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             if (ctx_.quit != nullptr) {
                 ctx_.quit->store(true, std::memory_order_release);
             }
-            ack_message = "模块正在运行：停止引擎、删除文件后会自动重启";
-            ok          = true;
+            ack_message      = "模块正在运行：停止引擎、删除文件后会自动重启";
+            engine_restarting = true;
+            ok                = true;
         } else {
             std::string remove_error;
             const bool removed = ctx_.modules->remove_module(id, remove_error);
@@ -836,7 +838,8 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         if (ctx_.restart_engine != nullptr && ctx_.quit != nullptr) {
             ctx_.restart_engine->store(true, std::memory_order_release);
             ctx_.quit->store(true, std::memory_order_release);
-            ok = true;
+            engine_restarting = true;
+            ok                = true;
         } else {
             error = "restart not available";
         }
@@ -896,6 +899,9 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     }
     if (!ack_message.empty()) {
         writer.key("message").str(ack_message);
+    }
+    if (engine_restarting) {
+        writer.key("restarting").boolean(true);
     }
     writer.obj_end();
     server_.send_text(conn, reply);

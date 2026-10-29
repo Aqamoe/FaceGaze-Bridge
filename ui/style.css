@@ -646,3 +646,57 @@ body {
 
 /* 模块异常经常是 .NET 堆栈：允许换行，避免把卡片撑破 */
 .module-error { white-space: pre-wrap; word-break: break-word; max-height: 180px; overflow-y: auto; }
+
+/* ---------- 重启提示 ---------- */
+.restart-banner {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: #101c36;
+  border: 1px solid #2c4260;
+  color: #cfe0ff;
+  font-size: 12.5px;
+  box-shadow: 0 10px 28px rgb(0 0 0 / .4);
+}
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #35507a;
+  border-top-color: var(--acc);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- 自定义确认弹窗 ---------- */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  background: rgb(3 7 16 / .62);
+  backdrop-filter: blur(2px);
+  animation: fade .12s ease-out;
+}
+.modal {
+  width: min(440px, calc(100vw - 48px));
+  background: #0f1932;
+  border: 1px solid #24365c;
+  border-radius: 14px;
+  padding: 22px 22px 18px;
+  box-shadow: 0 24px 64px rgb(0 0 0 / .55);
+  animation: modal-in .16s ease-out;
+}
+.modal h3 { margin: 0 0 10px; font-size: 16px; font-weight: 600; }
+.modal p { margin: 0; color: var(--dim); font-size: 13px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.modal-actions .btn { margin-top: 0; min-width: 76px; }
+@keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }

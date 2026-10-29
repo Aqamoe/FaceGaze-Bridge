@@ -19,6 +19,12 @@ window.FGB_LANGS = [
 window.FGB_I18N = {
   zh: {
     "app.subtitle": "控制面板",
+    "app.restarting": "正在重启引擎…",
+
+    "common.confirm": "确定",
+    "common.cancel": "取消",
+    "confirm.delete_title": "删除模块",
+    "confirm.install_title": "安装模块",
 
     "nav.status": "状态",
     "nav.modules": "模块",
@@ -151,6 +157,8 @@ window.FGB_I18N = {
     "modules.library.downloads": "{count} 次下载",
     "modules.library.confirm": "安装「{name}」？模块是可执行代码，请确认来源可信。",
     "modules.library.installing": "正在安装…",
+    "modules.library.install_ok": "「{name}」安装完成",
+    "modules.library.install_failed": "「{name}」安装失败：{error}",
     "modules.library.downloading": "下载中 {percent}%（{received}/{total} MB）",
     "state.disabled": "已停用",
     "state.selected": "启动时加载",
@@ -222,6 +230,12 @@ window.FGB_I18N = {
 
   en: {
     "app.subtitle": "Control panel",
+    "app.restarting": "Restarting engine…",
+
+    "common.confirm": "OK",
+    "common.cancel": "Cancel",
+    "confirm.delete_title": "Delete module",
+    "confirm.install_title": "Install module",
 
     "nav.status": "Status",
     "nav.modules": "Modules",
@@ -354,6 +368,8 @@ window.FGB_I18N = {
     "modules.library.downloads": "{count} downloads",
     "modules.library.confirm": "Install \"{name}\"? Modules are executable code; only install what you trust.",
     "modules.library.installing": "Installing…",
+    "modules.library.install_ok": "\"{name}\" installed",
+    "modules.library.install_failed": "\"{name}\" install failed: {error}",
     "modules.library.downloading": "Downloading {percent}% ({received}/{total} MB)",
     "state.disabled": "Disabled",
     "state.selected": "Startup",
@@ -425,6 +441,12 @@ window.FGB_I18N = {
 
   ja: {
     "app.subtitle": "コントロールパネル",
+    "app.restarting": "エンジンを再起動中…",
+
+    "common.confirm": "OK",
+    "common.cancel": "キャンセル",
+    "confirm.delete_title": "モジュールを削除",
+    "confirm.install_title": "モジュールをインストール",
 
     "nav.status": "状態",
     "nav.modules": "モジュール",
@@ -557,6 +579,8 @@ window.FGB_I18N = {
     "modules.library.downloads": "{count} 回ダウンロード",
     "modules.library.confirm": "「{name}」をインストールしますか？モジュールは実行コードです。信頼できるものだけ入れてください。",
     "modules.library.installing": "インストール中…",
+    "modules.library.install_ok": "「{name}」をインストールしました",
+    "modules.library.install_failed": "「{name}」のインストールに失敗しました：{error}",
     "modules.library.downloading": "ダウンロード中 {percent}%（{received}/{total} MB）",
     "state.disabled": "無効",
     "state.selected": "起動時に読み込み",
