@@ -83,6 +83,8 @@ window.FGB_I18N = {
     "channel.eyes": "眼追",
     "channel.head": "头姿",
 
+    "modules.kind.native": "原生",
+    "modules.kind.vrcft": "VRCFT",
     "modules.rescan": "重新扫描",
     "modules.config": "配置文件",
     "modules.empty": "没有发现模块",
@@ -294,6 +296,8 @@ window.FGB_I18N = {
     "channel.eyes": "Eyes",
     "channel.head": "Head",
 
+    "modules.kind.native": "Native",
+    "modules.kind.vrcft": "VRCFT",
     "modules.rescan": "Rescan",
     "modules.config": "Config file",
     "modules.empty": "No modules found",

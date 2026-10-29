@@ -37,12 +37,33 @@
 - UI 是原生 JS，无构建步骤；**不要**为了一个功能引入 npm 工具链。
 - 界面文案一律走 `ui/i18n.js` 的 `t()`：新增文案**三语齐全**（zh/en/ja），
   静态文案用 `data-i18n` 属性。引擎日志保持中文，不要翻译。
+- **原生模块必须带 `fgb-native.json`**（字段同 module.json），模块仓不加载 DLL 就列出元数据；
+  运行态统一走 `ISource::module_status()`，不要按具体 Source 类型分支。
 - **模块只从 `%LOCALAPPDATA%\FaceGazeBridge\modules` 加载**；VRCFT 的 `CustomLibs` 只是导入候选，
   任何"直接扫别人的目录然后 LoadLibrary"的写法都不要加（[ADR-0017](docs/adr/0017-module-store-library-runtime.md)）。
 - **新增输入源必须声明 `frame.channels`**（`channel::kExpression / kEyes / kHead`）。
   合并层只认声明，不猜值——`FaceFrame::neutral()` 里眼睛是 valid 的，靠值猜会让源被误判成眼追来源。
 - **VMC 的 blendshape 名字表只有一份**（`src/vmc/vmc_map`）。输入和输出都 include 它，
   不要各写一份——漂移的症状是"能收不能发"，且看起来像对端的问题。
+
+### 2.1 界面规则（每一条都是踩过坑后加的）
+
+| 规则 | 具体要求 |
+|---|---|
+| 技术栈 | 原生 JS/HTML/CSS，无构建步骤，不引前端框架/图标库；图标用内联 SVG，颜色用 `:root` 变量 |
+| 文案 | 所有可见文字走 `ui/i18n.js`：静态用 `data-i18n`，动态用 `t()`；**新增文案必须 zh/en/ja 三语齐全**，缺键会回落中文 |
+| 确认框 | **禁止 `window.confirm/alert/prompt`**。用应用内 `ask_confirm({title,message,danger})`，支持 Esc/遮罩取消、Enter 确认 |
+| 操作反馈 | 任何会失败或耗时的操作都必须有反馈：进行中状态 + 成功 toast + 失败 toast（`show_toast(text,"error")`）。**不允许点完没反应** |
+| 长任务 | 下载/安装显示进度条与百分比；刷新期间列表仍可浏览和安装缓存里的模块，不因刷新禁用整个页面 |
+| 隐藏元素 | 全局 `[hidden]{display:none!important}` 必须保留——组件自己的 `display:flex/grid` 会压过 UA 的 `[hidden]`，曾导致空弹窗盖住页面 |
+| 滚动 | 滚动容器（`.main`/`.content`）必须显式 `min-height:0`，否则 flex/grid 子项撑破视口、底部内容看不到 |
+| 页面结构 | 模块管理（已安装/导入）与在线模块库是两个独立页面；模块库有侧栏入口，模块页有快捷按钮 |
+| 失败文案 | 显示可操作的具体原因（端口占用、缺 DLL、校验失败），不要只给红点或"失败" |
+| 状态一致性 | 服务端消息是唯一事实来源；UI 只做展示与命令发送，不在页面里猜状态。库/模块同步后必须重算"已安装/可更新" |
+| 版本比较 | 已安装/有新版本用**语义版本比较**，不要字符串相等；包内版本可能比库条目新 |
+| 边界 | 最小窗口 1100×700 DIP 下布局可用；窄窗口侧栏只留图标；窗口尺寸按 DIP 缩放 |
+| 验证 | 界面改动必须用 `tools/probe_ui.py`（CDP）验证真实数据与交互，不能只靠截图或"看起来对" |
+
 
 ## 3. 构建 / 测试 / 发布
 
@@ -59,11 +80,15 @@
 cmake -S . -B build/test -G "Visual Studio 16 2019" -A x64
 cmake --build build/test --config Debug --parallel
 
-# 单测（当前 107 个用例）
+# 单测（当前 112 个用例）
 ./build/test/bin/Debug/fgb-tests.exe
 # 或
 ctest --test-dir build/test -C Debug --output-on-failure
 ```
+
+原生模块示例（`samples/native-sine`）由 `-DFGB_BUILD_SAMPLE_MODULE=ON` 构建（默认开），
+产物 `fgb-sample-native.dll` 在 bin 目录；它不依赖硬件，单测和 `--source vrcft`
+（模块仓里选它）都能直接跑。
 
 WebView2 SDK 不在 vcpkg：configure 时从 NuGet 抓一次到 `build/_deps`。
 离线/内网用 `-DFGB_WEBVIEW2_DIR=<已解压目录>`；完全不要界面用 `-DFGB_BUILD_UI=OFF`。
@@ -102,6 +127,7 @@ cmake --install build/release --config Release --prefix dist
 dist/FaceGaze Bridge.exe   唯一入口：界面窗口 + 拉起引擎（图标/版本信息在资源里）
 dist/fgb-cli.exe           引擎（命令行用；外壳启动时会调用它）
 dist/runtime/vrcft/        精简 VRCFT 宿主运行时（约 106 MB，卸载 VRCFT 也能跑模块）
+dist/sdk/fgb_module_api.h  原生模块 ABI 头（给模块开发者）
 dist/ui/                   页面资源（index.html / app.js / style.css / i18n.js / logo.png）
 dist/README.txt            怎么用、日志在哪
 ```
@@ -200,11 +226,13 @@ src/net/       UDP / TCP / WebSocket 服务端（自写 RFC 6455 子集）、Win
 src/vrcft/     VRCFT 协议、沙箱、模块进程托管、模块仓（module_registry）、模块库（module_library）
 src/vmc/       VMC blendshape 名字表（输入/输出共用，只有这一份）
 src/params/    参数目录、v2/v1 派生、地址路由、校准
-src/sources/   输入（VMC / VRCFT 模块 / 抓包回放）
+src/sources/   输入（VMC / VRCFT 模块 / 原生 C ABI 模块 / 抓包回放）
 src/sinks/     输出（VRChat OSC）
 src/engine/    合并、快照发布、扇出
 src/web/       控制面 IPC（WS 消息 + 静态页面）
 src/ui/        FaceGaze Bridge.exe：WebView2 窗口 + 拉起/回收引擎（无业务逻辑）
+sdk/           原生模块 ABI 头（fgb_module_api.h，宿主与模块共用）
+samples/       native-sine：无硬件的原生模块示例
 ui/            页面资源（无构建步骤）
 tools/         抓包、冒烟、探针，以及 build_vrcft_runtime.py（出精简运行时）
 docs/          方案、ADR、路线图

@@ -57,6 +57,7 @@ public:
     void stop() noexcept override;
     bool poll(FaceFrame& out) override;
     SourceStats stats() const noexcept override;
+    std::optional<ModuleRuntimeStatus> module_status() const override;
 
     // 诊断信息，供 UI 显示"为什么没数据"
     const std::string& last_error() const noexcept { return last_error_; }

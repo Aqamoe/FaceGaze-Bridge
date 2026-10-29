@@ -68,6 +68,7 @@ VRCFT 运行时
 --------
   FaceGaze Bridge.exe   唯一入口：界面窗口 + 启动引擎
   fgb-cli.exe           引擎与命令行工具（modules / run / params …）
+  sdk/fgb_module_api.h  原生模块 ABI 头（给模块开发者，普通用户不用管）
   runtime\vrcft\        VRCFT 模块宿主运行时（Apache-2.0，含 LICENSE/NOTICE）
   ui\                   页面资源。换页面不用重编 exe
   engine.log            %LOCALAPPDATA%\FaceGazeBridge\engine.log

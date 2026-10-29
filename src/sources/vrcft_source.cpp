@@ -62,6 +62,15 @@ bool VrcftSource::start() {
     return true;
 }
 
+std::optional<ModuleRuntimeStatus> VrcftSource::module_status() const {
+    ModuleRuntimeStatus status;
+    status.alive    = module_alive();
+    status.frames   = stats().frames;
+    status.restarts = restart_count();
+    status.error    = !module_error().empty() ? module_error() : last_error();
+    return status;
+}
+
 void VrcftSource::stop() noexcept {
     running_.store(false, std::memory_order_release);
     if (thread_.joinable()) {

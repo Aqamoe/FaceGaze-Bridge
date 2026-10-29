@@ -77,10 +77,12 @@ add_library(fgb_engine STATIC
     sinks/vmc_sink.cpp
     sources/vmc_source.cpp
     sources/vrcft_source.cpp
+    sources/native_source.cpp
     sources/replay_source.cpp
     engine/engine.cpp)
 target_link_libraries(fgb_engine PUBLIC fgb_core fgb_osc fgb_net fgb_vrcft fgb_params fgb_capture
                                       fgb_config fgb_process fgb_vmc)
+target_include_directories(fgb_engine PUBLIC "${CMAKE_SOURCE_DIR}/sdk")
 
 # 控制面：WebSocket IPC + 本地静态页面
 add_library(fgb_web STATIC
@@ -133,6 +135,19 @@ if(WIN32 AND FGB_BUILD_UI)
     endif()
 endif()
 
+# 原生 C ABI 示例模块（无硬件也能验证整条链路）
+option(FGB_BUILD_SAMPLE_MODULE "Build the native C ABI sample module" ON)
+if(WIN32 AND FGB_BUILD_SAMPLE_MODULE)
+    add_library(fgb-sample-native MODULE "${CMAKE_SOURCE_DIR}/samples/native-sine/native_sine.cpp")
+    target_link_libraries(fgb-sample-native PRIVATE fgb_options)
+    target_include_directories(fgb-sample-native PRIVATE "${CMAKE_SOURCE_DIR}/sdk")
+    set_target_properties(fgb-sample-native PROPERTIES
+        PREFIX ""
+        OUTPUT_NAME "fgb-sample-native"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+endif()
+
 # ---- 发布包：用户双击就能跑 ----
 #
 #   cmake --install build/release --config Release --prefix dist
@@ -148,5 +163,6 @@ if(WIN32)
         install(TARGETS fgb-ui RUNTIME DESTINATION .)
     endif()
     install(DIRECTORY "${CMAKE_SOURCE_DIR}/ui/" DESTINATION ui)
+    install(FILES "${CMAKE_SOURCE_DIR}/sdk/fgb_module_api.h" DESTINATION sdk)
     install(FILES "${CMAKE_SOURCE_DIR}/packaging/README.txt" DESTINATION .)
 endif()

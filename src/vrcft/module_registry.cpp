@@ -382,9 +382,15 @@ ModuleInfo ModuleRegistry::scan_directory(const std::filesystem::path& dir,
     info.name      = info.id;
     info.source    = origin;
 
-    const std::string metadata = read_file(dir / "module.json");
+    // 原生模块用 fgb-native.json（字段与 module.json 相同）声明身份，
+    // 这样列出模块不需要先 LoadLibrary。
+    std::error_code native_ec;
+    const bool is_native = std::filesystem::exists(dir / "fgb-native.json", native_ec);
+    info.kind = is_native ? ModuleKind::native : ModuleKind::vrcft;
+    const std::string metadata = read_file(dir / (is_native ? "fgb-native.json" : "module.json"));
     if (!metadata.empty()) {
         parse_module_metadata(metadata, info);
+        info.kind = is_native ? ModuleKind::native : ModuleKind::vrcft;
     }
     if (info.id.empty()) {
         info.id = dir.filename().string();

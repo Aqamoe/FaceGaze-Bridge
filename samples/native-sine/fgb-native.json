@@ -1,0 +1,9 @@
+{
+  "ModuleId": "com.fgbbridge.sample.sine",
+  "ModuleName": "Sine Sample Module",
+  "AuthorName": "FaceGaze Bridge",
+  "Version": "1.0.0",
+  "ModuleDescription": "Synthetic sine-wave module for native ABI tests (no hardware required).",
+  "ModulePageUrl": "https://github.com/Aqamoe/FaceGaze-Bridge",
+  "DllFileName": "fgb-sample-native.dll"
+}

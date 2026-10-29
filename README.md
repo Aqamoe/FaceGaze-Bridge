@@ -39,6 +39,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 界面本地化 | ✅ 简中 / 英 / 日三语，界面内切换并记住选择（[ADR-0012](docs/adr/0012-ui-localization.md)） |
 | 模块管理 | ✅ 独立模块仓（导入 / .zip 安装 / 启停 / 删除）+ 模块库一键安装 + 内置精简 VRCFT 运行时；VRCFT 目录只作为导入来源（[ADR-0017](docs/adr/0017-module-store-library-runtime.md)） |
 | 多源合并（M4） | ✅ 表情 / 眼追 / 头姿三通道分别选提供者，可重复 `--source`（[ADR-0013](docs/adr/0013-source-merging.md)） |
+| 原生 C ABI（M4/M5 基础） | ✅ 进程内 C ABI v1 + 无硬件示例模块（[ADR-0018](docs/adr/0018-native-c-abi-v1.md)） |
 | 多输出（M4） | ✅ VRChat OSC + VMC 第二路（`--vmc-out`），可同时驱动 Unity 场景（[ADR-0014](docs/adr/0014-vmc-output-sink.md)）；共享内存 Sink 未做 |
 
 **已经能跑的**（M1 + M2 核心）：
@@ -64,7 +65,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 - 多输出：VRChat OSC 与 VMC 同时输出（`--vmc-out 127.0.0.1:9100`），
   同一张脸可以既驱动 VRChat 模型又驱动 Unity 场景
 - 界面三语（简中 / 英 / 日）+ 双击即用的发布包（`cmake --install` 到 `dist/`）
-- 107 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面/VMC 输出探针
+- 112 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面/VMC 输出探针
   （`tools/probe_ipc.py`、`tools/probe_ui.py`）
 
 ```bash
@@ -177,7 +178,7 @@ src/base      日志（含订阅回调）、时钟        零依赖
 src/core      数据模型、无锁容器、滤波/校准   零 I/O，纯计算
 src/osc       OSC 编解码                     零分配写入器
 src/net       UDP / TCP / WebSocket 服务端、WinHTTP 下载
-src/sources   输入（VMC / VRCFT 模块 / 抓包回放）
+src/sources   输入（VMC / VRCFT 模块 / 原生 C ABI 模块 / 抓包回放）
 src/sinks     输出（VRChat / 待接入 VMC、共享内存）
 src/engine    合并、快照发布、扇出
 src/web       控制面 IPC：WS 协议、状态/参数/日志推送、静态页面
@@ -186,5 +187,7 @@ src/cli       fgb-cli
 ui/           界面资源（index.html / app.js / style.css，无构建步骤）
 tests         单元测试 + 金样测试
 tools         抓包、冒烟、探针，以及 build_vrcft_runtime.py（出精简运行时）
+sdk/          原生模块 ABI 头（只分发这一个头文件）
+samples/      native-sine：不需要硬件的原生模块示例
 docs          方案、ADR、路线图
 ```

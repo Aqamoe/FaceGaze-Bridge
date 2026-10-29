@@ -674,7 +674,8 @@ function installed_card(item) {
   if (item.author) {
     head.append(el("span", "module-author", item.author));
   }
-  head.append(el("span", "chip", item.kind === "native" ? "Native" : "VRCFT"));
+  head.append(el("span", "chip", item.kind === "native"
+    ? t("modules.kind.native") : t("modules.kind.vrcft")));
   const chip_state = module_chip(item);
   const chip = el("span", `chip ${chip_state.cls}`.trim(), chip_state.text);
   chip.dataset.role = "chip";

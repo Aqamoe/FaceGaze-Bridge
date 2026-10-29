@@ -340,15 +340,16 @@ void IpcServer::build_metrics(std::string& out) {
         writer.key("state").str(module_state(module));
 
         // 模块自己报的错优先：它比"等待初始化超时"这类描述具体
-        std::string error;
+        ModuleRuntimeStatus status;
         if (module.source != nullptr) {
-            error = !module.source->module_error().empty() ? module.source->module_error()
-                                                           : module.source->last_error();
+            const auto runtime = module.source->module_status();
+            if (runtime.has_value()) {
+                status = *runtime;
+            }
         }
-        writer.key("error").str(error);
-        writer.key("restarts").integer(
-            static_cast<long long>(module.source != nullptr ? module.source->restart_count() : 0));
-        writer.key("alive").boolean(module.source != nullptr && module.source->module_alive());
+        writer.key("error").str(status.error);
+        writer.key("restarts").integer(static_cast<long long>(status.restarts));
+        writer.key("alive").boolean(status.alive);
         writer.obj_end();
     }
     writer.arr_end();
@@ -439,21 +440,21 @@ void IpcServer::build_params(std::string& out) {
 // 单个实例的运行态。界面上的红点必须配一句人话，
 // 所以这里只回有限几种状态，细节靠 modules[].error。
 const char* IpcServer::module_state(const RunningModule& module) const noexcept {
-    const vrcft::VrcftSource* source = module.source;
-    if (source == nullptr) {
+    if (module.source == nullptr) {
         return "external"; // 模块不归我们管（例如 --module-dll 手工指定）
     }
+    const auto status = module.source->module_status();
+    if (!status.has_value()) {
+        return "external";
+    }
     // 模块自己报了错就是故障，哪怕进程还活着（它在重试）
-    if (!source->module_error().empty() && source->stats().frames == 0) {
+    if (!status->error.empty()) {
         return "error";
     }
-    if (!source->last_error().empty()) {
-        return "error";
-    }
-    if (source->stats().frames > 0 && source->module_alive()) {
+    if (status->frames > 0 && status->alive) {
         return "active";
     }
-    return source->module_alive() ? "starting" : "stopped";
+    return status->alive ? "starting" : "stopped";
 }
 
 void IpcServer::build_modules(std::string& out) {

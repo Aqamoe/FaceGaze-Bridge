@@ -10,6 +10,7 @@
 #include "sinks/vmc_sink.hpp"
 #include "sinks/vrchat_sink.hpp"
 #include "capture/capture_file.hpp"
+#include "sources/native_source.hpp"
 #include "sources/replay_source.hpp"
 #include "sources/vmc_source.hpp"
 #include "sources/vrcft_source.hpp"
@@ -448,20 +449,6 @@ int cmd_run(int argc, char** argv) {
             const std::string display =
                 vrcft_total > 1 ? "vrcft[" + std::to_string(index + 1) + "]" : "vrcft";
 
-            if (module_exe.empty()) {
-                module_exe = default_module_process_exe();
-                if (module_exe.empty()) {
-                    std::fprintf(stderr,
-                                 "没有找到 VRCFT 运行时（VRCFaceTracking.ModuleProcess.exe）。\n"
-                                 "  发布包应带 runtime\\vrcft；开发环境可以安装一份 VRCFT，\n"
-                                 "  或用 --module-exe 指定 ModuleProcess.exe 的路径。\n");
-                    if (panel_port != 0) {
-                        FGB_WARN("vrcft", "跳过 vrcft 输入：没有运行时；可在界面里安装运行时或改用 VMC");
-                        continue;
-                    }
-                    return 2;
-                }
-            }
             // 模块选择交给 registry：命令行 > 配置文件 > 只有一个是它
             if (!module_registry) {
                 module_registry = std::make_unique<fgb::vrcft::ModuleRegistry>();
@@ -472,11 +459,12 @@ int cmd_run(int argc, char** argv) {
             std::filesystem::path instance_dll = module_dll;
             std::string instance_module_id    = index < module_ids.size() ? module_ids[index] : std::string{};
             std::string instance_module_name;
+            bool is_native = false;
 
             if (instance_dll.empty()) {
                 const fgb::vrcft::ModuleInfo* module = module_registry->pick_active(instance_module_id);
                 if (module == nullptr) {
-                    std::fprintf(stderr, "没有确定要加载哪个模块（第 %zu 个 vrcft 输入）。\n", index + 1);
+                    std::fprintf(stderr, "没有确定要加载哪个模块（第 %zu 个输入）。\n", index + 1);
                     if (module_registry->modules().empty()) {
                         std::fprintf(stderr,
                                      "  模块仓是空的：运行 fgb-cli modules import-all 导入本机模块，\n"
@@ -496,7 +484,7 @@ int cmd_run(int argc, char** argv) {
                     }
                     if (panel_port != 0) {
                         // 界面模式：先让窗口起来，用户在「模块」页导入/启用后重启引擎
-                        FGB_WARN("vrcft", "跳过 vrcft 输入：还没有选择模块，可在界面里导入或启用");
+                        FGB_WARN("modules", "跳过模块输入：还没有选择模块，可在界面里导入或启用");
                         continue;
                     }
                     return 2;
@@ -516,12 +504,9 @@ int cmd_run(int argc, char** argv) {
                 instance_dll         = module->dll;
                 instance_module_id   = module->id;
                 instance_module_name = module->name;
-                FGB_INFO("vrcft", "%s 加载模块：%s (%s)", display.c_str(), module->name.c_str(),
-                         module->version.c_str());
+                is_native            = module->kind == fgb::vrcft::ModuleKind::native;
             } else {
                 instance_module_name = instance_dll.stem().string();
-                FGB_INFO("vrcft", "%s 加载模块（--module-dll 指定）：%s", display.c_str(),
-                         instance_dll.string().c_str());
             }
 
             if (index == 0) {
@@ -529,6 +514,50 @@ int cmd_run(int argc, char** argv) {
                 // 只是让界面知道"当前用的是哪个"，不写配置：
                 // 自动挑中一个不等于用户选了它，下次仍按原配置走。
                 module_registry->mark_active(active_module_id);
+            }
+
+            // 原生模块走进程内 C ABI；VRCFT 模块需要一个 .NET 宿主运行时
+            if (is_native) {
+                const std::string source_display =
+                    vrcft_total > 1 ? "native[" + std::to_string(index + 1) + "]" : "native";
+                fgb::NativeSourceConfig cfg;
+                cfg.dll          = instance_dll;
+                cfg.module_id    = instance_module_id;
+                cfg.module_name  = instance_module_name;
+                cfg.display_name = source_display;
+                cfg.tick_hz      = tick_hz;
+                if (!record_path.empty()) {
+                    FGB_WARN("native", "原生模块暂不支持 --record，已忽略");
+                }
+                auto native_source = std::make_unique<fgb::NativeModuleSource>(cfg);
+                FGB_INFO("native", "%s 加载原生模块：%s (%s)", source_display.c_str(),
+                         instance_module_name.c_str(), instance_module_id.c_str());
+
+                fgb::web::RunningModule running;
+                running.display_name = source_display;
+                running.module_id    = instance_module_id;
+                running.module_name  = instance_module_name;
+                running.source       = native_source.get();
+                running_modules.push_back(std::move(running));
+
+                engine.add_source(std::move(native_source));
+                source_names.push_back(source_display);
+                continue;
+            }
+
+            if (module_exe.empty()) {
+                module_exe = default_module_process_exe();
+                if (module_exe.empty()) {
+                    std::fprintf(stderr,
+                                 "没有找到 VRCFT 运行时（VRCFaceTracking.ModuleProcess.exe）。\n"
+                                 "  发布包应带 runtime\\vrcft；开发环境可以安装一份 VRCFT，\n"
+                                 "  或用 --module-exe 指定 ModuleProcess.exe 的路径。\n");
+                    if (panel_port != 0) {
+                        FGB_WARN("vrcft", "跳过 vrcft 输入：没有运行时；可在界面里安装运行时或改用 VMC");
+                        continue;
+                    }
+                    return 2;
+                }
             }
 
             fgb::vrcft::VrcftSourceConfig cfg;
@@ -540,6 +569,7 @@ int cmd_run(int argc, char** argv) {
                 cfg.record_path = record_path;
             }
             auto vrcft_source = std::make_unique<fgb::vrcft::VrcftSource>(cfg);
+            FGB_INFO("vrcft", "%s 加载模块：%s", display.c_str(), instance_module_name.c_str());
 
             // 每个实例单独登记：界面按实例显示状态，而不是只显示第一个
             fgb::web::RunningModule running;
@@ -1195,10 +1225,12 @@ int cmd_modules(int argc, char** argv) {
     if (registry.modules().empty()) {
         std::printf("模块仓是空的。\n");
     } else {
-        std::printf("%-34s %-9s %-13s %-11s %s\n", "模块", "版本", "作者", "状态", "来源");
+        std::printf("%-30s %-7s %-9s %-13s %-11s %s\n", "模块", "类型", "版本", "作者",
+                    "状态", "来源");
         std::printf("%s\n", std::string(82, '-').c_str());
         for (const auto& module : registry.modules()) {
-            std::printf("%-34s %-9s %-13s %-11s %s\n", module.name.c_str(),
+            const char* kind = module.kind == fgb::vrcft::ModuleKind::native ? "native" : "vrcft";
+            std::printf("%-30s %-7s %-9s %-13s %-11s %s\n", module.name.c_str(), kind,
                         module.version.empty() ? "-" : module.version.c_str(),
                         module.author.empty() ? "-" : module.author.c_str(),
                         module_state_text(module).c_str(),

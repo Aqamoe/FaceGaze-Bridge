@@ -22,6 +22,8 @@ option(FGB_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
 add_library(fgb_options INTERFACE)
 target_compile_features(fgb_options INTERFACE cxx_std_20)
+# 原生模块 ABI 头（模块作者与宿主共用同一份）
+target_include_directories(fgb_options INTERFACE "${CMAKE_SOURCE_DIR}/sdk")
 
 if(MSVC)
     target_compile_options(fgb_options INTERFACE /W4 /permissive- /utf-8 /Zc:__cplusplus /EHsc)

@@ -454,6 +454,10 @@ FaceFrame
 
 ### 8.2 B 层 · 原生 C ABI
 
+> **v1 已实现**（2026-10-29，见 [ADR-0018](adr/0018-native-c-abi-v1.md)）：进程内加载、
+> `sdk/fgb_module_api.h`、`samples/native-sine`。与下面的纸面设计相比多了
+> `shape_index(name)` 服务（模块不硬编码形状下标），帧槽 v1 是宿主堆内存，布局按跨进程兼容设计。
+
 给新模块用的高性能接口。设计要点：
 
 ```c
