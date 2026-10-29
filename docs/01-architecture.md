@@ -636,6 +636,32 @@ VRCFT 基本没有校准（依赖硬件出厂校准）。这是廉价硬件和�
 
 眨眼事件同时输出离散信号（`blink` 上升沿/下降沿），给需要事件而非连续的消费者（如眼动输入、疲劳检测）。
 
+### 10.4 校准工作台与预览通路（规划，ADR-0021）
+
+当前校准是离线档案，界面只能看参数值，看不到"调范围后脸会怎样"。规划中的校准工作台
+不改校准算法，只增加两条东西：**可解释的预览数据**和**可编辑的运行时档案**。
+
+```
+source → sanitize → PreviewTap(raw) → Calibration → OneEuro → Snapshot → sinks
+                         │                                      │
+                         └────── 30 Hz preview（页面打开时） ────┘
+```
+
+- `PreviewTap` 是独立的 processor，始终挂在校准之前；它把校准前的 88 个原始形状
+  和眼球状态写进 seqlock 快照。即使没有校准档案，它也能工作。
+- `preview` 是独立的 IPC 消息（30 Hz），只在「校准」页打开时推送；不复用 10 Hz
+  的 `params`，避免为了一个页面把热力图的消息频率抬高。
+- 校准档案支持运行时更新：控制线程构造新 profile，双缓冲/COW 交换；引擎线程每帧
+  读活动版本，热路径不加锁。界面改 lo/hi 立即影响输出，保存才写盘。
+- 默认档案放在 `%LOCALAPPDATA%\FaceGazeBridge\calibration.ini`；`--calibration`
+  显式指定时优先。这样界面保存的映射重启后仍然生效。
+- UI 侧是自研 WebGL2 小渲染器（不引前端框架）：轨道相机、~24 个 morph、
+  顶点区域位掩码高亮；WebGL2 不可用时降级为 SVG 示意图。模型与映射表都数据驱动，
+  不在 JS 里硬编码形状分支。
+
+**边界**：它是校准的示波器，不是头像预览器。不导入 VRChat 头像、不承诺逐顶点一致、
+v1 不做照片级写实。完整取舍见 [ADR-0021](adr/0021-calibration-workbench-3d-preview.md)。
+
 ---
 
 ## 11. 配置与状态
@@ -660,9 +686,48 @@ VRCFT 基本没有校准（依赖硬件出厂校准）。这是廉价硬件和�
 
 **为什么用 TOML 而不是 JSON**：配置要给人改。JSON 不支持注释、尾逗号，手改体验差。运行时交换（IPC、共享内存）仍用二进制。
 
+> **实现现状（2026-10-29）**：上面是早期的目标布局；实际落地在
+> `%LOCALAPPDATA%\FaceGazeBridge`（DLL 不跟漫游配置走）：`modules\<id>\`、
+> `modules.ini`、`library.json`、`engine.log`，校准档案是 `calibration.ini`
+> （[ADR-0008](adr/0008-calibration-and-filtering.md)）。TOML 主配置尚未落地，
+> 新增文件以现有 INI/JSON 风格为准。
+
 ### 11.2 不可变配置 / 热重载
 
 配置变更走"构建新 Config 对象 → 原子交换 shared_ptr → 各组件在下一 tick 感知"。禁止原地修改，避免读到半更新的状态。
+
+### 11.3 SteamVR 启动项（规划，ADR-0020）
+
+FGB 不直接改 SteamVR 的配置或注册表。随包提供 `app.vrmanifest`，运行时用官方
+OpenVR `IVRApplications` 注册，并用 `SetApplicationAutoLaunch` 控制是否随 SteamVR
+启动：
+
+```
+UI 设置页（开/关） → WebSocket IPC → 引擎（src/openvr/）
+   │  定位 SteamVR：%LOCALAPPDATA%\openvr\openvrpaths.vrpath → runtime
+   │  加载 <SteamVR>/bin/win64/openvr_api.dll（不随包分发）
+   ▼
+VR_Init(VRApplication_Background)   ← 不会反向拉起 SteamVR，也不保活
+   ▼
+AddApplicationManifest(<exe>/app.vrmanifest, false)
+SetApplicationAutoLaunch("com.facegazebridge.desktop", true)
+GetApplicationAutoLaunch(...)       ← 读回校验，失败给具体原因
+```
+
+OpenVR 调用放在引擎而不是外壳：外壳仍然只负责窗口与引擎生命周期，开关通过
+WebSocket 走控制面；命令行/探针/未来的托盘共用同一套入口。
+
+关键约束：
+
+- `SetApplicationAutoLaunch` 只对 dashboard overlay 有效，所以 manifest 里
+  `is_dashboard_overlay: true`。FGB **不实现 VR 内面板**，只借用这个自启动机制。
+- `VRApplication_Background` 在 SteamVR 未运行时初始化失败——设置开关必须在
+  SteamVR 正在运行时操作；界面要把"先启动 SteamVR"说清楚。
+- 自启动拉起的是 `FaceGaze Bridge.exe --tray`，维持单入口与 Job 生命周期；
+  不直接拉起 `fgb-cli`（控制台黑框、生命周期脱钩）。**托盘是上线前置**：
+  启动后只进托盘、不弹窗口；托盘完成前不开放此功能。
+- 不自动注册、不写注册表、不注册 Steam 库应用。完整状态机与风险见
+  [ADR-0020](adr/0020-steamvr-autostart.md)。
 
 ---
 

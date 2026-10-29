@@ -30,6 +30,8 @@
 | 基准 | Google Benchmark | Apache-2.0 | OSC 编码、ring buffer |
 | 崩溃 | Crashpad | Apache-2.0 | 本地转储，不上传 |
 | UI 运行时 | WebView2 | 微软 | Win10+ 已预装（Evergreen）；SDK 编译期从 NuGet 取一次 |
+| SteamVR 集成（规划） | OpenVR 头文件 | BSD-3 | 只 vendor `openvr.h`；`openvr_api.dll` 从用户 SteamVR 加载，不随包分发（[ADR-0020](adr/0020-steamvr-autostart.md)） |
+| 3D 校准预览（规划） | 自有人头模型 | 自有 / CC0 | 不引 Three.js；模型 ≤ 3 MB，来源进 `THIRD_PARTY_NOTICES.md`（[ADR-0021](adr/0021-calibration-workbench-3d-preview.md)） |
 | 前端 | 原生 JS（当前）→ TypeScript + Vite + Svelte（按需） | MIT | 先保持零构建：改一行 CSS 刷新就见效；页面过千行或需要类型约束时再上构建链 |
 | UI ↔ 引擎 | WebSocket + JSON（自写 RFC 6455 子集） | — | 回环、可 curl 对照、可脚本验证；见 ADR-0010 |
 | .NET 宿主 | .NET 8 SDK | MIT | 仅编译 `vrcft-host` |
@@ -333,8 +335,18 @@ diagnostic-20261028-2310/
 | PICO SDK | ❌ 同上 | 同上 |
 | OpenXR Loader | ✅ Apache-2.0 | 可打包 |
 | MediaPipe | ⚠️ 代码 Apache-2.0，**模型许可单独** | 需核对模型条款；不确定就不打包，首次使用时下载 |
+| OpenVR / SteamVR | ✅ 头文件 BSD-3；运行时 DLL 不打包 | 只分发 `openvr.h` 与许可证；运行时加载用户 SteamVR 的 `openvr_api.dll`（ADR-0020） |
 
 **执行纪律**：任何新增二进制依赖，必须在 PR 里附许可结论，否则不合入。
+
+### 8.4 3D 资产
+
+校准页的面部模型属于"产品资产"，不是代码依赖：
+
+- 自制或委托制作：版权归项目，需在 `THIRD_PARTY_NOTICES.md` 记录作者与授权
+- 使用 CC0 / CC-BY 扫描模型：保留来源、作者、许可证文本；CC-BY 必须在关于页署名
+- **不使用**来源不明的"ARKit 表情模型"或从商业作品提取的网格
+- 贴图与模型分开记录；导出脚本放 `tools/`，资产源文件不进仓库（或走 LFS）
 
 ---
 
@@ -356,6 +368,10 @@ diagnostic-20261028-2310/
 | R10 | **用户期望管理失败**（以为能"给 VRChat 开注视点渲染"） | 高 | 中 | 论坛/评论区出现"骗人" | 功能页明确写能力边界（见 features §5.5），FAQ 前置 |
 | R11 | **隐私争议**（摄像头 + 眼动数据） | 中 | 高 | 媒体报道/用户质疑 | 全本地处理、开源可审计、默认关遥测、提供"数据流向"说明页 |
 | R12 | **上游 Apache-2.0 合规疏漏** | 低 | 高 | 律师/社区指出 | 建立 `THIRD_PARTY_NOTICES.md`，CI 检查二进制依赖是否都有记录 |
+| R13 | **写实面部资产做不出来/授权不清**（ADR-0021） | 中 | 中 | 预览像玩具，或资产来源无法证明 | 先做风格化写实自有模型；照片级单独立项；资产来源入 `THIRD_PARTY_NOTICES.md` |
+| R14 | **SteamVR 注册无法在 CI 验证/用户环境差异**（ADR-0020） | 高 | 低 | 开关状态与实际不符、注册失败 | 只在 SteamVR 运行时允许设置；调用后读回校验；失败给具体原因；绝不自动注册 |
+| R15 | **3D 预览拖慢界面或引擎** | 中 | 中 | 开校准页后 tick 抖动上升、UI 掉帧 | preview 只在校准页可见时 30 Hz；独立 RAF；CPU/GPU 预算；WebGL2 不可用时降级 |
+| R16 | **托盘改变"关窗即停"的预期** | 中 | 中 | 用户关窗后以为追踪已停，实际还在输出 | 首次收进托盘给明确提示；托盘菜单显示运行状态；文档写清"托盘退出才停引擎" |
 
 ### 重点风险详解
 

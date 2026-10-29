@@ -43,7 +43,9 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 多源合并（M4） | ✅ 表情 / 眼追 / 头姿三通道分别选提供者，可重复 `--source`（[ADR-0013](docs/adr/0013-source-merging.md)） |
 | 原生 C ABI（M4/M5 基础） | ✅ 进程内 C ABI v1 + 无硬件示例模块（[ADR-0018](docs/adr/0018-native-c-abi-v1.md)） |
 | 共享内存输出（M4） | ✅ 命名映射 + 双缓冲 seqlock，`--shm <name>` 显式开启（[ADR-0019](docs/adr/0019-shared-memory-output.md)） |
-| 多输出（M4） | ✅ VRChat OSC + VMC 第二路（`--vmc-out`），可同时驱动 Unity 场景（[ADR-0014](docs/adr/0014-vmc-output-sink.md)）；共享内存 Sink 未做 |
+| 多输出（M4） | ✅ VRChat OSC + VMC 第二路（`--vmc-out`）+ 共享内存（`--shm`），可同时驱动 Unity 场景（[ADR-0014](docs/adr/0014-vmc-output-sink.md)、[ADR-0019](docs/adr/0019-shared-memory-output.md)） |
+| 校准工作台（规划） | 方案已评估、未实施：3D 面部预览 + 范围映射 + 部位高亮（[ADR-0021](docs/adr/0021-calibration-workbench-3d-preview.md)） |
+| 随 SteamVR 启动（规划） | 方案已评估、未实施：OpenVR `IVRApplications` 注册；**前置：托盘常驻壳**（[ADR-0020](docs/adr/0020-steamvr-autostart.md)） |
 
 **已经能跑的**（M1 + M2 核心）：
 
@@ -88,10 +90,10 @@ fgb-cli modules use VRCFTPicoModule   # 启动模块，重启引擎后生效
 **还没做的**：
 
 - 头像切换的实时感知（目前启动时读 VRChat 日志确认，换头像需在界面里点"重新读取"）
-- 托盘常驻壳（界面已经能单开一个窗口，缺的是"开机自启 + 右键菜单"这一层）
-- 界面里还不能改输出目标 / 参数集 / 校准档案，仍需重启
-- 多 Sink（共享内存 / OpenXR；VMC 已做）
-- 原生 C ABI 模块（设计见 `docs/01-architecture.md` §8.2，尚未实现）
+- 托盘常驻壳（SteamVR 自启动的前置；引入托盘后"关窗即停"要改成"关窗进托盘、托盘退出才停"）
+- 界面里还不能改输出目标 / 参数集；校准档案的可视化编辑与热更新是规划项（ADR-0021）
+- OpenXR API Layer / 眼追注入（共享内存与 VMC 输出已做）
+- 随 SteamVR 启动（OpenVR 注册的评估见 ADR-0020，尚未实施）
 - 与 VRCFT 输出的逐参数对齐（量化"替代"的最后一道关口）
 
 **已验证的关键事实**（M0，详见 [ADR-0003](docs/adr/0003-vrcft-ipc-protocol.md)）：
