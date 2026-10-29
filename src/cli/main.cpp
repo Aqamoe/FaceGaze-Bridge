@@ -1,4 +1,6 @@
 ﻿#include "base/clock.hpp"
+#include "base/crash.hpp"
+#include "base/diagnostics.hpp"
 #include "base/log.hpp"
 #include "engine/engine.hpp"
 #include "capture/capture_file.hpp"
@@ -71,6 +73,7 @@ void print_usage() {
                  "         --avatar-config <路径>\n"
                  "  fgb-cli modules        列出磁盘上的 VRCFT 模块与当前选择\n"
                  "         use <id|none>   指定启动时加载哪个模块（写 fgb.ini，重启生效）\n"
+                 "  fgb-cli diag bundle [--out <zip>]  导出诊断包（日志/配置/崩溃转储）\n"
                  "  fgb-cli version        显示版本\n"
                  "\n"
                  "run 选项:\n"
@@ -305,6 +308,7 @@ int cmd_run(int argc, char** argv) {
     // 在正式解析前就知道，所以这里先扫一遍（值只用于这两个开关）。
     fgb::config::OutputOptions saved_outputs;
     std::filesystem::path outputs_path = fgb::config::default_outputs_path();
+    std::filesystem::path outputs_profiles_dir = fgb::config::default_profiles_dir();
     bool apply_saved_outputs           = true;
     for (int i = 2; i < argc; ++i) {
         const std::string_view arg = argv[i];
@@ -531,6 +535,12 @@ int cmd_run(int argc, char** argv) {
             if (next_value(arg).empty()) {
                 return 2;
             }
+        } else if (arg == "--outputs-profiles") {
+            const auto v = next_value(arg);
+            if (v.empty()) {
+                return 2;
+            }
+            outputs_profiles_dir = fgb::config::path_from_utf8(v);
         } else if (arg == "--no-oscquery") {
             vrchat_cfg.use_oscquery = false;
         } else if (arg == "--oscquery-url") {
@@ -885,6 +895,7 @@ int cmd_run(int argc, char** argv) {
         ctx.eye_mode     = fgb::to_string(vrchat_cfg.eye_mode);
         ctx.outputs      = saved_outputs;
         ctx.outputs_path = outputs_path;
+        ctx.outputs_profiles_dir = outputs_profiles_dir;
         ctx.ui_dir      = ui_dir;
         ctx.exe_dir     = executable_dir();
         ctx.quit        = &g_stop;
@@ -1477,7 +1488,32 @@ int cmd_modules(int argc, char** argv) {
     return 0;
 }
 
+int cmd_diag(int argc, char** argv) {
+    fgb::diagnostics::BundleRequest request;
+    request.exe_dir = executable_dir();
+    request.version = FGB_VERSION;
+    for (int i = 2; i < argc; ++i) {
+        const std::string_view arg = argv[i];
+        if (arg == "--out" && i + 1 < argc) {
+            request.output = std::filesystem::path{argv[++i]};
+        }
+    }
+
+    std::string error;
+    if (!fgb::diagnostics::build_bundle(request, error)) {
+        std::fprintf(stderr, "导出诊断包失败：%s\n", error.c_str());
+        return 1;
+    }
+    const std::filesystem::path output =
+        request.output.empty() ? fgb::diagnostics::default_bundle_path() : request.output;
+    std::printf("诊断包：%s\n", output.string().c_str());
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    // 所有子命令都装：模块加载崩了、参数表生成崩了，同样要留下转储
+    fgb::crash::install(fgb::crash::default_crash_dir(), FGB_VERSION);
+
     if (argc < 2) {
         print_usage();
         return 2;
@@ -1499,6 +1535,9 @@ int main(int argc, char** argv) {
     }
     if (cmd == "export") {
         return cmd_export(argc, argv);
+    }
+    if (cmd == "diag") {
+        return cmd_diag(argc, argv);
     }
     if (cmd == "calibrate") {
         return cmd_calibrate(argc, argv);

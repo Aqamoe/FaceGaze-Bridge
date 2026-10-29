@@ -195,6 +195,8 @@ const state = {
   restarting: false,
   outputs_dirty: false,
   pending_outputs_restart: false,
+  output_profiles: { profiles: [], active: "", dir: "" },
+  profile_pending: null, // {action, name}：ack 回来时用本地化文案提示
   status: null,
   gaze: null,
   source_rows: [],
@@ -364,6 +366,24 @@ function handle(message) {
     case "steamvr":
       handle_steamvr(message);
       break;
+    case "outputs_profiles":
+      state.output_profiles = {
+        profiles: message.profiles || [],
+        active: message.active || "",
+        dir: message.dir || "",
+      };
+      render_output_profiles();
+      break;
+    case "diagnostics":
+      $("diag-busy").hidden = true;
+      $("diag-export").disabled = false;
+      if (message.ok) {
+        $("diag-path").textContent = message.path || "";
+        show_toast(t("settings.diag.done", { path: message.path || "" }));
+      } else {
+        show_toast(t("settings.diag.failed", { error: message.error || "?" }), "error");
+      }
+      break;
     case "log":
       push_log(message);
       break;
@@ -378,9 +398,14 @@ function handle(message) {
           state.steamvr_busy = false;
           render_steamvr();
         }
-        if (message.command === "set_outputs") {
+        if (message.command === "set_outputs" || message.command === "apply_output_profile") {
           state.pending_outputs_restart = false;
         }
+        if (message.command === "export_diagnostics") {
+          $("diag-busy").hidden = true;
+          $("diag-export").disabled = false;
+        }
+        state.profile_pending = null;
       } else if (message.command === "set_outputs") {
         state.outputs_dirty = false;
         show_toast(t("output.saved"));
@@ -388,6 +413,27 @@ function handle(message) {
           state.pending_outputs_restart = false;
           send({ type: "restart_engine" });
         }
+      } else if (message.command === "apply_output_profile") {
+        state.outputs_dirty = false;
+        const pending = state.profile_pending;
+        state.profile_pending = null;
+        show_toast(t("output.profile.applied", { name: pending ? pending.name : "" }));
+        if (state.pending_outputs_restart) {
+          state.pending_outputs_restart = false;
+          send({ type: "restart_engine" });
+        }
+      } else if (message.command === "save_output_profile") {
+        const pending = state.profile_pending;
+        state.profile_pending = null;
+        show_toast(t("output.profile.saved", { name: pending ? pending.name : "" }));
+        if (pending && state.output_profiles.profiles.includes(pending.name)) {
+          $("o-profile-select").value = pending.name;
+          refresh_profile_buttons();
+        }
+      } else if (message.command === "delete_output_profile") {
+        const pending = state.profile_pending;
+        state.profile_pending = null;
+        show_toast(t("output.profile.deleted", { name: pending ? pending.name : "" }));
       } else if (message.ok && message.message) {
         show_toast(message.message);
         if (message.command === "import_modules") {
@@ -504,6 +550,94 @@ function save_outputs(restart) {
   send(collect_outputs());
 }
 
+// ---------- 输出预设 ----------
+
+function refresh_profile_buttons() {
+  const name = $("o-profile-select").value;
+  $("o-profile-delete").disabled = !name;
+  $("o-profile-apply").disabled = !name;
+}
+
+function render_output_profiles() {
+  const select = $("o-profile-select");
+  const had_options = select.options.length > 0;
+  const keep = select.value;
+  const profiles = state.output_profiles.profiles || [];
+  const active = state.output_profiles.active || "";
+
+  select.innerHTML = "";
+  const custom = document.createElement("option");
+  custom.value = "";
+  custom.textContent = t("output.profile.custom");
+  select.appendChild(custom);
+  for (const name of profiles) {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    select.appendChild(option);
+  }
+
+  if (had_options && (keep === "" || profiles.includes(keep))) {
+    select.value = keep;
+  } else if (active && profiles.includes(active)) {
+    select.value = active;
+  } else {
+    select.value = "";
+  }
+  select.title = state.output_profiles.dir || "";
+  refresh_profile_buttons();
+}
+
+function save_output_profile() {
+  const name = $("o-profile-name").value.trim();
+  if (!name) {
+    show_toast(t("output.profile.name_required"), "error");
+    $("o-profile-name").focus();
+    return;
+  }
+  state.profile_pending = { action: "save", name };
+  const payload = collect_outputs();
+  payload.type = "save_output_profile";
+  payload.name = name;
+  send(payload);
+}
+
+async function apply_output_profile() {
+  const name = $("o-profile-select").value;
+  if (!name) {
+    show_toast(t("output.profile.pick"), "error");
+    return;
+  }
+  if (!(await ask_confirm({
+    title: t("output.profile.apply"),
+    message: t("output.profile.apply_confirm", { name }),
+    danger: false,
+  }))) {
+    return;
+  }
+  state.profile_pending = { action: "apply", name };
+  state.pending_outputs_restart = true;
+  state.outputs_dirty = true;
+  send({ type: "apply_output_profile", name });
+}
+
+async function delete_output_profile() {
+  const name = $("o-profile-select").value;
+  if (!name) {
+    show_toast(t("output.profile.pick"), "error");
+    return;
+  }
+  if (!(await ask_confirm({
+    title: t("output.profile.delete"),
+    message: t("output.profile.delete_confirm", { name }),
+    danger: true,
+  }))) {
+    return;
+  }
+  state.profile_pending = { action: "delete", name };
+  send({ type: "delete_output_profile", name });
+}
+
 function render_status(status) {
   state.status = status; // 留给调试与探针读最新一帧
   apply_outputs(status.outputs);
@@ -511,6 +645,20 @@ function render_status(status) {
   $("m-frames").textContent = fmt_int(status.frames_in);
   $("m-ticks").textContent = fmt_int(status.ticks);
   $("m-late").textContent = fmt_int(status.late_ticks);
+  const work = status.tick_work || {};
+  const fmt_us = (value) => {
+    const us = Number(value || 0);
+    return us >= 1000 ? `${(us / 1000).toFixed(2)} ms` : `${us.toFixed(us < 10 ? 1 : 0)} µs`;
+  };
+  $("p-tick").textContent = work.samples ? fmt_us(work.avg_us) : "—";
+  $("p-p95").textContent = work.samples ? fmt_us(work.p95_us) : "—";
+  const process = status.process || {};
+  $("p-cpu").textContent = process.cpu_percent === undefined
+    ? "—" : `${Number(process.cpu_percent).toFixed(0)}%`;
+  $("p-mem").textContent = process.working_set_mb === undefined
+    ? "—" : `${Number(process.working_set_mb).toFixed(1)} MB`;
+  $("p-handles").textContent = process.handles === undefined ? "—" : fmt_int(process.handles);
+  $("p-resumes").textContent = fmt_int(status.resumes || 0);
   $("m-messages").textContent = fmt_int(status.messages);
   $("m-bytes").textContent = ((status.bytes || 0) / 1024).toFixed(1);
   $("m-source").textContent = t(status.source_ok ? "status.fps.hint.running" : "status.fps.hint.idle", {
@@ -2119,6 +2267,18 @@ function wire() {
       save_outputs(true);
     }
   });
+  $("o-profile-select").addEventListener("change", () => {
+    $("o-profile-name").value = $("o-profile-select").value;
+    refresh_profile_buttons();
+  });
+  $("diag-export").addEventListener("click", () => {
+    $("diag-busy").hidden = false;
+    $("diag-export").disabled = true;
+    send({ type: "export_diagnostics" });
+  });
+  $("o-profile-save").addEventListener("click", save_output_profile);
+  $("o-profile-apply").addEventListener("click", apply_output_profile);
+  $("o-profile-delete").addEventListener("click", delete_output_profile);
 
   $("mod-rescan").addEventListener("click", () => {
     send({ type: "scan_modules" });

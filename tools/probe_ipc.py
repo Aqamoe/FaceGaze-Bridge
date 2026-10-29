@@ -19,6 +19,7 @@ import os
 import socket
 import struct
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -110,6 +111,14 @@ def main():
     print(f"  source={metrics['source']} avatar={metrics['avatar_name']!r} "
           f"params={metrics['param_count']} targets={metrics['target_count']}")
     print(f"  filter={metrics['filter']}")
+    work = metrics.get("tick_work", {})
+    process = metrics.get("process", {})
+    print(f"  tick work: avg={work.get('avg_us')}µs p50={work.get('p50_us')}µs "
+          f"p95={work.get('p95_us')}µs max={work.get('max_us')}µs "
+          f"samples={work.get('samples')}")
+    print(f"  process: cpu={process.get('cpu_percent')}% "
+          f"mem={process.get('working_set_mb')}MB handles={process.get('handles')} "
+          f"resumes={metrics.get('resumes')}")
 
     status, _, body = http_get("/api/gaze")
     gaze_http = json.loads(body)
@@ -134,6 +143,8 @@ def main():
     last_gaze = None
     filter_enabled = None
     ack_ok = None
+    diag_result = None
+    diag_path = os.path.join(tempfile.gettempdir(), f"fgb-probe-diag-{os.getpid()}.zip")
 
     deadline = time.time() + 3.0
     sent_command = False
@@ -176,12 +187,15 @@ def main():
             elif kind == "ack":
                 ack_ok = message.get("ok")
                 print(f"  ack: {message.get('command')} ok={ack_ok}")
+            elif kind == "diagnostics":
+                diag_result = message
 
         if not sent_command and catalog_count and status_msgs >= 2:
             sent_command = True
             send_text(sock, json.dumps({
                 "type": "set_filter", "enabled": True, "min_cutoff": 2.5, "beta": 0.8}))
-            print("  已发送 set_filter")
+            send_text(sock, json.dumps({"type": "export_diagnostics", "out": diag_path}))
+            print("  已发送 set_filter 与 export_diagnostics")
 
     # 再等一小会儿，收 ack 与更新后的 status
     deadline = time.time() + 1.0
@@ -212,10 +226,21 @@ def main():
             elif kind == "gaze":
                 gaze_msgs += 1
                 last_gaze = message
+            elif kind == "diagnostics":
+                diag_result = message
     sock.close()
 
     print(f"收到消息类型: {seen}")
     ok = True
+    if not work.get("samples") or not work.get("p95_us"):
+        print("FAIL 缺少 tick 耗时分布（tick_work）")
+        ok = False
+    if work.get("p95_us", 0) < work.get("p50_us", 0):
+        print("FAIL tick P95 小于 P50")
+        ok = False
+    if not process.get("working_set_mb") or not process.get("handles"):
+        print("FAIL 缺少进程资源指标（process）")
+        ok = False
     if catalog_count == 0 or params_len != catalog_count:
         print(f"FAIL 参数快照长度不匹配（catalog={catalog_count}, values={params_len}）")
         ok = False
@@ -231,6 +256,26 @@ def main():
     if gaze_msgs < 10:
         print(f"FAIL gaze 推送不足（3 秒只有 {gaze_msgs} 条，期望 ~90 条 @30 Hz）")
         ok = False
+    if not diag_result or not diag_result.get("ok"):
+        print(f"FAIL 诊断包没有导出成功：{diag_result}")
+        ok = False
+    else:
+        try:
+            with open(diag_path, "rb") as handle:
+                magic = handle.read(2)
+            size = os.path.getsize(diag_path)
+            print(f"  诊断包：{size} 字节 magic={magic!r}")
+            if magic != b"PK" or size < 256:
+                print("FAIL 诊断包不是有效 zip")
+                ok = False
+        except OSError as exc:
+            print(f"FAIL 诊断包文件读取失败：{exc}")
+            ok = False
+        finally:
+            try:
+                os.remove(diag_path)
+            except OSError:
+                pass
     if not last_gaze or not gaze_http.get("dir_local") or len(last_gaze.get("dir_local", [])) != 3:
         print("FAIL gaze 消息缺少 dir_local")
         ok = False

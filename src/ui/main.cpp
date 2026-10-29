@@ -17,6 +17,8 @@
 //   3. 页面与 WebSocket 同源同端口，绕开 mixed-content 限制
 //
 // 运行时依赖：WebView2 Evergreen Runtime。Win10/11 通常已随 Edge 预装。
+#include "base/crash.hpp"
+
 #include <winsock2.h>
 
 #include <windows.h>
@@ -1271,6 +1273,7 @@ bool restore_existing_instance(const Options& options) {
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
+    fgb::crash::install(fgb::crash::default_crash_dir(), FGB_VERSION);
     g_host.started_ms = ::GetTickCount64();
     g_host.engine_log = local_app_data() + L"\\FaceGazeBridge\\engine.log";
     std::error_code log_dir_ec;

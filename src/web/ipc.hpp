@@ -14,6 +14,7 @@
 // 省掉 https 页面连 ws:// 回环时的 mixed-content 麻烦）。
 #pragma once
 
+#include "base/process_stats.hpp"
 #include "config/outputs.hpp"
 #include "core/process/one_euro.hpp"
 #include "engine/engine.hpp"
@@ -38,6 +39,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 
 namespace fgb::web {
 
@@ -73,6 +75,8 @@ struct IpcContext {
     // 输出页保存的目标：启动时加载/应用，set_outputs 写回文件；下次启动生效
     config::OutputOptions outputs;
     std::filesystem::path outputs_path;
+    // 命名输出预设的目录；空表示界面上的预设功能不可用
+    std::filesystem::path outputs_profiles_dir;
 
     std::filesystem::path ui_dir;    // 静态页面根目录，空表示不发页面
     std::filesystem::path exe_dir;   // 产品 exe 所在目录；app.vrmanifest 在它旁边
@@ -125,6 +129,9 @@ private:
     void build_calibration(std::string& out);
     void build_preview(std::string& out);
     void build_steamvr(std::string& out) const;
+    void build_output_profiles(std::string& out) const;
+    void broadcast_output_profiles();
+    void start_diagnostics_export(const std::filesystem::path& output = {});
     // 校准档案变了就广播：多个页面/探针连上来时各自显示一致的状态
     void broadcast_calibration();
     // per-instance 运行态；state/error 都来自对应的 VrcftSource
@@ -146,6 +153,9 @@ private:
     std::string catalog_json_;
     bool catalog_dirty_ = true;
 
+    ProcessSampler process_sampler_;
+    ProcessStats last_process_;
+    std::chrono::steady_clock::time_point last_process_sample_{};
     std::chrono::steady_clock::time_point last_status_{};
     std::chrono::steady_clock::time_point last_params_{};
     std::chrono::steady_clock::time_point last_gaze_{};
@@ -168,6 +178,13 @@ private:
     std::deque<LogLine> logs_;        // 待推送（UI 没连上时暂存，有上限）
     std::deque<LogLine> recent_logs_; // 最近若干行，新连接建立时补发
     std::mutex log_mutex_;
+    // 诊断包在后台打包，结果交给 pump() 在引擎线程广播（WsServer 不是线程安全的）
+    std::thread diag_thread_;
+    std::atomic<bool> diag_running_{false};
+    std::mutex diag_mutex_;
+    std::string diag_result_;
+    bool diag_result_pending_ = false;
+
     std::unique_ptr<vrcft::ModuleLibrary> library_;
     // OpenVR 初始化会阻塞，放在后台线程；命令结果由 pump() 广播
     std::unique_ptr<steamvr::Service> steamvr_;

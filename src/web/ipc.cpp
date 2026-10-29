@@ -1,5 +1,6 @@
 #include "web/ipc.hpp"
 
+#include "base/diagnostics.hpp"
 #include "base/json.hpp"
 #include "base/log.hpp"
 #include "params/avatar_config.hpp"
@@ -117,6 +118,73 @@ std::string_view mime_type(std::string_view extension) noexcept {
     return {}; // 未知类型一律不发，避免把配置文件、二进制当静态资源漏出去
 }
 
+// set_outputs 与保存预设共用：payload 里缺省的字段保持原值
+bool parse_output_patch(std::string_view text, config::OutputOptions& next, std::string& error) {
+    std::string target;
+    std::string mode;
+    bool flag     = false;
+    double number = 0.0;
+
+    if (json::field_string(text, "vrchat", target) &&
+        !config::parse_target(target, next.vrchat_host, next.vrchat_port)) {
+        error = "vrchat 需要 host:port";
+    }
+    if (error.empty() && json::field_string(text, "eye_mode", mode)) {
+        next.eye_mode = mode;
+    }
+    if (error.empty() && json::field_string(text, "params_mode", mode)) {
+        next.params_mode = mode;
+    }
+    if (error.empty() && json::field_bool(text, "vmc_enabled", flag)) {
+        next.vmc_enabled = flag;
+    }
+    if (error.empty() && json::field_string(text, "vmc_target", target) &&
+        !config::parse_target(target, next.vmc_host, next.vmc_port)) {
+        error = "vmc_target 需要 host:port";
+    }
+    if (error.empty() && json::field_bool(text, "shm_enabled", flag)) {
+        next.shm_enabled = flag;
+    }
+    if (error.empty() && json::field_string(text, "shm_name", mode)) {
+        next.shm_name = mode;
+    }
+    if (error.empty() && json::field_bool(text, "ws_enabled", flag)) {
+        next.ws_enabled = flag;
+    }
+    if (error.empty() && json::field_number(text, "ws_port", number)) {
+        if (number < 1 || number > 65535) {
+            error = "ws_port 必须是 1..65535";
+        } else {
+            next.ws_port = static_cast<std::uint16_t>(number);
+        }
+    }
+    if (error.empty() && json::field_number(text, "ws_rate", number)) {
+        if (number < 0 || number > 1000) {
+            error = "ws_rate 必须在 0..1000";
+        } else {
+            next.ws_rate_hz = static_cast<int>(number);
+        }
+    }
+    if (error.empty() && json::field_bool(text, "ws_all", flag)) {
+        next.ws_all_shapes = flag;
+    }
+    if (error.empty() && json::field_bool(text, "udp_enabled", flag)) {
+        next.udp_enabled = flag;
+    }
+    if (error.empty() && json::field_string(text, "udp_target", target) &&
+        !config::parse_target(target, next.udp_host, next.udp_port)) {
+        error = "udp_target 需要 host:port";
+    }
+    if (error.empty() && json::field_number(text, "udp_rate", number)) {
+        if (number < 0 || number > 1000) {
+            error = "udp_rate 必须在 0..1000";
+        } else {
+            next.udp_rate_hz = static_cast<int>(number);
+        }
+    }
+    return error.empty();
+}
+
 std::string make_log_message(int level, std::string_view tag, std::string_view message) {
     std::string out;
     JsonWriter writer{out};
@@ -208,6 +276,8 @@ IpcServer::IpcServer(IpcContext context) : ctx_(std::move(context)) {
         server_.send_text(conn, message);
         build_steamvr(message);
         server_.send_text(conn, message);
+        build_output_profiles(message);
+        server_.send_text(conn, message);
         send_backlog(conn);
     };
 
@@ -232,7 +302,12 @@ IpcServer::IpcServer(IpcContext context) : ctx_(std::move(context)) {
     };
 }
 
-IpcServer::~IpcServer() { stop(); }
+IpcServer::~IpcServer() {
+    if (diag_thread_.joinable()) {
+        diag_thread_.join(); // 先等后台打包结束，避免它和 stop() 抢 server_
+    }
+    stop();
+}
 
 bool IpcServer::start(std::uint16_t port, std::string& error) {
     if (!server_.listen(port, error)) {
@@ -338,7 +413,34 @@ void IpcServer::build_metrics(std::string& out) {
     writer.key("frames_in").integer(static_cast<long long>(stats.frames_in));
     writer.key("ticks").integer(static_cast<long long>(stats.ticks));
     writer.key("late_ticks").integer(static_cast<long long>(stats.late_ticks));
+    writer.key("resumes").integer(static_cast<long long>(stats.resumes));
     writer.key("fps").num(last_fps_, 1);
+
+    // tick 工作时间：看引擎主循环本身有没有被某一路输出拖慢
+    const TickStats::Snapshot work =
+        ctx_.engine != nullptr ? ctx_.engine->tick_stats() : TickStats::Snapshot{};
+    writer.key("tick_work");
+    writer.obj_begin();
+    writer.key("avg_us").num(work.avg_us, 3);
+    writer.key("p50_us").num(work.p50_us, 3);
+    writer.key("p95_us").num(work.p95_us, 3);
+    writer.key("max_us").num(work.max_us, 3);
+    writer.key("samples").integer(static_cast<long long>(work.samples));
+    writer.obj_end();
+
+    // 进程资源 1 Hz 采样：状态页要看到长跑里有没有内存/句柄增长
+    const auto now = std::chrono::steady_clock::now();
+    if (last_process_sample_.time_since_epoch().count() == 0 ||
+        now - last_process_sample_ >= std::chrono::seconds(1)) {
+        last_process_        = process_sampler_.sample();
+        last_process_sample_ = now;
+    }
+    writer.key("process");
+    writer.obj_begin();
+    writer.key("cpu_percent").num(last_process_.cpu_percent, 1);
+    writer.key("working_set_mb").num(last_process_.working_set_mb, 1);
+    writer.key("handles").integer(static_cast<long long>(last_process_.handles));
+    writer.obj_end();
 
     const RouterStatus router_status =
         ctx_.sink != nullptr ? ctx_.sink->status() : RouterStatus{};
@@ -698,6 +800,92 @@ void IpcServer::build_steamvr(std::string& out) const {
     writer.obj_end();
 }
 
+void IpcServer::build_output_profiles(std::string& out) const {
+    out.clear();
+    std::vector<config::OutputProfile> profiles;
+    std::string error;
+
+    std::string active;
+    if (!ctx_.outputs_profiles_dir.empty() &&
+        config::list_output_profiles(ctx_.outputs_profiles_dir, profiles, error)) {
+        // 不额外记"当前预设"：和保存值逐字段比较，用户手改后自然回到"自定义"
+        for (const config::OutputProfile& profile : profiles) {
+            config::OutputOptions options;
+            std::string name;
+            if (config::load_output_profile(profile.path, options, name, error) &&
+                options == ctx_.outputs) {
+                active = name;
+                break;
+            }
+        }
+    }
+
+    JsonWriter writer{out};
+    writer.obj_begin();
+    writer.key("type").str("outputs_profiles");
+    writer.key("dir").str(ctx_.outputs_profiles_dir.string());
+    writer.key("active").str(active);
+    if (!error.empty()) {
+        writer.key("error").str(error);
+    }
+    writer.key("profiles").arr_begin();
+    for (const config::OutputProfile& profile : profiles) {
+        writer.str(profile.name);
+    }
+    writer.arr_end();
+    writer.obj_end();
+}
+
+void IpcServer::broadcast_output_profiles() {
+    std::string message;
+    build_output_profiles(message);
+    server_.broadcast(message);
+}
+
+void IpcServer::start_diagnostics_export(const std::filesystem::path& output) {
+    if (diag_running_.exchange(true, std::memory_order_acq_rel)) {
+        return;
+    }
+    if (diag_thread_.joinable()) {
+        diag_thread_.join();
+    }
+
+    diagnostics::BundleRequest request;
+    request.output  = output;
+    request.exe_dir = ctx_.exe_dir;
+    request.version = FGB_VERSION;
+
+    diag_thread_ = std::thread([this, request] {
+        std::string error;
+        const bool ok = diagnostics::build_bundle(request, error);
+        const std::filesystem::path output =
+            request.output.empty() ? diagnostics::default_bundle_path() : request.output;
+
+        std::string message;
+        JsonWriter writer{message};
+        writer.obj_begin();
+        writer.key("type").str("diagnostics");
+        writer.key("ok").boolean(ok);
+        writer.key("path").str(ok ? output.string() : "");
+        if (!error.empty()) {
+            writer.key("error").str(error);
+        }
+        writer.obj_end();
+
+        {
+            std::lock_guard<std::mutex> lock(diag_mutex_);
+            diag_result_         = std::move(message);
+            diag_result_pending_ = true;
+        }
+        diag_running_.store(false, std::memory_order_release);
+        if (ok) {
+            FGB_INFO(kTag, "诊断包已导出：%s", output.string().c_str());
+        } else {
+            FGB_WARN(kTag, "诊断包导出失败：%s", error.c_str());
+        }
+    });
+}
+
 void IpcServer::broadcast_calibration() {
     std::string message;
     build_calibration(message);
@@ -902,6 +1090,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     bool calibration_changed = false;
     bool steamvr_touched     = false;
     bool outputs_touched     = false;
+    bool profiles_touched    = false;
     std::string modules_message;
     std::string ack_message;
     bool engine_restarting = false;
@@ -926,80 +1115,67 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         }
     } else if (has_type && type == "set_outputs") {
         config::OutputOptions next = ctx_.outputs;
-        std::string target;
-        std::string mode;
-        bool flag = false;
-        double number = 0.0;
-
-        if (json::field_string(text, "vrchat", target) &&
-            !config::parse_target(target, next.vrchat_host, next.vrchat_port)) {
-            error = "vrchat 需要 host:port";
-        }
-        if (error.empty() && json::field_string(text, "eye_mode", mode)) {
-            next.eye_mode = mode;
-        }
-        if (error.empty() && json::field_string(text, "params_mode", mode)) {
-            next.params_mode = mode;
-        }
-        if (error.empty() && json::field_bool(text, "vmc_enabled", flag)) {
-            next.vmc_enabled = flag;
-        }
-        if (error.empty() && json::field_string(text, "vmc_target", target) &&
-            !config::parse_target(target, next.vmc_host, next.vmc_port)) {
-            error = "vmc_target 需要 host:port";
-        }
-        if (error.empty() && json::field_bool(text, "shm_enabled", flag)) {
-            next.shm_enabled = flag;
-        }
-        if (error.empty() && json::field_string(text, "shm_name", mode)) {
-            next.shm_name = mode;
-        }
-        if (error.empty() && json::field_bool(text, "ws_enabled", flag)) {
-            next.ws_enabled = flag;
-        }
-        if (error.empty() && json::field_number(text, "ws_port", number)) {
-            if (number < 1 || number > 65535) {
-                error = "ws_port 必须是 1..65535";
-            } else {
-                next.ws_port = static_cast<std::uint16_t>(number);
-            }
-        }
-        if (error.empty() && json::field_number(text, "ws_rate", number)) {
-            if (number < 0 || number > 1000) {
-                error = "ws_rate 必须在 0..1000";
-            } else {
-                next.ws_rate_hz = static_cast<int>(number);
-            }
-        }
-        if (error.empty() && json::field_bool(text, "ws_all", flag)) {
-            next.ws_all_shapes = flag;
-        }
-        if (error.empty() && json::field_bool(text, "udp_enabled", flag)) {
-            next.udp_enabled = flag;
-        }
-        if (error.empty() && json::field_string(text, "udp_target", target) &&
-            !config::parse_target(target, next.udp_host, next.udp_port)) {
-            error = "udp_target 需要 host:port";
-        }
-        if (error.empty() && json::field_number(text, "udp_rate", number)) {
-            if (number < 0 || number > 1000) {
-                error = "udp_rate 必须在 0..1000";
-            } else {
-                next.udp_rate_hz = static_cast<int>(number);
-            }
-        }
-
-        if (error.empty()) {
+        if (parse_output_patch(text, next, error)) {
             if (ctx_.outputs_path.empty()) {
                 error = "输出设置路径不可用";
             } else if (!config::save_outputs(ctx_.outputs_path, next, error)) {
                 // save_outputs 已经写好 error
             } else {
-                ctx_.outputs = next;
-                ok           = true;
+                ctx_.outputs    = next;
+                ok              = true;
                 outputs_touched = true;
-                ack_message  = "输出设置已保存，重启引擎后生效";
+                ack_message     = "输出设置已保存，重启引擎后生效";
             }
+        }
+    } else if (has_type && (type == "save_output_profile" ||
+                            type == "apply_output_profile" ||
+                            type == "delete_output_profile")) {
+        std::string name;
+        if (!json::field_string(text, "name", name) || name.empty()) {
+            error = "缺少预设名称";
+        } else if (ctx_.outputs_profiles_dir.empty()) {
+            error = "预设目录不可用";
+        } else if (type == "save_output_profile") {
+            config::OutputOptions next = ctx_.outputs;
+            if (parse_output_patch(text, next, error) &&
+                config::save_output_profile(ctx_.outputs_profiles_dir, name, next, error)) {
+                ok              = true;
+                profiles_touched = true;
+                ack_message     = "预设已保存";
+            }
+        } else if (type == "apply_output_profile") {
+            std::vector<config::OutputProfile> profiles;
+            if (!config::list_output_profiles(ctx_.outputs_profiles_dir, profiles, error)) {
+                // list_output_profiles 已经写好 error
+            } else {
+                bool found = false;
+                config::OutputOptions loaded;
+                std::string display_name;
+                for (const config::OutputProfile& profile : profiles) {
+                    if (profile.name != name) {
+                        continue;
+                    }
+                    found = config::load_output_profile(profile.path, loaded, display_name, error);
+                    break;
+                }
+                if (!found) {
+                    error = "预设不存在";
+                } else if (ctx_.outputs_path.empty()) {
+                    error = "输出设置路径不可用";
+                } else if (!config::save_outputs(ctx_.outputs_path, loaded, error)) {
+                    // save_outputs 已经写好 error
+                } else {
+                    ctx_.outputs     = loaded;
+                    ok               = true;
+                    outputs_touched  = true;
+                    profiles_touched = true;
+                    ack_message      = "预设「" + name + "」已应用，重启引擎后生效";
+                }
+            }
+        } else if (config::delete_output_profile(ctx_.outputs_profiles_dir, name, error)) {
+            ok               = true;
+            profiles_touched = true;
+            ack_message      = "预设「" + name + "」已删除";
         }
     } else if (has_type && type == "set_preview") {
         bool enabled = false;
@@ -1429,6 +1605,17 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         } else {
             error = "模块库正在刷新或下载，稍后再试";
         }
+    } else if (has_type && type == "export_diagnostics") {
+        if (diag_running_.load(std::memory_order_acquire)) {
+            error = "诊断包正在导出，请稍候";
+        } else {
+            std::string output;
+            json::field_string(text, "out", output);
+            start_diagnostics_export(output.empty() ? std::filesystem::path{}
+                                                    : config::path_from_utf8(output));
+            ok          = true;
+            ack_message = "正在导出诊断包…";
+        }
     } else if (has_type && type == "set_log_level") {
         std::string level_text;
         log::Level level = log::level();
@@ -1485,10 +1672,13 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         build_library(message);
         server_.broadcast(message);
     }
-    if (ok && (type == "set_filter" || type == "set_outputs")) {
+    if (ok && (type == "set_filter" || outputs_touched)) {
         std::string status;
         build_status(status);
         server_.broadcast(status);
+    }
+    if (ok && (profiles_touched || outputs_touched)) {
+        broadcast_output_profiles();
     }
     if (calibration_changed) {
         // 无论成功与否都推一次：失败时（例如跨度太小没启用）页面要看到真实状态，
@@ -1629,11 +1819,16 @@ bool IpcServer::serve_static(std::string_view path, std::string& body,
         return false;
     }
 
-    // 前缀校验：即使请求里混进了软链接，也不能读到 ui 目录之外
+    // 前缀校验：即使请求里混进了软链接，也不能读到 ui 目录之外。
+    // 必须要求分隔符，否则 root=C:\app\ui 会放行兄弟目录 C:\app\uievil。
     const std::wstring root_text   = root.wstring();
     const std::wstring target_text = target.wstring();
-    if (target_text.size() < root_text.size() ||
+    if (target_text.size() <= root_text.size() ||
         target_text.compare(0, root_text.size(), root_text) != 0) {
+        return false;
+    }
+    const wchar_t next = target_text[root_text.size()];
+    if (next != L'\\' && next != L'/') {
         return false;
     }
 
@@ -1732,6 +1927,15 @@ void IpcServer::pump(int timeout_ms) {
     server_.poll(timeout_ms);
     flush_logs();
     poll_picker();
+
+    {
+        std::lock_guard<std::mutex> lock(diag_mutex_);
+        if (diag_result_pending_) {
+            server_.broadcast(diag_result_);
+            diag_result_.clear();
+            diag_result_pending_ = false;
+        }
+    }
 
     // SteamVR 操作在后台线程：完成的这一刻由主循环统一广播，避免跨线程 send
     if (steamvr_ != nullptr) {

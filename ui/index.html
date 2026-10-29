@@ -146,6 +146,19 @@
             眼追无效时显示 —。目前给的是 HMD 局部方向，不含世界坐标。
           </p>
         </article>
+
+        <article class="card" style="margin-top:14px">
+          <h2 data-i18n="status.perf.title">性能与资源</h2>
+          <div class="perf-grid">
+            <div class="kv"><span data-i18n="status.perf.tick">tick 耗时</span><b id="p-tick" class="mono">—</b></div>
+            <div class="kv"><span data-i18n="status.perf.p95">tick P95</span><b id="p-p95" class="mono">—</b></div>
+            <div class="kv"><span data-i18n="status.perf.cpu">CPU</span><b id="p-cpu">—</b></div>
+            <div class="kv"><span data-i18n="status.perf.mem">工作集</span><b id="p-mem">—</b></div>
+            <div class="kv"><span data-i18n="status.perf.handles">句柄</span><b id="p-handles">—</b></div>
+            <div class="kv"><span data-i18n="status.perf.resumes">休眠恢复</span><b id="p-resumes">—</b></div>
+          </div>
+          <p class="hint" data-i18n="status.perf.hint">tick 耗时只算引擎每帧的合并/处理/输出，不含休眠停顿。</p>
+        </article>
       </section>
 
       <!-- 模块 -->
@@ -361,6 +374,20 @@
           <p class="hint" data-i18n="output.settings.hint">
             保存后重启引擎生效。WebSocket 只绑本机回环；UDP/WS 默认关闭。
           </p>
+          <div class="out-profiles">
+            <label class="out-row"><span data-i18n="output.profile.select">输出预设</span>
+              <select id="o-profile-select"></select></label>
+            <div class="out-profile-actions">
+              <input type="text" id="o-profile-name" maxlength="40"
+                     data-i18n-placeholder="output.profile.name" placeholder="预设名称">
+              <button class="btn ghost" id="o-profile-save" data-i18n="output.profile.save">保存为预设</button>
+              <button class="btn ghost" id="o-profile-delete" data-i18n="output.profile.delete">删除预设</button>
+              <button class="btn" id="o-profile-apply" data-i18n="output.profile.apply">应用并重启</button>
+            </div>
+            <p class="hint" data-i18n="output.profile.hint">
+              预设只保存输出目标与开关；应用会写入当前设置并重启引擎。
+            </p>
+          </div>
           <div class="out-grid">
             <label class="out-row"><span data-i18n="output.vrchat">VRChat 目标</span>
               <input type="text" id="o-vrchat" placeholder="127.0.0.1:9000"></label>
@@ -456,6 +483,18 @@
             </b></div>
             <button class="btn danger" id="s-quit" data-i18n="settings.engine.stop">停止引擎</button>
             <p class="hint" data-i18n="settings.engine.stop.hint">停止后追踪输出立即中断；重新打开 FaceGaze Bridge 即可再次启动。</p>
+          </article>
+
+          <article class="card">
+            <h2 data-i18n="settings.diag.title">诊断</h2>
+            <p class="hint" data-i18n="settings.diag.hint">
+              导出日志、配置、崩溃转储和系统信息；不包含模块 DLL 与头像文件。
+            </p>
+            <div class="toolbar" style="margin-top:10px">
+              <button class="btn" id="diag-export" data-i18n="settings.diag.export">导出诊断包</button>
+              <span class="spinner" id="diag-busy" hidden></span>
+            </div>
+            <p class="hint mono" id="diag-path">—</p>
           </article>
 
           <article class="card">

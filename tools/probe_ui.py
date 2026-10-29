@@ -8,7 +8,8 @@ catalog 到了、WebSocket 连上了、参数格子上有非零值、翻页正�
 用法：
     fgb-cli run --source replay --replay x.fgbrec --panel 8787 \
         --calibration %TEMP%\fgb-probe-calibration.ini \
-        --outputs-config %TEMP%\fgb-probe-outputs.ini
+        --outputs-config %TEMP%\fgb-probe-outputs.ini \
+        --outputs-profiles %TEMP%\fgb-probe-profiles
     fgb-ui --port 8787 --debug-port 9222
     python tools/probe_ui.py 9222 8787
 
@@ -23,6 +24,7 @@ import os
 import socket
 import struct
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -190,7 +192,11 @@ def main():
             "source: document.getElementById('a-source').textContent,"
             "catalog: typeof state !== 'undefined' ? state.names.length : -1,"
             "values: typeof state !== 'undefined' ? state.values.length : -1,"
-            "cells: document.querySelectorAll('.cell').length"
+            "cells: document.querySelectorAll('.cell').length,"
+            "tick_text: document.getElementById('p-tick').textContent,"
+            "p95_text: document.getElementById('p-p95').textContent,"
+            "mem_text: document.getElementById('p-mem').textContent,"
+            "handles_text: document.getElementById('p-handles').textContent"
             "})"))
         fps = float(summary["fps"] or 0)
         if summary["connected"] and summary["cells"] > 0 and fps > 0:
@@ -335,6 +341,146 @@ def main():
         "  rate: state.status && state.status.outputs ? state.status.outputs.ws_rate : -1"
         "})"))
     print(f"输出表单：{outputs_form} → {outputs_saved}")
+
+    # 输出预设：保存 → 列表出现 → 删除。应用会重启引擎，交给 probe_output_profiles.py。
+    # 只在预设目录位于临时目录时才写，避免探针在用户默认目录里留垃圾。
+    profile_state = json.loads(cdp.evaluate(
+        "JSON.stringify({"
+        "  dir: (state.output_profiles && state.output_profiles.dir) || '',"
+        "  profiles: (state.output_profiles && state.output_profiles.profiles) || [],"
+        "  has_select: !!document.getElementById('o-profile-select')"
+        "})"))
+    profile_ui = {"ran": False, "dir": profile_state.get("dir")}
+    profile_name = "UI 探针预设"
+    temp_root = tempfile.gettempdir().lower()
+    dir_text = (profile_state.get("dir") or "").lower()
+    if not profile_state.get("has_select"):
+        print("FAIL 输出页缺少预设控件")
+        ok = False
+    elif temp_root not in dir_text and "fgb-probe" not in dir_text:
+        print(f"跳过预设 UI 写操作：预设目录不在临时目录（{profile_state.get('dir')}）")
+    else:
+        cdp.evaluate(
+            "(() => {"
+            "  document.getElementById('o-profile-name').value = " + json.dumps(profile_name) + ";"
+            "  document.getElementById('o-profile-save').click();"
+            "  return true;"
+            "})()")
+        saved_profile = False
+        for _ in range(25):
+            time.sleep(0.2)
+            current = json.loads(cdp.evaluate(
+                "JSON.stringify({"
+                "  profiles: (state.output_profiles && state.output_profiles.profiles) || [],"
+                "  pending: !!state.profile_pending"
+                "})"))
+            if profile_name in current["profiles"] and not current["pending"]:
+                saved_profile = True
+                break
+        select_profile = cdp.evaluate(
+            "(() => {"
+            "  const select = document.getElementById('o-profile-select');"
+            "  select.value = " + json.dumps(profile_name) + ";"
+            "  select.dispatchEvent(new Event('change'));"
+            "  return JSON.stringify({"
+            "    apply_disabled: document.getElementById('o-profile-apply').disabled,"
+            "    delete_disabled: document.getElementById('o-profile-delete').disabled"
+            "  });"
+            "})()")
+        buttons = json.loads(select_profile)
+        cdp.evaluate("document.getElementById('o-profile-apply').click(); true")
+        time.sleep(0.2)
+        apply_modal = json.loads(cdp.evaluate(
+            "JSON.stringify({"
+            "  open: !document.getElementById('modal').hidden,"
+            "  message: document.getElementById('modal-message').textContent"
+            "})"))
+        cdp.evaluate("document.getElementById('modal-cancel').click(); true")
+        time.sleep(0.2)
+        cancelled = json.loads(cdp.evaluate(
+            "JSON.stringify({"
+            "  modal_hidden: document.getElementById('modal').hidden,"
+            "  restarting: !!state.restarting,"
+            "  pending: !!state.pending_outputs_restart"
+            "})"))
+
+        cdp.evaluate(
+            "(() => {"
+            "  const select = document.getElementById('o-profile-select');"
+            "  select.value = " + json.dumps(profile_name) + ";"
+            "  select.dispatchEvent(new Event('change'));"
+            "  document.getElementById('o-profile-delete').click();"
+            "  return true;"
+            "})()")
+        time.sleep(0.2)
+        modal_open = json.loads(cdp.evaluate("JSON.stringify({open: !document.getElementById('modal').hidden})"))
+        cdp.evaluate("document.getElementById('modal-ok').click(); true")
+        deleted_profile = False
+        for _ in range(25):
+            time.sleep(0.2)
+            current = json.loads(cdp.evaluate(
+                "JSON.stringify({"
+                "  profiles: (state.output_profiles && state.output_profiles.profiles) || [],"
+                "  pending: !!state.profile_pending"
+                "})"))
+            if profile_name not in current["profiles"] and not current["pending"]:
+                deleted_profile = True
+                break
+        profile_ui = {
+            "ran": True,
+            "dir": profile_state.get("dir"),
+            "saved": saved_profile,
+            "apply_disabled": buttons.get("apply_disabled"),
+            "delete_disabled": buttons.get("delete_disabled"),
+            "apply_modal": apply_modal.get("open"),
+            "apply_modal_names": profile_name in (apply_modal.get("message") or ""),
+            "apply_cancelled": cancelled.get("modal_hidden") and not cancelled.get("restarting")
+                               and not cancelled.get("pending"),
+            "modal_open": modal_open.get("open"),
+            "deleted": deleted_profile,
+        }
+        print(f"输出预设：{profile_ui}")
+
+    # 诊断包：设置页按钮 → 后台打包 → diagnostics 消息 → 文件真的存在
+    cdp.evaluate(
+        "(() => {"
+        "  document.querySelector('.nav-item[data-page=\"settings\"]').click();"
+        "  document.getElementById('diag-export').click();"
+        "  return true;"
+        "})()")
+    diag_ui = {"path": "", "done": False}
+    for _ in range(40):
+        time.sleep(0.5)
+        current = json.loads(cdp.evaluate(
+            "JSON.stringify({"
+            "  path: document.getElementById('diag-path').textContent,"
+            "  busy: !document.getElementById('diag-busy').hidden,"
+            "  disabled: document.getElementById('diag-export').disabled"
+            "})"))
+        if not current["busy"] and not current["disabled"] \
+                and current["path"] not in ("", "—"):
+            diag_ui = {"path": current["path"], "done": True}
+            break
+    if diag_ui["done"]:
+        try:
+            with open(diag_ui["path"], "rb") as handle:
+                magic = handle.read(2)
+            diag_ui["size"] = os.path.getsize(diag_ui["path"])
+            diag_ui["magic"] = magic.decode("ascii", "replace")
+            if magic != b"PK":
+                diag_ui["done"] = False
+        except OSError as exc:
+            diag_ui["error"] = str(exc)
+            diag_ui["done"] = False
+        finally:
+            try:
+                os.remove(diag_ui["path"])
+            except OSError:
+                pass
+    print(f"诊断包：{diag_ui}")
+    if not diag_ui.get("done"):
+        print("FAIL 界面导出诊断包失败")
+        ok = False
 
     # 校准页（ADR-0021 P1/P2）：档案列表、30 Hz 预览、改动实时生效、保存/重载
     cal_page = json.loads(cdp.evaluate(
@@ -539,6 +685,12 @@ def main():
     if summary.get("catalog") != summary.get("values") or summary.get("cells") != summary.get("catalog"):
         print("FAIL catalog / values / DOM 格子数量不一致")
         ok = False
+    if summary.get("tick_text") in ("", "—") or summary.get("p95_text") in ("", "—"):
+        print("FAIL 状态页没有渲染 tick 耗时分布")
+        ok = False
+    if "MB" not in (summary.get("mem_text") or "") or not (summary.get("handles_text") or "").strip():
+        print("FAIL 状态页没有渲染进程资源（工作集/句柄）")
+        ok = False
     if params.get("active") != "params" or params.get("visible", 0) == 0:
         print("FAIL 参数页没有渲染出格子")
         ok = False
@@ -575,6 +727,26 @@ def main():
     elif not outputs_saved.get("ws") or outputs_saved.get("port") != 9113 \
             or outputs_saved.get("rate") != 25:
         print(f"FAIL 保存的输出设置没有回读成功：{outputs_saved}")
+        ok = False
+    if profile_ui.get("ran") and not profile_ui.get("saved"):
+        print("FAIL 输出预设没有保存进列表")
+        ok = False
+    if profile_ui.get("ran") and (profile_ui.get("apply_disabled")
+                                  or profile_ui.get("delete_disabled")):
+        print("FAIL 选中预设后应用/删除按钮仍被禁用")
+        ok = False
+    if profile_ui.get("ran") and not (profile_ui.get("apply_modal")
+                                      and profile_ui.get("apply_modal_names")):
+        print("FAIL 应用预设没有弹出带名称的确认框")
+        ok = False
+    if profile_ui.get("ran") and not profile_ui.get("apply_cancelled"):
+        print("FAIL 取消应用预设后仍进入了重启流程")
+        ok = False
+    if profile_ui.get("ran") and not profile_ui.get("modal_open"):
+        print("FAIL 删除预设没有弹出确认框")
+        ok = False
+    if profile_ui.get("ran") and not profile_ui.get("deleted"):
+        print("FAIL 输出预设删除后仍留在列表里")
         ok = False
     if not gaze.get("valid"):
         print("FAIL 注视卡片没有收到有效眼追（回放数据应带眼追）")
