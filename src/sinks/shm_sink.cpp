@@ -170,12 +170,10 @@ void ShmSink::submit(const FaceFrame& frame, const GazeState& gaze,
     if (view_ == nullptr) {
         return;
     }
-    if (config_.min_interval_ns != 0 && last_submit_ns_ != 0 &&
-        now_ns - last_submit_ns_ < config_.min_interval_ns) {
+    if (!throttle_.due(now_ns, config_.min_interval_ns)) {
         stats_.suppressed += 1;
         return;
     }
-    last_submit_ns_ = now_ns;
     write_frame(frame, gaze, now_ns);
 }
 

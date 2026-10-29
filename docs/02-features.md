@@ -30,8 +30,8 @@
 | | VRChat 自动配置（含备份/还原） | P0 |
 | | VMC 输出 | P0 |
 | | 共享内存输出（Unity/UE 插件） | P1 |
-| | WebSocket JSON 输出 | P1 |
-| | UDP 二进制（低延迟，给串流软件） | P2 |
+| | WebSocket JSON 输出（已实现） | P1 |
+| | UDP 二进制（低延迟，给串流软件；已实现） | P2 |
 | | 多 Sink 并发 | P0 |
 | **管理** | 模块安装 / 启用 / 禁用 / 排序 | P0 |
 | | 模块注册表（在线浏览安装） | P1 |
@@ -253,6 +253,23 @@ if (header->sequence != seq) return;      // 期间被改写，丢弃
 }
 ```
 默认只发活跃形状（> 0.01），可配置为全量。
+
+**已实现（2026-10-30）**：`--ws-out <端口>` 在回环上广播上述 JSON，默认 30 Hz，
+支持多客户端；`--ws-out-rate` / `--ws-out-all` 可调节频率与形状集合。
+完整字段、背压和客户端示例见 [07-streaming-outputs.md](07-streaming-outputs.md) §1。
+
+### 3.4 UDP 二进制
+
+给串流软件和自研客户端的低延迟帧。一个数据报一帧，固定 592 字节、小端、1 字节对齐：
+
+- 头部 `magic/version/header_size` + 序号/时间戳/通道/属性/形状数
+- 左右眼 openness / gaze / confidence、聚散距离、合并注视
+- 头姿四元数与位置
+- 88 个形状值 + 88 个有效性字节（顺序与共享内存一致）
+
+`--udp-out <host:port>` 显式开启，默认每个 tick 发送；`--udp-out-rate` 可限速。
+C 定义在 `sdk/fgb_udp_frame.h`，偏移表与 Python/C# 读取示例见
+[07-streaming-outputs.md](07-streaming-outputs.md) §2。
 
 ---
 

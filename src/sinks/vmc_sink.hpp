@@ -13,6 +13,7 @@
 
 #include "net/udp_socket.hpp"
 #include "sinks/sink.hpp"
+#include "sinks/throttle.hpp"
 
 #include <array>
 #include <cstdint>
@@ -74,7 +75,7 @@ private:
     float last_head_[7]{};
     bool has_last_head_ = false;
 
-    std::uint64_t last_send_ns_ = 0;
+    SinkThrottle throttle_;
     std::uint64_t last_beat_ns_ = 0;
     bool started_               = false;
 };

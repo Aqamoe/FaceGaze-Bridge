@@ -8,8 +8,10 @@
 #include "params/calibration.hpp"
 #include "params/catalog.hpp"
 #include "sinks/shm_sink.hpp"
+#include "sinks/udp_binary_sink.hpp"
 #include "sinks/vmc_sink.hpp"
 #include "sinks/vrchat_sink.hpp"
+#include "sinks/ws_json_sink.hpp"
 #include "capture/capture_file.hpp"
 #include "sources/native_source.hpp"
 #include "sources/replay_source.hpp"
@@ -94,6 +96,11 @@ void print_usage() {
                  "  --vrchat <host:port>    VRChat OSC 目标 (默认 127.0.0.1:9000)\n"
                  "  --vmc-out <host:port>   额外按 VMC 协议输出一份（如 127.0.0.1:39539）\n"
                  "  --shm <名字>            共享内存输出（Local\\FGB_Shm_<名字>，给 Unity/UE 读取）\n"
+                 "  --ws-out <端口>         WebSocket JSON 输出（本机回环，ws://127.0.0.1:<端口>/ws）\n"
+                 "  --ws-out-rate <hz>      WS JSON 帧率，0 = 每 tick (默认 30)\n"
+                 "  --ws-out-all            发全部 88 个形状（默认只发 > 0.01 的有效形状）\n"
+                 "  --udp-out <host:port>   UDP 二进制输出（一帧一个数据报）\n"
+                 "  --udp-out-rate <hz>     UDP 二进制帧率，0 = 每 tick (默认 0)\n"
                  "  --eye-mode <模式>       parameters | native | both (默认 parameters)\n"
                  "  --params <参数集>       v2 | v1 | both (默认 v2)\n"
                  "  --param-prefix <前缀>   找不到头像配置时 v2 参数用的地址前缀\n"
@@ -260,8 +267,16 @@ int cmd_run(int argc, char** argv) {
     float filter_beta       = 0.5f;
     fgb::VrchatSinkConfig vrchat_cfg;
     fgb::VmcSinkConfig vmc_out_cfg;
-    bool vmc_out_enabled    = false;
+    bool vmc_out_enabled      = false;
     fgb::VmcSink* vmc_out_raw = nullptr;
+
+    fgb::WsJsonConfig ws_out_cfg;
+    bool ws_out_enabled       = false;
+    fgb::WsJsonSink* ws_out_raw = nullptr;
+
+    fgb::UdpBinaryConfig udp_out_cfg;
+    bool udp_out_enabled           = false;
+    fgb::UdpBinarySink* udp_out_raw = nullptr;
 
     std::string shm_name;
     fgb::ShmSink* shm_out_raw = nullptr;
@@ -385,6 +400,42 @@ int cmd_run(int argc, char** argv) {
             vmc_out_cfg.host = host;
             vmc_out_cfg.port = port;
             vmc_out_enabled  = true;
+        } else if (arg == "--ws-out") {
+            const auto v = next_value(arg);
+            std::uint16_t port = 0;
+            if (v.empty() || !parse_uint16(v, port)) {
+                std::fprintf(stderr, "--ws-out 需要端口（例如 9101，0 表示系统分配）\n");
+                return 2;
+            }
+            ws_out_cfg.port = port;
+            ws_out_enabled  = true;
+        } else if (arg == "--ws-out-rate") {
+            const auto v = next_value(arg);
+            std::uint16_t hz = 0;
+            if (v.empty() || !parse_uint16(v, hz)) {
+                return 2;
+            }
+            ws_out_cfg.min_interval_ns = hz == 0 ? 0 : 1'000'000'000ULL / hz;
+        } else if (arg == "--ws-out-all") {
+            ws_out_cfg.all_shapes = true;
+        } else if (arg == "--udp-out") {
+            const auto v = next_value(arg);
+            std::string host;
+            std::uint16_t port = 0;
+            if (v.empty() || !parse_host_port(v, host, port)) {
+                std::fprintf(stderr, "--udp-out 需要 host:port（例如 127.0.0.1:9102）\n");
+                return 2;
+            }
+            udp_out_cfg.host = host;
+            udp_out_cfg.port = port;
+            udp_out_enabled  = true;
+        } else if (arg == "--udp-out-rate") {
+            const auto v = next_value(arg);
+            std::uint16_t hz = 0;
+            if (v.empty() || !parse_uint16(v, hz)) {
+                return 2;
+            }
+            udp_out_cfg.min_interval_ns = hz == 0 ? 0 : 1'000'000'000ULL / hz;
         } else if (arg == "--vrchat") {
             const auto v = next_value(arg);
             if (v.empty() || !parse_host_port(v, vrchat_cfg.host, vrchat_cfg.port)) {
@@ -734,6 +785,19 @@ int cmd_run(int argc, char** argv) {
         shm_out_raw   = shm_sink.get();
         engine.add_sink(std::move(shm_sink));
     }
+
+    // WebSocket JSON / UDP 二进制：都是显式开启；WS 只绑回环，UDP 目标由用户给
+    if (ws_out_enabled) {
+        ws_out_cfg.source_name = source_names.empty() ? "fgb" : join_names(source_names);
+        auto ws_sink = std::make_unique<fgb::WsJsonSink>(ws_out_cfg);
+        ws_out_raw   = ws_sink.get();
+        engine.add_sink(std::move(ws_sink));
+    }
+    if (udp_out_enabled) {
+        auto udp_sink = std::make_unique<fgb::UdpBinarySink>(udp_out_cfg);
+        udp_out_raw   = udp_sink.get();
+        engine.add_sink(std::move(udp_sink));
+    }
     fgb::clock::raise_timer_resolution();
 
     // 控制面先于引擎启动：这样"引擎启动 / 头像绑定 / 模块握手"这几行日志也能进 UI 的日志页。
@@ -750,6 +814,8 @@ int cmd_run(int argc, char** argv) {
         ctx.sink        = sink_raw;
         ctx.vmc_out     = vmc_out_raw;
         ctx.shm_out     = shm_out_raw;
+        ctx.ws_out      = ws_out_raw;
+        ctx.udp_out     = udp_out_raw;
         ctx.filter      = filter_raw;
         ctx.source_name = join_names(source_names);
         ctx.params_mode = fgb::to_string(vrchat_cfg.params_mode);

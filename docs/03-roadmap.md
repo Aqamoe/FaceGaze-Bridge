@@ -237,6 +237,11 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 | 4.9 | 多 Sink 并发压力测试（5 sink @ 90 Hz） | 2 |
 | | **合计** | **16** |
 
+> **进度（2026-10-30）**：4.1 节流（统一的 `SinkThrottle`）、4.2 共享内存、4.4 VMC、
+> 4.5 WebSocket JSON、4.6 UDP 二进制、4.7 录制回放已完成；4.3 Unity C# 示例包、
+> 4.8 配置预设、4.9 多 Sink 压测未做。流式输出格式与取舍见
+> [ADR-0024](adr/0024-streaming-outputs.md) 和 [07-streaming-outputs.md](07-streaming-outputs.md)。
+
 **验收**：5 个 Sink 同时输出时，主链路延迟不增加 > 0.5 ms；录制 10 分钟文件 < 20 MB。
 
 ---

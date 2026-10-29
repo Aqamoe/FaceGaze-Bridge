@@ -426,6 +426,14 @@ function render_status(status) {
   $("o-shm").textContent = shm_out.enabled
     ? `${shm_out.name} · ${fmt_int(shm_out.messages)}`
     : t("output.shm.off");
+  const ws_out = status.ws_out || {};
+  $("o-ws").textContent = ws_out.enabled
+    ? `${ws_out.target} · ${fmt_int(ws_out.messages)} · ${ws_out.clients || 0} ${t("output.clients")}`
+    : t("output.ws.off");
+  const udp_out = status.udp_out || {};
+  $("o-udp").textContent = udp_out.enabled
+    ? `${udp_out.target} · ${fmt_int(udp_out.messages)}`
+    : t("output.udp.off");
   $("c-source").textContent = `${status.source || "—"} · ${(status.fps || 0).toFixed(1)} fps`;
   $("s-clients").textContent = status.clients || 0;
 

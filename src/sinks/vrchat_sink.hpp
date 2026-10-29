@@ -18,6 +18,7 @@
 #include "params/catalog.hpp"
 #include "params/oscquery.hpp"
 #include "sinks/sink.hpp"
+#include "sinks/throttle.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -154,7 +155,7 @@ private:
     float last_native_closed_ = 0.0f;
     bool native_sent_         = false;
 
-    std::uint64_t last_send_ns_      = 0;
+    SinkThrottle throttle_;
     std::uint64_t last_heartbeat_ns_ = 0;
     bool started_                    = false;
 

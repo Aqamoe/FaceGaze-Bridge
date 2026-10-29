@@ -5,6 +5,7 @@
 #pragma once
 
 #include "sinks/sink.hpp"
+#include "sinks/throttle.hpp"
 
 #include <cstdint>
 #include <string>
@@ -40,7 +41,7 @@ private:
     void* mapping_ = nullptr; // HANDLE
     void* view_    = nullptr; // FgbSharedBlockV1*
     SinkStats stats_{};
-    std::uint64_t last_submit_ns_ = 0;
+    SinkThrottle throttle_;
     std::uint64_t write_sequence_ = 0;
 };
 

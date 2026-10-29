@@ -81,7 +81,7 @@ void VmcSink::submit(const FaceFrame& frame, const GazeState&, std::uint64_t now
     if (!started_) {
         return;
     }
-    if (last_send_ns_ != 0 && now_ns - last_send_ns_ < config_.min_interval_ns) {
+    if (!throttle_.due(now_ns, config_.min_interval_ns)) {
         ++stats_.suppressed;
         return;
     }
@@ -224,7 +224,6 @@ void VmcSink::submit(const FaceFrame& frame, const GazeState&, std::uint64_t now
     stats_.bytes += writer.size();
     stats_.messages += total + written;
 
-    last_send_ns_ = now_ns;
     if (force) {
         last_beat_ns_ = now_ns;
     }

@@ -598,8 +598,8 @@ OSC 开关在游戏内 `Options > OSC`，写入位置未确认；在没有可靠
 |---|---|---|
 | VMC | UDP 39539，`/VMC/Ext/Blend/Val`、`/VMC/Ext/Blend/Apply` | Warudo / VSeeFace / Unity |
 | 共享内存 | 固定布局 ring，双缓冲 + 版本号 | Unity/UE 插件、OpenXR Layer（微秒级） |
-| WebSocket JSON | 每帧一个 JSON | 网页/脚本/第三方集成 |
-| UDP 二进制 | 紧凑 struct | 串流软件（最低延迟） |
+| WebSocket JSON | 每帧一个 JSON（回环，默认 30 Hz） | 网页/脚本/第三方集成；[§07](07-streaming-outputs.md) |
+| UDP 二进制 | 592 字节紧凑 struct（小端，一个数据报一帧） | 串流软件（最低延迟）；[§07](07-streaming-outputs.md) |
 | OSC 自定义 | 用户配置映射 | 高级用户 |
 
 ### 9.4 多目标并发

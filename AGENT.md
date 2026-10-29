@@ -81,7 +81,7 @@
 cmake -S . -B build/test -G "Visual Studio 16 2019" -A x64
 cmake --build build/test --config Debug --parallel
 
-# 单测（当前 133 个用例）
+# 单测（当前 139 个用例）
 ./build/test/bin/Debug/fgb-tests.exe
 # 或
 ctest --test-dir build/test -C Debug --output-on-failure
@@ -175,6 +175,11 @@ python tools/probe_ui.py 9222 8787
 # OSCQuery：不开 FGB，直接看 mDNS 端点、头像名/ID、可写参数计数
 python tools/probe_oscquery.py
 
+# 流式输出：WS JSON 握手/字段/实测帧率；UDP 二进制长度/magic/属性位/形状
+fgb-cli run --source replay --replay <抓包> --replay-loop --ws-out 9101 --udp-out 127.0.0.1:9102
+python tools/probe_ws_out.py 9101 5
+python tools/probe_udp_out.py 9102 5
+
 # VMC 第二路输出：按接收端视角收包，检查 Blend/Val + Apply + 头姿
 fgb-cli.exe run --source replay --replay <抓包> --replay-loop --vmc-out 127.0.0.1:9100
 python tools/probe_vmc_out.py 9100 5
@@ -242,6 +247,7 @@ gh run watch <id> --exit-status
 | 3D 模型与映射表对不上 | morph/区域改名后页面请求不到，或选中高亮为空 | 跑 `python tools/check_face_model.py`；资产由 `tools/gen_face_model.py` 生成，morph/区域名是契约 |
 | SteamVR 开关一直是灰的 | 状态是 `not_running`/`not_installed`，或缺失 manifest | 卡片会写原因；`/api/steamvr` 可 curl；真实注册必须 SteamVR 正在运行 |
 | OSCQuery 找不到或误判 | 启动回退本地 JSON；同机 OVRToolkit 也广播 `_oscjson._tcp` | mDNS 收满 150 ms 窗口再选，只认实例名以 VRChat 开头；HTTP 端口动态，别探 9001；`python tools/probe_oscquery.py` 先确认 |
+| 输出帧率比设定低 | 90 Hz 实际 60、30 Hz 实际 24 | `now-last >= interval` 在 120 Hz tick 下会被量化；用 `sinks/throttle.hpp` 的 `SinkThrottle` 按截止时间调度 |
 
 ## 6. 代码地图
 
@@ -254,17 +260,17 @@ src/vrcft/     VRCFT 协议、沙箱、模块进程托管、模块仓（module_r
 src/vmc/       VMC blendshape 名字表（输入/输出共用，只有这一份）
 src/params/    参数目录、v2/v1 派生、地址路由、OSCQuery 头像发现、校准（含预览取样 preview_tap）
 src/sources/   输入（VMC / VRCFT 模块 / 原生 C ABI 模块 / 抓包回放）
-src/sinks/     输出（VRChat OSC / VMC / 共享内存）
+src/sinks/     输出（VRChat OSC / VMC / 共享内存 / WebSocket JSON / UDP 二进制；SinkThrottle）
 src/engine/    合并、快照发布、扇出
 src/openvr/    SteamVR 启动项：运行库定位、openvr_api.dll 动态加载、IVRApplications 注册
 src/web/       控制面 IPC（WS 消息 + 静态页面）
 src/ui/        FaceGaze Bridge.exe：WebView2 窗口 + 托盘 + 拉起/回收引擎（无业务逻辑）
-sdk/           原生模块 ABI 头（fgb_module_api.h，宿主与模块共用）
+sdk/           公开 ABI 头（模块 fgb_module_api.h、共享内存 fgb_shared_frame.h、UDP 帧 fgb_udp_frame.h）
 samples/       native-sine：无硬件的原生模块示例
 ui/            页面资源（无构建步骤；face.js 是 WebGL2 渲染器，face/ 是模型与映射表）
 tools/         抓包、冒烟、探针，以及 build_vrcft_runtime.py（出精简运行时）、
                gen_face_model.py / check_face_model.py（3D 资产生成与校验）
-docs/          方案、ADR、路线图、原生模块指南（05）、共享内存指南（06）
+docs/          方案、ADR、路线图、原生模块指南（05）、共享内存指南（06）、流式输出（07）
 ```
 
 ## 7. IPC 协议速查（`ws://127.0.0.1:<port>/ws`）

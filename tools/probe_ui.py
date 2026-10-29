@@ -276,12 +276,21 @@ def main():
     output = json.loads(cdp.evaluate(
         "(() => {"
         "  document.querySelector('.nav-item[data-page=\"output\"]').click();"
-        "  const vmc = state.status ? state.status.vmc_out : null;"
+        "  const status = state.status || {};"
+        "  const vmc = status.vmc_out || null;"
+        "  const ws = status.ws_out || null;"
+        "  const udp = status.udp_out || null;"
         "  return JSON.stringify({"
         "    active: document.querySelector('.page.active').dataset.page,"
         "    text: document.getElementById('o-vmc').textContent,"
         "    enabled: !!(vmc && vmc.enabled),"
-        "    target: vmc ? vmc.target : null"
+        "    target: vmc ? vmc.target : null,"
+        "    ws_text: document.getElementById('o-ws').textContent,"
+        "    ws_enabled: !!(ws && ws.enabled),"
+        "    ws_target: ws ? ws.target : null,"
+        "    udp_text: document.getElementById('o-udp').textContent,"
+        "    udp_enabled: !!(udp && udp.enabled),"
+        "    udp_target: udp ? udp.target : null"
         "  });"
         "})()"))
     print(f"输出页：{output}")
@@ -506,6 +515,12 @@ def main():
         ok = False
     if output.get("enabled") and output.get("target") not in (output.get("text") or ""):
         print("FAIL VMC 输出行没显示目标地址")
+        ok = False
+    if output.get("ws_enabled") and output.get("ws_target") not in (output.get("ws_text") or ""):
+        print("FAIL WebSocket 输出行没显示目标地址")
+        ok = False
+    if output.get("udp_enabled") and output.get("udp_target") not in (output.get("udp_text") or ""):
+        print("FAIL UDP 输出行没显示目标地址")
         ok = False
     if sources.get("rows") != sources.get("expected"):
         print("FAIL 输入源卡片行数与 status.sources 不一致")

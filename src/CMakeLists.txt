@@ -89,6 +89,8 @@ add_library(fgb_engine STATIC
     sinks/vrchat_sink.cpp
     sinks/vmc_sink.cpp
     sinks/shm_sink.cpp
+    sinks/udp_binary_sink.cpp
+    sinks/ws_json_sink.cpp
     sources/vmc_source.cpp
     sources/vrcft_source.cpp
     sources/native_source.cpp
@@ -191,11 +193,14 @@ if(WIN32)
     install(FILES
         "${CMAKE_SOURCE_DIR}/sdk/fgb_module_api.h"
         "${CMAKE_SOURCE_DIR}/sdk/fgb_shared_frame.h"
+        "${CMAKE_SOURCE_DIR}/sdk/fgb_udp_frame.h"
         DESTINATION sdk)
     install(FILES "${CMAKE_SOURCE_DIR}/docs/05-native-module-guide.md"
         DESTINATION sdk RENAME NATIVE-MODULE-GUIDE.md)
     install(FILES "${CMAKE_SOURCE_DIR}/docs/06-shared-memory.md"
         DESTINATION sdk RENAME SHARED-MEMORY.md)
+    install(FILES "${CMAKE_SOURCE_DIR}/docs/07-streaming-outputs.md"
+        DESTINATION sdk RENAME STREAMING-OUTPUTS.md)
     install(FILES
         "${CMAKE_SOURCE_DIR}/samples/native-sine/native_sine.cpp"
         "${CMAKE_SOURCE_DIR}/samples/native-sine/fgb-native.json"

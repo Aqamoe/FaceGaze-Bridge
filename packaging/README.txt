@@ -60,6 +60,10 @@ VRCFT 运行时
 
     "FaceGaze Bridge.exe" --source vmc --vmc-out 127.0.0.1:9100
 
+给网页/脚本（WebSocket JSON）或串流软件（UDP 二进制）：
+
+    "FaceGaze Bridge.exe" --source vmc --ws-out 9101 --udp-out 127.0.0.1:9102
+
 其它可用的引擎参数：--vrchat host:port、--vmc-port、--eye-mode、--params、
 --filter、--module-id ...（完整列表在命令行跑 fgb-cli.exe run --help）。
 
@@ -68,7 +72,7 @@ VRCFT 运行时
   状态：帧率 / 累计帧 / tick 抖动 / OSC 条数 / 当前头像 / 输入源
   模块：本机导入、zip 安装、启停、删除、设为启动、模块库一键安装、运行时状态
   参数：365 个参数的热力图（只显示已绑定的），搜索过滤
-  输出：参数集 / 眼追模式 / 绑定条数 / VMC / 共享内存，重新读取头像参数表
+  输出：参数集 / 眼追模式 / 绑定条数 / VMC / 共享内存 / WebSocket / UDP，重新读取头像参数表
   日志：引擎与模块日志，可过滤级别
   设置：One Euro 滤波开关与滑杆，SteamVR 启动项（状态/自启动/重新检测/移除注册），
         日志级别，界面语言，停止引擎
@@ -79,7 +83,9 @@ VRCFT 运行时
   fgb-cli.exe           引擎与命令行工具（modules / run / params …）
   sdk/fgb_module_api.h  原生模块 ABI 头（给模块开发者，普通用户不用管）
   sdk/fgb_shared_frame.h 共享内存输出布局（给 Unity/UE 集成开发）
+  sdk/fgb_udp_frame.h    UDP 二进制输出布局（592 字节固定帧）
   sdk/SHARED-MEMORY.md   共享内存读取指南
+  sdk/STREAMING-OUTPUTS.md  WebSocket JSON / UDP 二进制协议与读取示例
   sdk/NATIVE-MODULE-GUIDE.md  原生模块开发指南（含示例工程）
   sdk/sample-native-sine/     可运行的示例模块（正弦波，无硬件）
   runtime\vrcft\        VRCFT 模块宿主运行时（Apache-2.0，含 LICENSE/NOTICE）

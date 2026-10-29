@@ -139,7 +139,7 @@ void VrchatSink::reset_dedup() noexcept {
     }
     last_native_closed_ = 0.0f;
     native_sent_        = false;
-    last_send_ns_       = 0;
+    throttle_.reset();
     last_heartbeat_ns_  = 0;
 }
 
@@ -588,7 +588,7 @@ void VrchatSink::submit(const FaceFrame& frame, const GazeState& /*gaze*/, std::
     apply_pending_avatar();
     std::shared_lock avatar_lock(router_mutex_);
 
-    if (last_send_ns_ != 0 && now_ns - last_send_ns_ < config_.min_interval_ns) {
+    if (!throttle_.due(now_ns, config_.min_interval_ns)) {
         return;
     }
 
@@ -618,7 +618,6 @@ void VrchatSink::submit(const FaceFrame& frame, const GazeState& /*gaze*/, std::
 
     flush(writer);
 
-    last_send_ns_ = now_ns;
     if (heartbeat) {
         last_heartbeat_ns_ = now_ns;
     }

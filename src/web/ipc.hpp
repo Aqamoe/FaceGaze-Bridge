@@ -21,8 +21,10 @@
 #include "params/calibration.hpp"
 #include "params/preview_tap.hpp"
 #include "sinks/shm_sink.hpp"
+#include "sinks/udp_binary_sink.hpp"
 #include "sinks/vmc_sink.hpp"
 #include "sinks/vrchat_sink.hpp"
+#include "sinks/ws_json_sink.hpp"
 #include "sources/vrcft_source.hpp"
 #include "vrcft/module_library.hpp"
 #include "vrcft/module_registry.hpp"
@@ -52,6 +54,8 @@ struct IpcContext {
     VrchatSink* sink   = nullptr; // 可能为空（没配 OSC 输出）
     VmcSink* vmc_out   = nullptr; // 可能为空（没开 --vmc-out）
     ShmSink* shm_out   = nullptr; // 可能为空（没开 --shm）
+    WsJsonSink* ws_out = nullptr; // 可能为空（没开 --ws-out）
+    UdpBinarySink* udp_out = nullptr; // 可能为空（没开 --udp-out）
     FaceFilter* filter = nullptr; // 可能为空（未启用滤波）
 
     // 校准：tap 固定挂在校准之前；applier 即使没有档案也会挂一个空的（全透传），

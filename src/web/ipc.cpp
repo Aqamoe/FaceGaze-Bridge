@@ -416,6 +416,40 @@ void IpcServer::build_metrics(std::string& out) {
     }
     writer.obj_end();
 
+    writer.key("ws_out");
+    writer.obj_begin();
+    if (ctx_.ws_out != nullptr) {
+        const SinkStats ws_stats = ctx_.ws_out->stats();
+        writer.key("enabled").boolean(true);
+        writer.key("target").str("ws://127.0.0.1:" + std::to_string(ctx_.ws_out->port()) + "/ws");
+        writer.key("clients").integer(static_cast<long long>(ctx_.ws_out->clients()));
+        writer.key("messages").integer(static_cast<long long>(ws_stats.messages));
+        writer.key("bytes").integer(static_cast<long long>(ws_stats.bytes));
+    } else {
+        writer.key("enabled").boolean(false);
+        writer.key("target").str("");
+        writer.key("clients").integer(0);
+        writer.key("messages").integer(0);
+        writer.key("bytes").integer(0);
+    }
+    writer.obj_end();
+
+    writer.key("udp_out");
+    writer.obj_begin();
+    if (ctx_.udp_out != nullptr) {
+        const SinkStats udp_stats = ctx_.udp_out->stats();
+        writer.key("enabled").boolean(true);
+        writer.key("target").str(ctx_.udp_out->target());
+        writer.key("messages").integer(static_cast<long long>(udp_stats.messages));
+        writer.key("bytes").integer(static_cast<long long>(udp_stats.bytes));
+    } else {
+        writer.key("enabled").boolean(false);
+        writer.key("target").str("");
+        writer.key("messages").integer(0);
+        writer.key("bytes").integer(0);
+    }
+    writer.obj_end();
+
     // 每个输入源的贡献：多源合并后，"谁在喂哪一路"必须看得见，
     // 否则用户只会看到"眼睛不动"，然后去怀疑滤波。
     writer.key("sources").arr_begin();

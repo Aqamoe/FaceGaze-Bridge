@@ -23,6 +23,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | [docs/04-engineering.md](docs/04-engineering.md) | 技术栈、构建、测试、CI、发布、可观测性、许可证合规、风险登记册 | 工程 |
 | [docs/05-native-module-guide.md](docs/05-native-module-guide.md) | 原生模块 C ABI v1：生命周期、帧提交、编译、打包安装与排障 | 模块开发者 |
 | [docs/06-shared-memory.md](docs/06-shared-memory.md) | 共享内存输出的开启、读取协议与字段速查 | 集成开发者 |
+| [docs/07-streaming-outputs.md](docs/07-streaming-outputs.md) | WebSocket JSON 与 UDP 二进制的协议、字段表和读取示例 | 集成开发者 |
 
 ---
 
@@ -44,7 +45,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 头像发现与切换（M3） | ✅ OSCQuery（mDNS 找动态 HTTP 端口，2 s 轮询 `/avatar/change` 热重绑）+ 本地 JSON 回退；状态页显示参数来源（[ADR-0023](docs/adr/0023-oscquery-avatar-discovery.md)） |
 | 原生 C ABI（M4/M5 基础） | ✅ 进程内 C ABI v1 + 无硬件示例模块（[ADR-0018](docs/adr/0018-native-c-abi-v1.md)） |
 | 共享内存输出（M4） | ✅ 命名映射 + 双缓冲 seqlock，`--shm <name>` 显式开启（[ADR-0019](docs/adr/0019-shared-memory-output.md)） |
-| 多输出（M4） | ✅ VRChat OSC + VMC 第二路（`--vmc-out`）+ 共享内存（`--shm`），可同时驱动 Unity 场景（[ADR-0014](docs/adr/0014-vmc-output-sink.md)、[ADR-0019](docs/adr/0019-shared-memory-output.md)） |
+| 多输出（M4） | ✅ VRChat OSC + VMC（`--vmc-out`）+ 共享内存（`--shm`）+ WebSocket JSON（`--ws-out`）+ UDP 二进制（`--udp-out`）；5 个 sink 独立节流，状态页可见目标/计数（[ADR-0024](docs/adr/0024-streaming-outputs.md)） |
 | 托盘常驻 + 关窗语义 | ✅ 托盘图标与菜单（显示窗口 / 启动·停止引擎 / 重启引擎 / 退出）、`--tray` 无窗口启动、单实例恢复、关窗收托盘（[ADR-0022](docs/adr/0022-tray-shell-and-close-semantics.md)） |
 | 校准（P1/P2） | ✅ 「校准」页：88 个形状的 lo/hi 与视线 gain/center，拖动实时生效、原子保存 + `.bak`、默认档案自动加载（[ADR-0021](docs/adr/0021-calibration-workbench-3d-preview.md)） |
 | 校准 3D 预览 | ✅ `.fgbface` 模型 + 原生 WebGL2 渲染（旋转/缩放/预设）、32 morph、选中形状区域高亮、2D SVG 降级；模型为程序化占位头，正式美术待补（[ADR-0021](docs/adr/0021-calibration-workbench-3d-preview.md)） |
@@ -76,6 +77,9 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
   按通道选提供者并有过期回退；状态页能看见每个源在喂哪一路
 - 多输出：VRChat OSC 与 VMC 同时输出（`--vmc-out 127.0.0.1:9100`），
   同一张脸可以既驱动 VRChat 模型又驱动 Unity 场景
+- 流式输出：`--ws-out 9101` 给网页/脚本广播 JSON（默认 30 Hz，多客户端），
+  `--udp-out 127.0.0.1:9102` 给串流软件/自研客户端发 592 字节固定布局帧；
+  两者默认关闭，格式见 [docs/07-streaming-outputs.md](docs/07-streaming-outputs.md)
 - 托盘常驻：`--tray` 不弹窗口只驻留托盘（SteamVR 自启动形态）；关窗进托盘、
   托盘「退出」才停引擎；已有实例时再启动只恢复现有窗口
 - 校准页：88 个形状的 lo/hi 与视线中心可拖可存，实时生效，保存到
@@ -86,7 +90,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 - SteamVR 启动项：设置页显式开关 + 状态/原因；只在 SteamVR 运行时可用，绝不自动注册，
   移除注册后不残留启动项（真实注册待 SteamVR 运行环境验收）
 - 界面三语（简中 / 英 / 日）+ 双击即用的发布包（`cmake --install` 到 `dist/`）
-- 133 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面/VMC 输出/OSCQuery 探针
+- 139 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面/VMC/WS/UDP/OSCQuery 探针
   （`tools/probe_ipc.py`、`tools/probe_ui.py`）
 
 ```bash
@@ -108,6 +112,7 @@ fgb-cli modules use VRCFTPicoModule   # 启动模块，重启引擎后生效
 - 校准 3D 的正式美术头模（渲染器/格式/映射已完成，当前是程序化占位头；
   换资产保持 `.fgbface` v1 与 morph/区域名即可，见 ADR-0021）
 - 界面里还不能改输出目标 / 参数集
+- Unity C# 示例包与 5 个 Sink 的并发压力测试（输出协议已就绪，见 ADR-0024）
 - 自动启用 VRChat OSC（实测 `config.json` 里没有 OSC 字段，开关在游戏内 Options > OSC，
   写入位置未确认；暂不动用户配置）
 - OpenXR API Layer / 眼追注入（共享内存与 VMC 输出已做）
