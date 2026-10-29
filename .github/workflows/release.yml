@@ -1,0 +1,144 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要打包的 tag（例如 v1.0.0）"
+        required: true
+      runtime_url:
+        description: "可选：VRCFT 运行时压缩包 URL（覆盖仓库变量）"
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  package:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check version matches tag
+        shell: pwsh
+        run: |
+          $text = Get-Content CMakeLists.txt -Raw
+          if ($text -notmatch 'project\(FaceGazeBridge\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)') {
+            throw "无法从 CMakeLists.txt 读取版本"
+          }
+          $version = $Matches[1]
+          if ("v$version" -ne $env:TAG) {
+            throw "tag $env:TAG 与 CMakeLists.txt 的版本 $version 不一致"
+          }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "版本：$version"
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Configure
+        run: cmake -S . -B build/release -G "Visual Studio 17 2022" -A x64 -DFGB_WARNINGS_AS_ERRORS=ON
+
+      - name: Build
+        run: cmake --build build/release --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build/release -C Release --output-on-failure
+
+      - name: Install dist
+        run: cmake --install build/release --config Release --prefix dist
+
+      - name: Fetch VRCFT runtime
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUNTIME_URL: ${{ github.event.inputs.runtime_url || vars.VRCFT_RUNTIME_URL }}
+        run: |
+          $zip = Join-Path $PWD "vrcft-runtime.zip"
+          if ($env:RUNTIME_URL) {
+            Write-Host "下载 runtime_url"
+            Invoke-WebRequest -Uri $env:RUNTIME_URL -OutFile $zip
+          } else {
+            Write-Host "从最近一个已发布 Release 下载 vrcft-runtime.zip"
+            & gh release download --pattern "vrcft-runtime.zip" --output $zip
+            if ($LASTEXITCODE -ne 0) {
+              throw "找不到运行时：设置仓库变量 VRCFT_RUNTIME_URL，或在任一已发布 Release 附加 vrcft-runtime.zip"
+            }
+          }
+          New-Item -ItemType Directory -Force -Path "dist/runtime/vrcft" | Out-Null
+          Expand-Archive -Path $zip -DestinationPath "dist/runtime/vrcft" -Force
+          if (-not (Test-Path "dist/runtime/vrcft/VRCFaceTracking.ModuleProcess.exe")) {
+            throw "运行时压缩包根目录必须直接包含 VRCFaceTracking.ModuleProcess.exe"
+          }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & .\packaging\build_installer.ps1 -Version $env:VERSION -DistDir dist -OutputDir dist-installer
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Copy-Item vrcft-runtime.zip dist-installer/vrcft-runtime.zip -Force
+          $files = @(
+            "dist-installer/FaceGazeBridge-Setup-$env:VERSION.exe",
+            "dist-installer/vrcft-runtime.zip"
+          )
+          $lines = foreach ($file in $files) {
+            "$((Get-FileHash $file -Algorithm SHA256).Hash.ToLower())  $(Split-Path $file -Leaf)"
+          }
+          Set-Content -Path dist-installer/SHA256SUMS.txt -Value $lines -Encoding ascii
+          $lines
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FaceGazeBridge-${{ env.VERSION }}
+          path: |
+            dist-installer/FaceGazeBridge-Setup-*.exe
+            dist-installer/vrcft-runtime.zip
+            dist-installer/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Create draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $notes = @"
+          FaceGaze Bridge $env:VERSION
+
+          - 用户级安装（不需要管理员），内置 VRCFT 模块宿主运行时与 VC++ 运行库
+          - 安装包未签名，首次运行可能被 SmartScreen 拦截；请用 SHA256SUMS.txt 核对文件
+          - 模块、校准、输出设置保存在 %LOCALAPPDATA%\FaceGazeBridge
+          "@
+          Set-Content -Path release-notes.md -Value $notes -Encoding utf8
+          $assets = @(
+            "dist-installer/FaceGazeBridge-Setup-$env:VERSION.exe",
+            "dist-installer/vrcft-runtime.zip",
+            "dist-installer/SHA256SUMS.txt"
+          )
+          & gh release view $env:TAG --json tagName 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            & gh release upload $env:TAG @assets --clobber
+            & gh release edit $env:TAG --notes-file release-notes.md
+          } else {
+            & gh release create $env:TAG @assets --draft `
+              --title "FaceGaze Bridge $env:VERSION" --notes-file release-notes.md
+          }
+          if ($LASTEXITCODE -ne 0) { throw "创建/更新 Release 失败" }

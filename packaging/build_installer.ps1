@@ -37,6 +37,10 @@ if (-not $DistDir) {
 if (-not $OutputDir) {
     $OutputDir = Join-Path $root "dist-installer"
 }
+# ISCC 按 .iss 所在目录解析相对路径，这里统一转成基于仓库根的绝对路径。
+if (-not [System.IO.Path]::IsPathRooted($DistDir)) { $DistDir = Join-Path $root $DistDir }
+if (-not [System.IO.Path]::IsPathRooted($OutputDir)) { $OutputDir = Join-Path $root $OutputDir }
+if ($CrtDir -and -not [System.IO.Path]::IsPathRooted($CrtDir)) { $CrtDir = Join-Path $root $CrtDir }
 
 if (-not (Test-Path (Join-Path $DistDir "FaceGaze Bridge.exe"))) {
     throw "找不到 $DistDir\FaceGaze Bridge.exe；先运行 cmake --install build/release --config Release --prefix $DistDir"

@@ -260,6 +260,30 @@ jobs:
 
 **签名**：必须买代码签名证书（OV 约 $200–400/年，EV 约 $400–700/年）。没有签名，每次下载都会被 SmartScreen 拦截，转化率掉一半以上。
 
+### 6.1 实际发布流水线
+
+- **本地一键**：`packaging/release.ps1` 做完整链路——构建、单测、`cmake --install` 到
+  `dist/`、抽取/解压 VRCFT 运行时、部署 VC 运行库、编译 Setup、生成
+  `SHA256SUMS.txt` 与 `vrcft-runtime.zip`。加 `-Publish`（需 `gh auth login`）创建或
+  更新 **draft** Release，不自动公开。
+- **CI**：`.github/workflows/release.yml` 由 tag `v*` 触发，先校验 tag 与
+  `CMakeLists.txt` 版本一致，再执行同样的构建/测试/打包，上传 workflow artifact 并
+  创建 draft Release。
+- **CI 的 VRCFT 运行时**：runner 上没有 VRCFT。工作流优先读仓库变量
+  `VRCFT_RUNTIME_URL`（指向 `vrcft-runtime.zip`），否则从最近一个**已发布** Release
+  下载同名资产。首次发布（或更换 VRCFT 版本）时，用本地
+  `packaging/release.ps1` 生成 `dist-installer/vrcft-runtime.zip` 并上传到 Release，
+  或在仓库 Settings → Variables 里配置 `VRCFT_RUNTIME_URL`。
+- **签名**仍未接入：当前 Release 说明里会提示 SmartScreen 与 SHA256 校验方式。
+
+```powershell
+# 本地完整发布（含运行时，自动编译 Setup）
+powershell -ExecutionPolicy Bypass -File packaging\release.ps1
+
+# 同时创建 draft Release（工作区必须干净）
+powershell -ExecutionPolicy Bypass -File packaging\release.ps1 -Publish
+```
+
 ---
 
 ## 7. 可观测性
