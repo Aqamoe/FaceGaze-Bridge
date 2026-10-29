@@ -14,6 +14,7 @@ add_executable(fgb-tests
     test_modules.cpp
     test_library.cpp
     test_native_module.cpp
+    test_shm.cpp
     test_merge.cpp
     test_vmc_out.cpp)
 

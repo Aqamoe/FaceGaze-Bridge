@@ -75,6 +75,7 @@ add_library(fgb_engine STATIC
     engine/source_merger.cpp
     sinks/vrchat_sink.cpp
     sinks/vmc_sink.cpp
+    sinks/shm_sink.cpp
     sources/vmc_source.cpp
     sources/vrcft_source.cpp
     sources/native_source.cpp
@@ -163,6 +164,23 @@ if(WIN32)
         install(TARGETS fgb-ui RUNTIME DESTINATION .)
     endif()
     install(DIRECTORY "${CMAKE_SOURCE_DIR}/ui/" DESTINATION ui)
-    install(FILES "${CMAKE_SOURCE_DIR}/sdk/fgb_module_api.h" DESTINATION sdk)
+    install(FILES
+        "${CMAKE_SOURCE_DIR}/sdk/fgb_module_api.h"
+        "${CMAKE_SOURCE_DIR}/sdk/fgb_shared_frame.h"
+        DESTINATION sdk)
+    install(FILES "${CMAKE_SOURCE_DIR}/docs/05-native-module-guide.md"
+        DESTINATION sdk RENAME NATIVE-MODULE-GUIDE.md)
+    install(FILES "${CMAKE_SOURCE_DIR}/docs/06-shared-memory.md"
+        DESTINATION sdk RENAME SHARED-MEMORY.md)
+    install(FILES
+        "${CMAKE_SOURCE_DIR}/samples/native-sine/native_sine.cpp"
+        "${CMAKE_SOURCE_DIR}/samples/native-sine/fgb-native.json"
+        "${CMAKE_SOURCE_DIR}/samples/native-sine/CMakeLists.txt"
+        DESTINATION sdk/sample-native-sine)
+    if(TARGET fgb-sample-native)
+        install(TARGETS fgb-sample-native
+            RUNTIME DESTINATION sdk/sample-native-sine
+            LIBRARY DESTINATION sdk/sample-native-sine)
+    endif()
     install(FILES "${CMAKE_SOURCE_DIR}/packaging/README.txt" DESTINATION .)
 endif()

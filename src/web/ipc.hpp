@@ -17,6 +17,7 @@
 #include "core/process/one_euro.hpp"
 #include "engine/engine.hpp"
 #include "net/ws_server.hpp"
+#include "sinks/shm_sink.hpp"
 #include "sinks/vmc_sink.hpp"
 #include "sinks/vrchat_sink.hpp"
 #include "sources/vrcft_source.hpp"
@@ -47,6 +48,7 @@ struct IpcContext {
     Engine* engine     = nullptr;
     VrchatSink* sink   = nullptr; // 可能为空（没配 OSC 输出）
     VmcSink* vmc_out   = nullptr; // 可能为空（没开 --vmc-out）
+    ShmSink* shm_out   = nullptr; // 可能为空（没开 --shm）
     FaceFilter* filter = nullptr; // 可能为空（未启用滤波）
 
     std::string source_name;

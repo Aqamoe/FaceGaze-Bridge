@@ -169,14 +169,23 @@
 
       <!-- 模块库 -->
       <section class="page" data-page="library">
+        <div class="tabs" id="lib-tabs">
+          <button class="tab active" data-lib-tab="vrcft" data-i18n="modules.library.tab.vrcft">VRCFT 模块</button>
+          <button class="tab" data-lib-tab="native" data-i18n="modules.library.tab.native">原生模块</button>
+        </div>
         <div class="toolbar">
           <input id="lib-search" type="search" data-i18n-placeholder="modules.library.search" placeholder="搜索模块">
           <button class="btn" id="lib-refresh" data-i18n="modules.library.refresh">刷新</button>
+          <button class="btn" id="lib-native-install" hidden data-i18n="modules.library.native_install">安装原生模块 (.zip)</button>
           <span class="muted" id="lib-status">—</span>
         </div>
         <div class="module-list" id="library-list"></div>
-        <p class="hint" data-i18n="modules.library.hint">
+        <div class="module-list" id="native-library-list" hidden></div>
+        <p class="hint" id="library-hint" data-i18n="modules.library.hint">
           列表来自 registry.vrcft.io（与 VRCFT 同源），下载后校验 MD5 再装入模块仓。安装第三方的模块等于运行它的代码，请只装你信任的来源。
+        </p>
+        <p class="hint" id="native-library-hint" hidden data-i18n="modules.library.native_hint">
+          原生模块没有在线注册表：用 SDK 构建 .zip 后在这里安装。这里显示已安装的原生模块。
         </p>
       </section>
 
@@ -202,6 +211,7 @@
             <div class="kv"><span data-i18n="output.matched">绑定条数</span><b id="o-matched">—</b></div>
             <div class="kv"><span data-i18n="output.binary">二进制参数</span><b id="o-binary">—</b></div>
             <div class="kv"><span data-i18n="output.vmc">VMC 输出</span><b id="o-vmc">—</b></div>
+            <div class="kv"><span data-i18n="output.shm">共享内存</span><b id="o-shm">—</b></div>
             <button class="btn" id="o-reload" data-i18n="output.reload">重新读取头像参数表</button>
             <p class="hint" data-i18n="output.reload.hint">换头像后如果表情不动，点这里重新解析地址，不用重启引擎。</p>
           </article>

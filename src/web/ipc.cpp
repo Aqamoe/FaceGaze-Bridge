@@ -355,6 +355,22 @@ void IpcServer::build_metrics(std::string& out) {
     writer.arr_end();
 
     // 第二路输出（VMC）：界面上要能确认"确实发出去了多少"，否则联调只能靠猜
+    writer.key("shm_out");
+    writer.obj_begin();
+    if (ctx_.shm_out != nullptr) {
+        const SinkStats shm_stats = ctx_.shm_out->stats();
+        writer.key("enabled").boolean(true);
+        writer.key("name").str(ctx_.shm_out->mapping_name());
+        writer.key("messages").integer(static_cast<long long>(shm_stats.messages));
+        writer.key("bytes").integer(static_cast<long long>(shm_stats.bytes));
+    } else {
+        writer.key("enabled").boolean(false);
+        writer.key("name").str("");
+        writer.key("messages").integer(0);
+        writer.key("bytes").integer(0);
+    }
+    writer.obj_end();
+
     writer.key("vmc_out");
     writer.obj_begin();
     if (ctx_.vmc_out != nullptr) {

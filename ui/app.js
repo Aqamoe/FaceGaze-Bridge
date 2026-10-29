@@ -168,6 +168,8 @@ const state = {
   modules: null,
   library: null,
   import_selection: new Set(),
+  expanded_modules: new Set(),
+  library_tab: "vrcft",
   restarting: false,
   status: null,
   source_rows: [],
@@ -278,6 +280,8 @@ function handle(message) {
       state.modules = message;
       if (state.view === "modules") {
         render_modules();
+      } else if (state.view === "library") {
+        render_library();
       }
       break;
     case "library": {
@@ -365,6 +369,10 @@ function render_status(status) {
   $("o-vmc").textContent = vmc_out.enabled
     ? `${vmc_out.target} · ${fmt_int(vmc_out.messages)}`
     : t("output.vmc.off");
+  const shm_out = status.shm_out || {};
+  $("o-shm").textContent = shm_out.enabled
+    ? `${shm_out.name} · ${fmt_int(shm_out.messages)}`
+    : t("output.shm.off");
   $("c-source").textContent = `${status.source || "—"} · ${(status.fps || 0).toFixed(1)} fps`;
   $("s-clients").textContent = status.clients || 0;
 
@@ -582,7 +590,7 @@ function el(tag, className, text) {
 
 function format_state(key) {
   const style = MODULE_STATE_STYLES[key] !== undefined ? MODULE_STATE_STYLES[key] : "";
-  return { label: t(`state.${key}`), cls: style };
+  return { text: t(`state.${key}`), cls: style };
 }
 
 function render_modules() {
@@ -593,6 +601,12 @@ function render_modules() {
 
   $("mod-store").textContent = (data && data.store) || "—";
   $("mod-store").title = (data && data.store) || "";
+  const installed_ids = new Set(items.map((item) => item.id));
+  for (const id of [...state.expanded_modules]) {
+    if (!installed_ids.has(id)) {
+      state.expanded_modules.delete(id);
+    }
+  }
   $("mod-installed-count").textContent = t("modules.installed.count", { count: items.length });
   $("mod-picking").hidden = !(data && data.picking);
   $("mod-restart-hint").hidden = !(data && data.restart_needed);
@@ -659,11 +673,15 @@ function module_chip(item) {
 function installed_card(item) {
   const card = el("article", "module-card");
   card.dataset.id = item.id;
+  card.tabIndex = 0;
   if (item.active) {
     card.classList.add("active");
   }
   if (item.broken) {
     card.classList.add("broken");
+  }
+  if (state.expanded_modules.has(item.id)) {
+    card.classList.add("expanded");
   }
 
   const head = el("div", "module-head");
@@ -680,15 +698,16 @@ function installed_card(item) {
   const chip = el("span", `chip ${chip_state.cls}`.trim(), chip_state.text);
   chip.dataset.role = "chip";
   head.append(chip);
+  head.append(el("span", "chevron", "▾"));
   card.append(head);
 
-  if (item.running && item.instance) {
-    card.append(el("div", "module-desc", t("modules.instance", { name: item.instance })));
-  }
   if (item.description) {
-    card.append(el("p", "module-desc", item.description));
+    card.append(el("p", "module-main-desc", item.description));
   }
 
+  const live = ((state.status && state.status.modules) || [])
+    .find((entry) => entry.module_id === item.id);
+  const details = el("div", "module-details");
   const meta = el("div", "module-meta");
   meta.append(el("span", "", `${t("modules.id")}  ${item.id}`));
   meta.append(el("span", "", `${t("modules.source")} ${source_label(item.source)}`));
@@ -697,10 +716,8 @@ function installed_card(item) {
   if (item.dll) {
     meta.append(el("span", "", item.dll));
   }
-  card.append(meta);
+  details.append(meta);
 
-  const live = ((state.status && state.status.modules) || [])
-    .find((entry) => entry.module_id === item.id);
   const error = el("div", "module-error");
   error.dataset.role = "error";
   error.hidden = !live || !live.error;
@@ -708,7 +725,8 @@ function installed_card(item) {
     error.textContent = live.error.slice(0, 400);
     error.title = live.error;
   }
-  card.append(error);
+  details.append(error);
+  card.append(details);
 
   const actions = el("div", "module-actions");
 
@@ -732,8 +750,6 @@ function installed_card(item) {
 
   const remove = el("button", "btn danger small", t("modules.delete"));
   remove.addEventListener("click", async () => {
-    const live = ((state.status && state.status.modules) || [])
-      .find((entry) => entry.module_id === item.id);
     const running = !!(item.running || live);
     const text = running
       ? t("modules.delete_confirm_running", { name: item.name || item.id })
@@ -744,6 +760,25 @@ function installed_card(item) {
   });
   actions.append(remove);
   card.append(actions);
+
+  const toggle_card = (event) => {
+    if (event.type === "click" && event.target.closest("button, input, label, a, select")) {
+      return;
+    }
+    if (event.type === "keydown" && event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    const open = !card.classList.contains("expanded");
+    card.classList.toggle("expanded", open);
+    if (open) {
+      state.expanded_modules.add(item.id);
+    } else {
+      state.expanded_modules.delete(item.id);
+    }
+  };
+  card.addEventListener("click", toggle_card);
+  card.addEventListener("keydown", toggle_card);
   return card;
 }
 
@@ -948,11 +983,87 @@ function update_library_card_progress(card, status, id) {
   }
 }
 
+function render_native_library() {
+  const list = $("native-library-list");
+  const status_el = $("lib-status");
+  const filter = ($("lib-search").value || "").trim().toLowerCase();
+  const all_items = ((state.modules && state.modules.items) || [])
+    .filter((item) => item.kind === "native");
+  const items = all_items.filter((item) => {
+    if (!filter) {
+      return true;
+    }
+    return `${item.name} ${item.author} ${item.description}`.toLowerCase().includes(filter);
+  });
+
+  status_el.textContent = t("modules.library.native_count", { count: all_items.length });
+  status_el.title = "";
+  list.textContent = "";
+  if (!items.length) {
+    list.append(el("div", "empty", all_items.length
+      ? t("modules.library.no_match") : t("modules.library.native_empty")));
+    return;
+  }
+
+  const live = new Map(((state.status && state.status.modules) || [])
+    .map((entry) => [entry.module_id, entry]));
+  for (const item of items) {
+    const card = el("article", "lib-card");
+    const head = el("div", "module-head");
+    head.append(el("strong", "", item.name || item.id));
+    if (item.version) {
+      head.append(el("span", "module-ver", `v${item.version}`));
+    }
+    if (item.author) {
+      head.append(el("span", "module-author", item.author));
+    }
+    const runtime_entry = live.get(item.id);
+    const chip_state = item.broken
+      ? { text: t("state.broken"), cls: "err" }
+      : (runtime_entry ? format_state(runtime_entry.state) : module_chip(item));
+    const chip = el("span", `chip ${chip_state.cls}`.trim(), chip_state.text);
+    head.append(chip);
+    card.append(head);
+
+    if (item.description) {
+      card.append(el("p", "lib-desc", item.description));
+    }
+    const meta = el("div", "lib-meta");
+    meta.append(el("span", "", `${t("modules.source")} ${source_label(item.source)}`));
+    meta.append(el("span", "", `${t("modules.installed_at")} ${item.installed_at || "—"}`));
+    meta.append(el("span", "", `${t("modules.size")} ${fmt_mb(item.bytes)}`));
+    card.append(meta);
+
+    const actions = el("div", "lib-actions");
+    const manage = el("button", "btn small", t("modules.library.open_modules"));
+    manage.addEventListener("click", () => switch_page("modules"));
+    actions.append(manage);
+    card.append(actions);
+    list.append(card);
+  }
+}
+
 function render_library() {
   const list = $("library-list");
   if (!list) {
     return;
   }
+
+  const native = state.library_tab === "native";
+  document.querySelectorAll("#lib-tabs .tab").forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.libTab === state.library_tab);
+  });
+  $("lib-refresh").hidden = native;
+  $("lib-native-install").hidden = !native;
+  list.hidden = native;
+  $("native-library-list").hidden = !native;
+  $("library-hint").hidden = native;
+  $("native-library-hint").hidden = !native;
+  if (native) {
+    render_native_library();
+    return;
+  }
+
   const lib = state.library;
   const status_el = $("lib-status");
   if (!lib) {
@@ -1062,7 +1173,7 @@ function render_running_modules(modules) {
     }
     const chip_state = format_state(item.state);
     ui.chip.className = `chip ${chip_state.cls}`.trim();
-    ui.chip.textContent = chip_state.label;
+    ui.chip.textContent = chip_state.text;
 
     const parts = [t("modules.restarts", { count: item.restarts || 0 })];
     if (item.error) {
@@ -1250,9 +1361,16 @@ function wire() {
     send({ type: "refresh_library" });
   });
   $("lib-search").addEventListener("input", () => {
-    if (state.library) {
+    render_library();
+  });
+  document.querySelectorAll("#lib-tabs .tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      state.library_tab = tab.dataset.libTab === "native" ? "native" : "vrcft";
       render_library();
-    }
+    });
+  });
+  $("lib-native-install").addEventListener("click", () => {
+    send({ type: "install_module_archive" });
   });
 
   $("log-level").addEventListener("change", rerender_logs);

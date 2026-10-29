@@ -440,3 +440,26 @@ FGB_TEST(zip_metadata_wins_over_registry_version) {
         FGB_CHECK(module->version == "1.5.2");
     }
 }
+
+FGB_TEST(modules_keep_installation_order) {
+    TempDir root;
+    make_module_dir(root.path / "zebra", "zebra-id", "Zebra");
+    make_module_dir(root.path / "alpha", "alpha-id", "Alpha");
+    const fs::path store = root.path / "store";
+    const fs::path state = root.path / "modules.ini";
+    {
+        ModuleRegistry registry{state, store};
+        std::string error;
+        FGB_CHECK(registry.install_path(root.path / "zebra", error));
+        FGB_CHECK(registry.install_path(root.path / "alpha", error));
+        FGB_CHECK(registry.modules().size() == 2);
+        // 新安装的排下面，不按名字重排
+        FGB_CHECK(registry.modules()[0].id == "zebra-id");
+        FGB_CHECK(registry.modules()[1].id == "alpha-id");
+    }
+    ModuleRegistry reopened{state, store};
+    reopened.rescan();
+    FGB_CHECK(reopened.modules().size() == 2);
+    FGB_CHECK(reopened.modules()[0].id == "zebra-id");
+    FGB_CHECK(reopened.modules()[1].id == "alpha-id");
+}

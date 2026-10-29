@@ -80,7 +80,7 @@
 cmake -S . -B build/test -G "Visual Studio 16 2019" -A x64
 cmake --build build/test --config Debug --parallel
 
-# 单测（当前 112 个用例）
+# 单测（当前 114 个用例）
 ./build/test/bin/Debug/fgb-tests.exe
 # 或
 ctest --test-dir build/test -C Debug --output-on-failure
@@ -227,7 +227,7 @@ src/vrcft/     VRCFT 协议、沙箱、模块进程托管、模块仓（module_r
 src/vmc/       VMC blendshape 名字表（输入/输出共用，只有这一份）
 src/params/    参数目录、v2/v1 派生、地址路由、校准
 src/sources/   输入（VMC / VRCFT 模块 / 原生 C ABI 模块 / 抓包回放）
-src/sinks/     输出（VRChat OSC）
+src/sinks/     输出（VRChat OSC / VMC / 共享内存）
 src/engine/    合并、快照发布、扇出
 src/web/       控制面 IPC（WS 消息 + 静态页面）
 src/ui/        FaceGaze Bridge.exe：WebView2 窗口 + 拉起/回收引擎（无业务逻辑）
@@ -235,7 +235,7 @@ sdk/           原生模块 ABI 头（fgb_module_api.h，宿主与模块共用�
 samples/       native-sine：无硬件的原生模块示例
 ui/            页面资源（无构建步骤）
 tools/         抓包、冒烟、探针，以及 build_vrcft_runtime.py（出精简运行时）
-docs/          方案、ADR、路线图
+docs/          方案、ADR、路线图、原生模块指南（05）、共享内存指南（06）
 ```
 
 ## 7. IPC 协议速查（`ws://127.0.0.1:<port>/ws`）

@@ -21,6 +21,8 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | [docs/02-features.md](docs/02-features.md) | 功能规格书：VRCFT 对等功能清单 + 增值功能（注视点渲染 / VRSS / 串流） | 产品 / 开发 |
 | [docs/03-roadmap.md](docs/03-roadmap.md) | 里程碑 M0–M6、任务分解、验收标准、工作量估算 | 项目管理 |
 | [docs/04-engineering.md](docs/04-engineering.md) | 技术栈、构建、测试、CI、发布、可观测性、许可证合规、风险登记册 | 工程 |
+| [docs/05-native-module-guide.md](docs/05-native-module-guide.md) | 原生模块 C ABI v1：生命周期、帧提交、编译、打包安装与排障 | 模块开发者 |
+| [docs/06-shared-memory.md](docs/06-shared-memory.md) | 共享内存输出的开启、读取协议与字段速查 | 集成开发者 |
 
 ---
 
@@ -40,6 +42,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 | 模块管理 | ✅ 独立模块仓（导入 / .zip 安装 / 启停 / 删除）+ 模块库一键安装 + 内置精简 VRCFT 运行时；VRCFT 目录只作为导入来源（[ADR-0017](docs/adr/0017-module-store-library-runtime.md)） |
 | 多源合并（M4） | ✅ 表情 / 眼追 / 头姿三通道分别选提供者，可重复 `--source`（[ADR-0013](docs/adr/0013-source-merging.md)） |
 | 原生 C ABI（M4/M5 基础） | ✅ 进程内 C ABI v1 + 无硬件示例模块（[ADR-0018](docs/adr/0018-native-c-abi-v1.md)） |
+| 共享内存输出（M4） | ✅ 命名映射 + 双缓冲 seqlock，`--shm <name>` 显式开启（[ADR-0019](docs/adr/0019-shared-memory-output.md)） |
 | 多输出（M4） | ✅ VRChat OSC + VMC 第二路（`--vmc-out`），可同时驱动 Unity 场景（[ADR-0014](docs/adr/0014-vmc-output-sink.md)）；共享内存 Sink 未做 |
 
 **已经能跑的**（M1 + M2 核心）：
@@ -65,7 +68,7 @@ FGB 要解决的问题是「我的面捕/眼追数据，怎么同时驱动头像
 - 多输出：VRChat OSC 与 VMC 同时输出（`--vmc-out 127.0.0.1:9100`），
   同一张脸可以既驱动 VRChat 模型又驱动 Unity 场景
 - 界面三语（简中 / 英 / 日）+ 双击即用的发布包（`cmake --install` 到 `dist/`）
-- 112 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面/VMC 输出探针
+- 114 个单元测试 + 端到端冒烟测试（`tools/smoke_vmc.py`）+ IPC/界面/VMC 输出探针
   （`tools/probe_ipc.py`、`tools/probe_ui.py`）
 
 ```bash

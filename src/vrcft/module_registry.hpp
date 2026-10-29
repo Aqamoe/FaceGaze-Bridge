@@ -50,6 +50,7 @@ struct ModuleInfo {
     std::string source;       // import / zip / dll / registry / dir
     std::string installed_at; // 展示用，本地时间
     std::uintmax_t bytes = 0;
+    std::uint64_t install_order = 0; // 安装顺序：新模块排在列表下面
 };
 
 // 模块库条目的元数据。下载包里没有 module.json 时用它补齐（例如 ALVR 只发一个 DLL），
@@ -145,6 +146,7 @@ private:
         bool enabled = true;
         std::string source;
         std::string installed_at;
+        std::uint64_t order = 0;
     };
 
     void load_state();
@@ -169,6 +171,7 @@ private:
     std::vector<std::pair<std::filesystem::path, std::string>> import_roots_;
     std::unordered_map<std::string, State> states_;
     std::string active_id_;
+    std::uint64_t next_order_ = 1;
     std::filesystem::path state_path_;
     std::filesystem::path store_dir_;
 };

@@ -294,6 +294,7 @@ void ModuleRegistry::add_import_root(std::filesystem::path path, std::string ori
 void ModuleRegistry::load_state() {
     states_.clear();
     active_id_.clear();
+    next_order_ = 1;
     if (state_path_.empty()) {
         return;
     }
@@ -314,8 +315,16 @@ void ModuleRegistry::load_state() {
             state.source = entry.value;
         } else if (entry.key == "installed") {
             state.installed_at = entry.value;
+        } else if (entry.key == "order") {
+            state.order = static_cast<std::uint64_t>(std::strtoull(entry.value.c_str(), nullptr, 10));
         }
     });
+    for (const auto& [id, state] : states_) {
+        (void)id;
+        if (state.order >= next_order_) {
+            next_order_ = state.order + 1;
+        }
+    }
 }
 
 void ModuleRegistry::save_state() const {
@@ -345,6 +354,7 @@ void ModuleRegistry::save_state() const {
         writer.kv_bool("enabled", it->second.enabled);
         writer.kv("source", it->second.source);
         writer.kv("installed", it->second.installed_at);
+        writer.kv("order", std::to_string(it->second.order));
     }
     writer.close();
 }
@@ -444,9 +454,16 @@ void ModuleRegistry::scan_store() {
         if (entry.path().filename().string().rfind(".tmp-", 0) == 0) {
             continue; // 残留的安装临时目录
         }
-        modules_.push_back(scan_directory(entry.path(), "store"));
+        ModuleInfo info  = scan_directory(entry.path(), "store");
+        const auto state = states_.find(state_key(info.id));
+        info.install_order = state != states_.end() ? state->second.order : 0;
+        modules_.push_back(std::move(info));
     }
+    // 安装顺序升序：老模块在前，新安装的追加在列表下面；同一顺序按名字稳定排序
     std::sort(modules_.begin(), modules_.end(), [](const ModuleInfo& a, const ModuleInfo& b) {
+        if (a.install_order != b.install_order) {
+            return a.install_order < b.install_order;
+        }
         return lower(a.name) < lower(b.name);
     });
 }
@@ -785,6 +802,7 @@ bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
     State& state        = states_[state_key(id)];
     if (existing == states_.end()) {
         state.enabled = true;
+        state.order   = next_order_++;
     }
     state.source       = source.empty() ? "install" : source;
     state.installed_at = now_local_string();

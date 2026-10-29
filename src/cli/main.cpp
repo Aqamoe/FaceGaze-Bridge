@@ -7,6 +7,7 @@
 #include "params/avatar_config.hpp"
 #include "params/calibration.hpp"
 #include "params/catalog.hpp"
+#include "sinks/shm_sink.hpp"
 #include "sinks/vmc_sink.hpp"
 #include "sinks/vrchat_sink.hpp"
 #include "capture/capture_file.hpp"
@@ -92,6 +93,7 @@ void print_usage() {
                  "  --module-id <id>        按 id 或名字选模块，可重复（见 fgb-cli modules）\n"
                  "  --vrchat <host:port>    VRChat OSC 目标 (默认 127.0.0.1:9000)\n"
                  "  --vmc-out <host:port>   额外按 VMC 协议输出一份（如 127.0.0.1:39539）\n"
+                 "  --shm <名字>            共享内存输出（Local\\FGB_Shm_<名字>，给 Unity/UE 读取）\n"
                  "  --eye-mode <模式>       parameters | native | both (默认 parameters)\n"
                  "  --params <参数集>       v2 | v1 | both (默认 v2)\n"
                  "  --param-prefix <前缀>   找不到头像配置时 v2 参数用的地址前缀\n"
@@ -245,6 +247,9 @@ int cmd_run(int argc, char** argv) {
     fgb::VmcSinkConfig vmc_out_cfg;
     bool vmc_out_enabled    = false;
     fgb::VmcSink* vmc_out_raw = nullptr;
+
+    std::string shm_name;
+    fgb::ShmSink* shm_out_raw = nullptr;
     // 可重复出现，顺序即合并优先级：排前面的通道优先
     std::vector<std::string> source_kinds;
     // --module-id 同样可重复，按 vrcft 出现的顺序配对（两个模块各喂一路时用）
@@ -347,6 +352,13 @@ int cmd_run(int argc, char** argv) {
             if (v.empty() || !parse_uint16(v, vmc_cfg.port)) {
                 return 2;
             }
+        } else if (arg == "--shm") {
+            const auto v = next_value(arg);
+            if (v.empty()) {
+                std::fprintf(stderr, "--shm 需要一个名字（映射名会是 Local\\FGB_Shm_<名字>）\n");
+                return 2;
+            }
+            shm_name = std::string{v};
         } else if (arg == "--vmc-out") {
             const auto v = next_value(arg);
             std::string host;
@@ -647,6 +659,15 @@ int cmd_run(int argc, char** argv) {
         vmc_out_raw        = vmc_sink.get();
         engine.add_sink(std::move(vmc_sink));
     }
+
+    // 共享内存输出：默认不开，--shm <name> 显式要求才建映射
+    if (!shm_name.empty()) {
+        fgb::ShmSinkConfig shm_cfg;
+        shm_cfg.name = shm_name;
+        auto shm_sink = std::make_unique<fgb::ShmSink>(shm_cfg);
+        shm_out_raw   = shm_sink.get();
+        engine.add_sink(std::move(shm_sink));
+    }
     fgb::clock::raise_timer_resolution();
 
     // 控制面先于引擎启动：这样"引擎启动 / 头像绑定 / 模块握手"这几行日志也能进 UI 的日志页。
@@ -662,6 +683,7 @@ int cmd_run(int argc, char** argv) {
         ctx.engine      = &engine;
         ctx.sink        = sink_raw;
         ctx.vmc_out     = vmc_out_raw;
+        ctx.shm_out     = shm_out_raw;
         ctx.filter      = filter_raw;
         ctx.source_name = join_names(source_names);
         ctx.params_mode = fgb::to_string(vrchat_cfg.params_mode);
