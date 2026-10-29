@@ -218,6 +218,9 @@ if(WIN32)
             RUNTIME DESTINATION sdk/sample-native-sine
             LIBRARY DESTINATION sdk/sample-native-sine)
     endif()
+    # Unity 示例包：UPM package.json + Runtime/*.cs，可直接 Add package from disk
+    install(DIRECTORY "${CMAKE_SOURCE_DIR}/samples/unity-face-gaze/"
+        DESTINATION sdk/unity-face-gaze)
     install(FILES "${CMAKE_SOURCE_DIR}/packaging/README.txt" DESTINATION .)
     install(FILES
         "${CMAKE_SOURCE_DIR}/packaging/app.vrmanifest"
