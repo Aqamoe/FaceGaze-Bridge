@@ -81,7 +81,7 @@
 cmake -S . -B build/test -G "Visual Studio 16 2019" -A x64
 cmake --build build/test --config Debug --parallel
 
-# 单测（当前 119 个用例）
+# 单测（当前 124 个用例）
 ./build/test/bin/Debug/fgb-tests.exe
 # 或
 ctest --test-dir build/test -C Debug --output-on-failure
@@ -130,7 +130,11 @@ dist/fgb-cli.exe           引擎（命令行用；外壳启动时会调用它�
                            免得在资源管理器里被当成第二个启动入口
 dist/runtime/vrcft/        精简 VRCFT 宿主运行时（约 106 MB，卸载 VRCFT 也能跑模块）
 dist/sdk/fgb_module_api.h  原生模块 ABI 头（给模块开发者）
-dist/ui/                   页面资源（index.html / app.js / style.css / i18n.js / logo.png）
+dist/ui/                   页面资源（index.html / app.js / face.js / style.css / i18n.js / logo.png）
+dist/ui/face/              3D 模型与形状映射（head_v1.fgbface / face_map.json）
+dist/app.vrmanifest        SteamVR 启动项注册清单（与入口 exe 同目录）
+dist/NOTICE                第三方许可证说明（含 OpenVR / VRCFT）
+dist/licenses/             openvr.h 的 BSD-3-Clause 许可证原文
 dist/README.txt            怎么用、日志在哪
 ```
 
@@ -159,6 +163,7 @@ python tools/build_vrcft_runtime.py --dest dist/runtime/vrcft
 python tools/probe_ipc.py 8787
 
 # 界面：通过 WebView2 远程调试端口跑 JS，验证页面真的渲染了数据
+# 包含 3D 模型加载、morph、区域高亮、SteamVR 卡片（只读检测，不切换真实自启动）
 # 已经有别的实例在跑时，必须给测试实例单独的 user-data，否则 CDP 端口不会监听；
 # 带 --debug-port 的实例不参与单实例检查，可以故意多开（ADR-0022 §4）
 "FaceGaze Bridge.exe" --user-data %TEMP%
@@ -227,6 +232,10 @@ gh run watch <id> --exit-status
 | `FindWindow` 找不到自家窗口 | 另一个进程里按类名找隐藏窗口返回 0，`EnumWindows` 却能看到 | 不要用 `FindWindow` 做单实例唤醒；用 `PostMessageW(HWND_BROADCAST, 注册消息)`（ADR-0022 §4） |
 | 校准档案写坏 | 保存时断电/被杀，档案变成半截，下次启动校准全丢 | 用 `save_profile_atomic()`：`.tmp` → 旧档案留 `.bak` → `MoveFileExW(REPLACE_EXISTING)` |
 | 校准页滑杆"动了没反应" | 勾了启用但 lo/hi 还是 0..0 | `set_calibration_shape` 在"启用且跨度近 0"时给 0..1 默认；`capture_calibration` 跨度不足会明确回 error |
+| 引擎在 24 秒后 CPU 100% | 回放 `--replay-loop` 到 EOF 后整份文件在同一 tick 里无限重放 | `ReplaySource::poll()` 的 `elapsed` 必须在循环内重算（loop 会重置 `t0_`） |
+| 页面一卡/暂停，引擎就不动了 | 阻塞 socket 的 `send` 等对端读；`accept` 在无连接时还会再阻塞一次 | 监听/客户端 socket 都设非阻塞；accept 一次只收一个；出站缓冲 + 写集合，慢客户端丢弃（`net/ws_server.cpp`） |
+| 3D 模型与映射表对不上 | morph/区域改名后页面请求不到，或选中高亮为空 | 跑 `python tools/check_face_model.py`；资产由 `tools/gen_face_model.py` 生成，morph/区域名是契约 |
+| SteamVR 开关一直是灰的 | 状态是 `not_running`/`not_installed`，或缺失 manifest | 卡片会写原因；`/api/steamvr` 可 curl；真实注册必须 SteamVR 正在运行 |
 
 ## 6. 代码地图
 
@@ -241,12 +250,14 @@ src/params/    参数目录、v2/v1 派生、地址路由、校准（含预览�
 src/sources/   输入（VMC / VRCFT 模块 / 原生 C ABI 模块 / 抓包回放）
 src/sinks/     输出（VRChat OSC / VMC / 共享内存）
 src/engine/    合并、快照发布、扇出
+src/openvr/    SteamVR 启动项：运行库定位、openvr_api.dll 动态加载、IVRApplications 注册
 src/web/       控制面 IPC（WS 消息 + 静态页面）
 src/ui/        FaceGaze Bridge.exe：WebView2 窗口 + 托盘 + 拉起/回收引擎（无业务逻辑）
 sdk/           原生模块 ABI 头（fgb_module_api.h，宿主与模块共用）
 samples/       native-sine：无硬件的原生模块示例
-ui/            页面资源（无构建步骤）
-tools/         抓包、冒烟、探针，以及 build_vrcft_runtime.py（出精简运行时）
+ui/            页面资源（无构建步骤；face.js 是 WebGL2 渲染器，face/ 是模型与映射表）
+tools/         抓包、冒烟、探针，以及 build_vrcft_runtime.py（出精简运行时）、
+               gen_face_model.py / check_face_model.py（3D 资产生成与校验）
 docs/          方案、ADR、路线图、原生模块指南（05）、共享内存指南（06）
 ```
 
@@ -262,16 +273,18 @@ docs/          方案、ADR、路线图、原生模块指南（05）、共享内
 | →UI | `params`（数值数组，顺序同 `catalog`） | 10 Hz |
 | →UI | `calibration`（88 个形状的 lo/hi/active + 视线 + 路径 + 未保存标记） | 连接时 / 任何校准改动后 |
 | →UI | `preview`（校准前 `raw[88]` + 校准后 `out[88]` + 视线 + seq） | 30 Hz，**只在校准页订阅时** |
+| →UI | `steamvr`（状态/原因/路径/registered/autolaunch/busy） | 连接时快照；每次检测/开关/移除完成后 |
 | →UI | `log`（级别/tag/正文；连接时补发最近 120 行） | 有日志时 |
 | UI→ | `set_filter` / `set_module` / `set_module_enabled` / `scan_modules` / `reload_avatar` / `set_log_level` / `quit` | 按操作 |
 | UI→ | `import_module` / `import_modules`（逗号分隔 id）/ `import_all` / `install_module_archive` / `delete_module` / `open_modules_dir` | 模块管理 |
 | UI→ | `refresh_library` / `install_library` / `restart_engine` | 模块库与重启（退出码 3） |
 | UI→ | `set_preview` / `set_calibration_shape` / `set_calibration_eye` / `capture_calibration` / `save_calibration` / `reload_calibration` / `reset_calibration` | 校准（实时生效，显式保存） |
+| UI→ | `refresh_steamvr` / `set_steamvr_autolaunch` / `remove_steamvr_manifest` | SteamVR（后台线程执行，完成后推 `steamvr`） |
 | →UI | `ack`（命令、ok、error） | 每条命令 |
 
 HTTP（同一端口，只绑回环）：`/healthz`、`/api/status`、`/api/params`、
-`/api/calibration`、`/api/preview` 只读；`/api/quit`、`/api/restart` 是控制动作，
-只给托盘外壳与排障用（外壳不实现 WebSocket 客户端，见 ADR-0022 §5）。
+`/api/calibration`、`/api/preview`、`/api/steamvr` 只读；`/api/quit`、`/api/restart`
+是控制动作，只给托盘外壳与排障用（外壳不实现 WebSocket 客户端，见 ADR-0022 §5）。
 
 ## 8. 完成的定义（DoD）
 

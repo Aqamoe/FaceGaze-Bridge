@@ -10,8 +10,12 @@ FaceGaze Bridge —— 绿色版
   2. 关闭窗口 = 收进托盘，追踪继续；要停止追踪请用托盘菜单的「退出」
      （托盘图标在任务栏右下角，右键有：显示窗口 / 启动或停止引擎 / 重启引擎 / 退出）
   3. 默认使用 VRCFT 模块作为输入
-  4. 校准在界面「校准」页：调每个形状的 lo/hi 与视线中心，拖动立即生效，
+  4. 校准在界面「校准」页：左侧是实时 3D 面部预览（拖动旋转、滚轮缩放、
+     双击复位），右侧调每个形状的 lo/hi 与视线中心，拖动立即生效；
      点「保存」后写入 %LOCALAPPDATA%\FaceGazeBridge\calibration.ini，下次启动自动加载
+     预览用的是通用风格化人头，不是你的 VRChat 头像；没有模型映射的形状会标"仅数值"
+  5. 想跟随 SteamVR 启动：先启动 SteamVR，再到「设置 → SteamVR 启动项」打开开关。
+     设置只在 SteamVR 运行时可用；卸载/移动目录前请先点「移除注册」
 
 第一次运行前确认：
   - VRChat 已启动，并在设置里打开了 OSC（默认发到 127.0.0.1:9000）
@@ -66,7 +70,8 @@ VRCFT 运行时
   参数：365 个参数的热力图（只显示已绑定的），搜索过滤
   输出：参数集 / 眼追模式 / 绑定条数 / VMC / 共享内存，重新读取头像参数表
   日志：引擎与模块日志，可过滤级别
-  设置：One Euro 滤波开关与滑杆，日志级别，界面语言，停止引擎
+  设置：One Euro 滤波开关与滑杆，SteamVR 启动项（状态/自启动/重新检测/移除注册），
+        日志级别，界面语言，停止引擎
 
 文件说明
 --------
@@ -78,7 +83,10 @@ VRCFT 运行时
   sdk/NATIVE-MODULE-GUIDE.md  原生模块开发指南（含示例工程）
   sdk/sample-native-sine/     可运行的示例模块（正弦波，无硬件）
   runtime\vrcft\        VRCFT 模块宿主运行时（Apache-2.0，含 LICENSE/NOTICE）
-  ui\                   页面资源。换页面不用重编 exe
+  ui\                   页面资源（含 uiace 模型与映射表）。换页面不用重编 exe
+  app.vrmanifest        SteamVR 注册清单（只借用 dashboard overlay 的自启动机制）
+  NOTICE                第三方许可证说明（含 OpenVR / VRCFT）
+  licenses\             openvr.h 的 BSD-3-Clause 许可证原文
   engine.log            %LOCALAPPDATA%\FaceGazeBridge\engine.log
   配置                  %APPDATA%\FaceGazeBridge\fgb.ini
 
@@ -103,6 +111,17 @@ VRCFT 运行时
   模块页显示"故障"
      卡片里就是模块自己报的原因。最常见的是端口被占（还在跑 VRCFT），
      或者头显/串流软件没连上。
+
+  校准页没有 3D 面部，只显示 2D 示意图
+     WebGL2 不可用（远程桌面、老显卡、禁用硬件加速）。页面会自动降级为 2D SVG，
+     滑杆、保存、取当前都照常可用；想恢复 3D 可更新显卡驱动或关掉远程桌面。
+
+  SteamVR 启动项开关是灰的
+     卡片状态会写明原因：SteamVR 未安装 → 检查 Steam 安装；SteamVR 未运行 →
+     先启动 SteamVR 再点「重新检测」。FGB 不会自己拉起 SteamVR。
+
+  SteamVR 启动项提示 app_key 冲突
+     旧安装目录还注册着同一个 app_key。先点「移除注册」，再在新目录打开开关。
 
   VRChat 里表情不动
      先看界面状态页的"命中参数"是不是 0：
