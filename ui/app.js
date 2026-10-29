@@ -144,6 +144,7 @@ function apply_l10n() {
   if (state.view === "settings") {
     render_steamvr();
   }
+  update_face_ui();
   if (state.view === "logs") {
     rerender_logs();
   }
@@ -181,6 +182,13 @@ const state = {
   cal_preview_on: false,
   steamvr: null,
   steamvr_busy: false,
+  face_map: null,
+  face_mode: "idle", // idle | loading | 3d | 2d | error
+  face_error: "",
+  face_loading: false,
+  face_renderer: null,
+  face_fallback: null,
+  face_selected: null,
   import_selection: new Set(),
   expanded_modules: new Set(),
   library_tab: "vrcft",
@@ -1239,6 +1247,131 @@ function running_state_of(module_id) {
 // 两条消息分工：calibration 是"档案"（低频，连接时与任何改动后），preview 是"实时数值"
 // （30 Hz）。preview 只改数字、不重建 DOM——重建会把正在拖的滑杆从手指底下换掉。
 
+function face_regions(name) {
+  if (!name || !state.face_map || !state.face_map.shape_regions) {
+    return [];
+  }
+  return state.face_map.shape_regions[name] || [];
+}
+
+function face_shape_names() {
+  return ((state.calibration && state.calibration.shapes) || []).map((shape) => shape.name);
+}
+
+function update_face_ui() {
+  const pill = $("cal-face-state");
+  if (!pill) {
+    return;
+  }
+  const mode = state.face_mode;
+  pill.textContent = t(`calibration.preview.state.${mode}`);
+  pill.className = "pill" +
+    (mode === "3d" ? " accent" : "") +
+    (mode === "2d" || mode === "error" ? " warn" : "");
+
+  const has3d = mode === "3d" && !!state.face_renderer;
+  const has2d = mode === "2d" && !!state.face_fallback;
+  $("cal-canvas").hidden = !has3d;
+  $("cal-fallback").hidden = !has2d;
+  $("cal-stage-empty").hidden = has3d || has2d;
+
+  if (!has3d && !has2d) {
+    $("cal-stage-empty").textContent = mode === "error"
+      ? t("calibration.preview.error", { error: state.face_error || "?" })
+      : t("calibration.preview.empty");
+  }
+
+  const detail = $("cal-face-detail");
+  if (mode === "error") {
+    detail.textContent = t("calibration.preview.error", { error: state.face_error || "?" });
+    return;
+  }
+  const selected = state.face_selected;
+  const regions = face_regions(selected);
+  if (selected) {
+    detail.textContent = regions.length
+      ? t("calibration.preview.regions", { regions: regions.join(" · ") })
+      : t("calibration.preview.numeric_only_detail");
+    return;
+  }
+  detail.textContent = mode === "2d"
+    ? t("calibration.preview.fallback")
+    : t("calibration.preview.hint");
+}
+
+function select_face_shape(name) {
+  state.face_selected = name || null;
+  for (const row of state.cal_rows) {
+    row.element.classList.toggle("selected", row.name === name);
+  }
+  const regions = face_regions(name);
+  if (state.face_renderer) {
+    state.face_renderer.set_highlight(regions);
+  }
+  if (state.face_fallback) {
+    state.face_fallback.set_highlight(regions);
+  }
+  update_face_ui();
+}
+
+async function ensure_face_loaded() {
+  if (state.face_loading || state.face_mode === "loading" ||
+      state.face_mode === "3d" || state.face_mode === "2d") {
+    return;
+  }
+  state.face_loading = true;
+  state.face_mode = "loading";
+  state.face_error = "";
+  update_face_ui();
+  try {
+    const map_response = await fetch("face/face_map.json", { cache: "force-cache" });
+    if (!map_response.ok) {
+      throw new Error(`face_map.json HTTP ${map_response.status}`);
+    }
+    const map = await map_response.json();
+    // 模型文件名以映射表为准：换资产时只改 face_map.model，页面不用动
+    const model_name = map.model || "head_v1.fgbface";
+    const model_response = await fetch(`face/${model_name}`, { cache: "force-cache" });
+    if (!model_response.ok) {
+      throw new Error(`${model_name} HTTP ${model_response.status}`);
+    }
+    const buffer = await model_response.arrayBuffer();
+    state.face_map = map;
+
+    // 2D 降级先建好：WebGL2 初始化失败时直接切过去，校准功能不受影响
+    state.face_fallback = new window.FGBFace.Fallback(
+      document.querySelector("#cal-fallback svg"));
+    state.face_fallback.set_highlight(face_regions(state.face_selected));
+
+    try {
+      const model = window.FGBFace.parse_model(buffer);
+      const renderer = new window.FGBFace.Renderer($("cal-canvas"), model, map);
+      renderer.set_shape_indices(face_shape_names());
+      renderer.set_eye(state.preview && state.preview.eye);
+      renderer.set_values(state.preview ? state.preview.out : []);
+      renderer.set_highlight(face_regions(state.face_selected));
+      state.face_renderer = renderer;
+      state.face_mode = "3d";
+      if (state.view === "calibration") {
+        renderer.start();
+      }
+    } catch (error) {
+      state.face_mode = "2d";
+      state.face_error = String((error && error.message) || error);
+    }
+  } catch (error) {
+    state.face_mode = "error";
+    state.face_error = String((error && error.message) || error);
+  } finally {
+    state.face_loading = false;
+    update_face_ui();
+    // 模型映射到了之后，行里要出现「仅数值」标记
+    if (state.calibration && state.view === "calibration") {
+      render_calibration();
+    }
+  }
+}
+
 function cal_apply_filter() {
   const text = ($("cal-search").value || "").trim().toLowerCase();
   const only_active = $("cal-only-active").checked;
@@ -1271,7 +1404,17 @@ function build_cal_rows(shapes) {
     const raw = el("span", "cal-raw", "—");
     const out = el("span", "cal-out", "—");
     head.append(name_label, raw, out);
+    if (state.face_map) {
+      const regions = face_regions(shape.name);
+      if (regions.length) {
+        head.append(el("span", "cal-model-region", regions.slice(0, 2).join(" · ")));
+      } else {
+        // 没有模型映射就必须标出来：否则用户调了半天看不到变化，会以为坏了
+        head.append(el("span", "cal-model-none", t("calibration.preview.numeric_only")));
+      }
+    }
     row.append(head);
+    row.addEventListener("click", () => select_face_shape(shape.name));
 
     let row_ui = null;
     const make_range = (which) => {
@@ -1314,6 +1457,9 @@ function build_cal_rows(shapes) {
       timer: null,
     };
     check.addEventListener("change", () => push_cal_shape(row_ui));
+    if (state.face_selected === shape.name) {
+      row.classList.add("selected");
+    }
     list.append(row);
     return row_ui;
   });
@@ -1377,8 +1523,8 @@ function render_calibration() {
   $("cal-dirty").hidden = !data.dirty;
 
   const shapes = data.shapes || [];
-  // 语言也进签名：切语言后按钮上的「取当前」得跟着换
-  const signature = `${lang}|${shapes.length}|${shapes.map((s) => s.name).join(",")}`;
+  // 语言也进签名：切语言后按钮上的「取当前」得跟着换；face_map 到了要补「仅数值」
+  const signature = `${lang}|${state.face_map ? "m" : "n"}|${shapes.length}|${shapes.map((s) => s.name).join(",")}`;
   const list = $("cal-list");
   if (list.dataset.signature !== signature) {
     build_cal_rows(shapes);
@@ -1406,6 +1552,10 @@ function render_calibration() {
 
   cal_apply_filter();
 
+  if (state.face_renderer) {
+    state.face_renderer.set_shape_indices(face_shape_names());
+  }
+
   const eye = data.eye || {};
   if (document.activeElement !== $("cal-eye-active")) {
     $("cal-eye-active").checked = !!eye.active;
@@ -1417,6 +1567,7 @@ function render_calibration() {
   if (state.preview) {
     render_preview(state.preview);
   }
+  update_face_ui();
 }
 
 function render_preview(message) {
@@ -1433,6 +1584,12 @@ function render_preview(message) {
   $("cal-eye-live").textContent = eye.valid
     ? `x ${Number(eye.x).toFixed(1)}°  y ${Number(eye.y).toFixed(1)}°`
     : t("calibration.eye.no_data");
+
+  // 模型看的是"实际发出去的输出值"（校准 + 滤波之后），不是原始值
+  if (state.face_renderer) {
+    state.face_renderer.set_eye(eye);
+    state.face_renderer.set_values(out);
+  }
 }
 
 // 预览是"订阅制"：页面关掉就停，引擎热路径回到零额外开销（ADR-0021）
@@ -1442,6 +1599,17 @@ function set_cal_preview(on) {
   }
   state.cal_preview_on = on;
   send({ type: "set_preview", enabled: on });
+  if (on) {
+    ensure_face_loaded();
+  }
+  if (state.face_renderer) {
+    if (on) {
+      state.face_renderer.start();
+    } else {
+      state.face_renderer.stop();
+    }
+  }
+  update_face_ui();
 }
 
 function push_cal_eye() {
@@ -1737,6 +1905,19 @@ function wire() {
 
   $("cal-search").addEventListener("input", cal_apply_filter);
   $("cal-only-active").addEventListener("change", cal_apply_filter);
+
+  $("cal-view-reset").addEventListener("click", () => {
+    if (state.face_renderer) {
+      state.face_renderer.reset();
+    }
+  });
+  document.querySelectorAll(".cal-presets [data-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (state.face_renderer) {
+        state.face_renderer.set_view(button.dataset.view);
+      }
+    });
+  });
 
   $("cal-save").addEventListener("click", () => {
     send({ type: "save_calibration" });

@@ -216,46 +216,93 @@
           <button class="btn ghost" id="cal-reset" data-i18n="calibration.reset">恢复默认</button>
         </div>
 
-        <article class="card" style="margin-bottom:14px">
-          <h2 data-i18n="calibration.eye.title">视线</h2>
-          <label class="switch"><input type="checkbox" id="cal-eye-active"> <span data-i18n="calibration.eye.enable">启用视线校准</span></label>
-          <div class="grid-2">
-            <div>
-              <div class="slider-row">
-                <span data-i18n="calibration.eye.gain_x">水平增益</span>
-                <input type="range" id="cal-eye-gain-x" min="0.2" max="3" step="0.05">
-                <b id="cal-eye-gain-x-v">—</b>
-              </div>
-              <div class="slider-row">
-                <span data-i18n="calibration.eye.center_x">水平中心 (°)</span>
-                <input type="range" id="cal-eye-center-x" min="-30" max="30" step="0.5">
-                <b id="cal-eye-center-x-v">—</b>
-              </div>
+        <div class="cal-layout">
+          <aside class="cal-stage card">
+            <div class="cal-stage-head">
+              <h2 data-i18n="calibration.preview.title">面部预览</h2>
+              <span class="pill" id="cal-face-state">—</span>
             </div>
-            <div>
-              <div class="slider-row">
-                <span data-i18n="calibration.eye.gain_y">垂直增益</span>
-                <input type="range" id="cal-eye-gain-y" min="0.2" max="3" step="0.05">
-                <b id="cal-eye-gain-y-v">—</b>
+            <div class="cal-viewport" id="cal-viewport">
+              <canvas id="cal-canvas"></canvas>
+              <div class="cal-fallback" id="cal-fallback" hidden>
+                <svg viewBox="0 0 240 300" role="img" aria-label="2D face">
+                  <ellipse class="fb-head" cx="120" cy="132" rx="78" ry="100"/>
+                  <ellipse class="fb-region fb-ear" data-region="earL" cx="42" cy="145" rx="10" ry="21"/>
+                  <ellipse class="fb-region fb-ear" data-region="earR" cx="198" cy="145" rx="10" ry="21"/>
+                  <path class="fb-region" data-region="neck" d="M80 246 L160 246 L177 300 L63 300 Z"/>
+                  <path class="fb-region" data-region="forehead" d="M50 92 C60 56 90 38 120 38 C150 38 180 56 190 92 C170 77 148 70 120 70 C92 70 70 77 50 92 Z"/>
+                  <ellipse class="fb-region" data-region="templeL" cx="48" cy="120" rx="12" ry="24"/>
+                  <ellipse class="fb-region" data-region="templeR" cx="192" cy="120" rx="12" ry="24"/>
+                  <path class="fb-region fb-brow" data-region="browL" d="M71 105 Q88 95 109 103 L107 112 Q90 105 73 114 Z"/>
+                  <path class="fb-region fb-brow" data-region="browR" d="M169 105 Q152 95 131 103 L133 112 Q150 105 167 114 Z"/>
+                  <path class="fb-region fb-eye" data-region="eyelidL" d="M73 125 Q91 114 109 125 Q91 133 73 125 Z"/>
+                  <path class="fb-region fb-eye" data-region="eyelidR" d="M167 125 Q149 114 131 125 Q149 133 167 125 Z"/>
+                  <path class="fb-region fb-nose" data-region="nose" d="M115 112 L125 112 L130 158 Q120 169 110 158 Z"/>
+                  <ellipse class="fb-region" data-region="cheekL" cx="70" cy="170" rx="21" ry="27"/>
+                  <ellipse class="fb-region" data-region="cheekR" cx="170" cy="170" rx="21" ry="27"/>
+                  <path class="fb-region" data-region="jaw" d="M45 148 Q50 214 86 245 Q101 256 120 257 Q139 256 154 245 Q190 214 195 148 Q170 209 120 217 Q70 209 45 148 Z"/>
+                  <ellipse class="fb-region fb-mouth" data-region="mouthInterior" cx="120" cy="194" rx="31" ry="8"/>
+                  <path class="fb-region fb-lip" data-region="upperLip" d="M89 190 Q104 177 120 184 Q136 177 151 190 Q136 188 120 187 Q104 188 89 190 Z"/>
+                  <path class="fb-region fb-lip" data-region="lowerLip" d="M90 197 Q105 211 120 207 Q135 211 150 197 Q136 203 120 203 Q104 203 90 197 Z"/>
+                  <circle class="fb-region fb-lip" data-region="mouthCornerL" cx="89" cy="193" r="6"/>
+                  <circle class="fb-region fb-lip" data-region="mouthCornerR" cx="151" cy="193" r="6"/>
+                  <path class="fb-region" data-region="chin" d="M94 220 Q120 247 146 220 Q140 244 120 251 Q100 244 94 220 Z"/>
+                </svg>
               </div>
-              <div class="slider-row">
-                <span data-i18n="calibration.eye.center_y">垂直中心 (°)</span>
-                <input type="range" id="cal-eye-center-y" min="-30" max="30" step="0.5">
-                <b id="cal-eye-center-y-v">—</b>
-              </div>
+              <div class="cal-stage-empty" id="cal-stage-empty" hidden data-i18n="calibration.preview.empty">3D 预览加载中…</div>
             </div>
-          </div>
-          <button class="btn small" id="cal-eye-capture" data-i18n="calibration.eye.capture">取当前视线为中心</button>
-          <span class="muted mono" id="cal-eye-live">—</span>
-          <p class="hint" data-i18n="calibration.eye.hint">平视前方时点一下「取当前视线为中心」，眼睛就不会总往一边飘。增益调大能让眼动更明显。</p>
-        </article>
+            <div class="cal-presets">
+              <button class="btn tiny" data-view="front" data-i18n="calibration.view.front">正面</button>
+              <button class="btn tiny" data-view="three-quarter" data-i18n="calibration.view.three">45°</button>
+              <button class="btn tiny" data-view="side" data-i18n="calibration.view.side">侧面</button>
+              <button class="btn tiny ghost" id="cal-view-reset" data-i18n="calibration.view.reset">复位</button>
+            </div>
+            <p class="hint" id="cal-face-detail" data-i18n="calibration.preview.hint">拖动旋转，滚轮缩放，双击复位；选中形状会高亮对应部位。</p>
+          </aside>
 
-        <div class="cal-list" id="cal-list"></div>
-        <div class="empty" id="cal-empty" hidden data-i18n="calibration.empty">没有匹配的形状</div>
-        <p class="hint" data-i18n="calibration.hint">
-          拖动 lo/hi 立即生效：lo 对应表情为 0，hi 对应表情为 1。原始值是校准前、输出值是实际发出去的值。
-          改动只在点「保存」后写入档案，未保存时离开页面会提示。
-        </p>
+          <div class="cal-side">
+            <article class="card" style="margin-bottom:14px">
+              <h2 data-i18n="calibration.eye.title">视线</h2>
+              <label class="switch"><input type="checkbox" id="cal-eye-active"> <span data-i18n="calibration.eye.enable">启用视线校准</span></label>
+              <div class="grid-2">
+                <div>
+                  <div class="slider-row">
+                    <span data-i18n="calibration.eye.gain_x">水平增益</span>
+                    <input type="range" id="cal-eye-gain-x" min="0.2" max="3" step="0.05">
+                    <b id="cal-eye-gain-x-v">—</b>
+                  </div>
+                  <div class="slider-row">
+                    <span data-i18n="calibration.eye.center_x">水平中心 (°)</span>
+                    <input type="range" id="cal-eye-center-x" min="-30" max="30" step="0.5">
+                    <b id="cal-eye-center-x-v">—</b>
+                  </div>
+                </div>
+                <div>
+                  <div class="slider-row">
+                    <span data-i18n="calibration.eye.gain_y">垂直增益</span>
+                    <input type="range" id="cal-eye-gain-y" min="0.2" max="3" step="0.05">
+                    <b id="cal-eye-gain-y-v">—</b>
+                  </div>
+                  <div class="slider-row">
+                    <span data-i18n="calibration.eye.center_y">垂直中心 (°)</span>
+                    <input type="range" id="cal-eye-center-y" min="-30" max="30" step="0.5">
+                    <b id="cal-eye-center-y-v">—</b>
+                  </div>
+                </div>
+              </div>
+              <button class="btn small" id="cal-eye-capture" data-i18n="calibration.eye.capture">取当前视线为中心</button>
+              <span class="muted mono" id="cal-eye-live">—</span>
+              <p class="hint" data-i18n="calibration.eye.hint">平视前方时点一下「取当前视线为中心」，眼睛就不会总往一边飘。增益调大能让眼动更明显。</p>
+            </article>
+
+            <div class="cal-list" id="cal-list"></div>
+            <div class="empty" id="cal-empty" hidden data-i18n="calibration.empty">没有匹配的形状</div>
+            <p class="hint" data-i18n="calibration.hint">
+              拖动 lo/hi 立即生效：lo 对应表情为 0，hi 对应表情为 1。原始值是校准前、输出值是实际发出去的值。
+              改动只在点「保存」后写入档案，未保存时离开页面会提示。
+            </p>
+          </div>
+        </div>
       </section>
 
       <!-- 输出 -->
@@ -388,6 +435,7 @@
   </div>
 </div>
 <script src="i18n.js"></script>
+<script src="face.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

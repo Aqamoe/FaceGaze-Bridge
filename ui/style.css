@@ -488,6 +488,111 @@ body {
 .slider-row b { color: var(--fg); font-variant-numeric: tabular-nums; text-align: right; }
 
 /* ---------- 校准 ---------- */
+/* 左侧预览、右侧列表：预览固定高度，列表自己滚动（.main 已有 overflow）。 */
+.cal-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.cal-stage {
+  position: sticky;
+  top: 0;
+  padding: 14px 14px 12px;
+}
+
+.cal-stage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.cal-stage-head h2 { margin: 0; }
+
+.cal-viewport {
+  position: relative;
+  height: 380px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  background: radial-gradient(70% 60% at 50% 38%, #16213d, #0a1021 72%);
+}
+
+#cal-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+
+#cal-canvas.grabbing { cursor: grabbing; }
+
+.cal-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 8px;
+}
+
+.cal-fallback svg { width: 100%; height: 100%; }
+
+.fb-head { fill: #1a2745; stroke: #24365c; }
+.fb-region {
+  fill: rgb(255 255 255 / .04);
+  stroke: rgb(139 154 189 / .30);
+  stroke-width: 1.2;
+  transition: fill .12s, stroke .12s;
+}
+.fb-eye { fill: rgb(233 239 255 / .55); }
+.fb-lip { fill: rgb(178 96 101 / .55); }
+.fb-mouth { fill: #2a0d12; }
+.fb-brow { fill: rgb(50 38 35 / .85); stroke: none; }
+.fb-nose, .fb-ear { fill: rgb(255 255 255 / .05); }
+.fb-region.hl { fill: rgb(59 130 246 / .55); stroke: rgb(147 197 253); stroke-width: 1.6; }
+
+.cal-stage-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  color: var(--dim);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.cal-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.cal-presets .btn { margin-top: 0; }
+.cal-stage .hint { margin: 8px 0 0; font-size: 11.5px; }
+.cal-side { min-width: 0; }
+
+.cal-row.selected {
+  border-color: rgb(59 130 246 / .75);
+  box-shadow: 0 0 0 1px rgb(59 130 246 / .25);
+}
+
+.cal-model-none {
+  margin-left: auto;
+  padding: 0 7px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  color: var(--dim-2);
+  font-size: 10.5px;
+}
+
+.cal-model-region { color: var(--dim-2); font-size: 10.5px; margin-left: 2px; }
+
+@media (max-width: 1120px) {
+  .cal-layout { grid-template-columns: 1fr; }
+  .cal-stage { position: static; }
+  .cal-viewport { height: 320px; }
+}
+
 /* 一行一个形状：左侧名称与实时数值，右侧两条滑杆。行高固定，88 行滚动时不会跳。 */
 .cal-list { display: grid; gap: 6px; }
 
