@@ -132,7 +132,7 @@ left-openness=A,B` 支持“属性 → 有序源列表”；`EyeState` 增加
 `avatar_eye_from_gaze`；CLI 增加 `--eye-left-source / --eye-right-source /
 --gaze-left-source / --gaze-right-source / --avatar-eye-from-gaze`。
 
-验证：188 个单测全绿（默认兼容、A openness + B gaze、左右眼/左右注视分源、
+验证：当前全量 202 个单测全绿（默认兼容、A openness + B gaze、左右眼/左右注视分源、
 单侧过期回退、逐字段来源/时间戳）；`native-sine + native-gaze` 开启
 `--avatar-eye-from-gaze` 后，SHM 中头像眼睛方向与渲染注视一致、openness 仍来自
 sine。UI 首屏未改，逐眼来源先通过 `/api/status` 的 sources 字段和内部模型提供。
