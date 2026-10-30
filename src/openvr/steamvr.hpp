@@ -22,6 +22,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 namespace fgb::steamvr {
 
@@ -57,6 +58,11 @@ const char* state_name(State state) noexcept;
 
 // 从 openvrpaths.vrpath 里取 "runtime" 数组的第一项。纯函数，单测覆盖。
 bool parse_openvrpaths_runtime(std::string_view text, std::string& runtime_dir);
+
+// 从 Steam 的 config/appconfig.json 里取 "manifest_paths"（已登记的 manifest 列表）。
+// 重复安装到新目录后，旧 manifest 仍占着 app_key，要靠这份列表把它找出来摘掉。
+// 纯函数，单测覆盖。
+std::vector<std::string> parse_manifest_paths(std::string_view text);
 
 // 随包 manifest 的内容。binary_path_windows 相对 manifest 所在目录解析。
 std::string build_manifest_json(std::string_view exe_name = "FaceGaze Bridge.exe",

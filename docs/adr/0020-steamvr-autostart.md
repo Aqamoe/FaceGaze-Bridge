@@ -190,7 +190,7 @@ manifest 指向 `FaceGaze Bridge.exe --tray`，理由：
 | API | `VR_InitInternal2(Background)` / `VR_ShutdownInternal` / `VR_GetGenericInterface(IVRApplications_008)`；`AddApplicationManifest`、`SetApplicationAutoLaunch`、`GetApplicationAutoLaunch`、`RemoveApplicationManifest` | 与本文一致；每次操作开一个短会话，读完即关，避免缓存失效的接口指针 |
 | 线程 | `steamvr::Service` 后台线程执行 OpenVR 调用；结果由 `IpcServer::pump()` 广播 | 本文只要求"放引擎里"；这里进一步避免 `VR_Init` 阻塞 120 Hz 主循环 |
 | 状态机 | `unknown/not_installed/not_running/off/on/error` + `reason`（稳定标识，界面翻译）+ `detail`（原始错误） | 比本文多一个 `unknown`（尚未检测）和 `reason` 分层；四态语义不变 |
-| 失败处理 | Add 返回 `AppKeyAlreadyExists` 时读 `BinaryPath_String` 比对当前安装目录；不一致给 `app_key_conflict`，不自动改旧注册 | 本文只说"app_key 冲突"；这里把处置写清楚：先移除旧注册 |
+| 失败处理 | Add 返回 `AppKeyAlreadyExists` 时读 `BinaryPath_String` 比对当前安装目录；不一致时从 `<Steam>/config/appconfig.json` 找出旧目录的 manifest 并 `RemoveApplicationManifest`，再注册当前目录 | 2026-10-31 起自动修复旧注册，不再只报 `app_key_conflict` |
 | 设置页 | 「SteamVR 启动项」卡片：状态 pill、自启动开关、重新检测、移除注册、运行库/清单/启动目标路径、原因文案；三语 | 与本文一致；开关仅在 `off/on` 可用，`not_running` 时禁用并提示先启动 SteamVR |
 | 随包 | `packaging/app.vrmanifest`；CMake 复制到 fgb-cli 同目录，`cmake --install` 装到发布根 | 与本文一致；manifest 的 `arguments` 是 `--tray` |
 | 只读接口 | `/api/steamvr` 返回最近一次快照（动作只走 WS） | 本文没要求，探针/curl 需要 |
@@ -201,10 +201,19 @@ manifest 指向 `FaceGaze Bridge.exe --tray`，理由：
 `on/off` 真实注册、SteamVR 重启后自启动、移除后启动项消失仍需在 SteamVR 运行环境手动验收。
 验收步骤已写进 `docs/03-roadmap.md` M7.2。
 
+**2026-10-31 补（真实 SteamVR 环境验收）**：重复安装到新目录后，SteamVR 仍用
+`app_key` 对应的第一份 manifest，界面只能报 `app_key_conflict`。已实现自动接管：
+「重新检测」/「打开自启动」从 `appconfig.json` 摘掉旧目录 manifest 并登记当前目录；
+`appconfig.json` 成为"是否已注册"的判定依据。本机验证了 refresh 把启动目标改回当前
+目录、移除注册后刷新不会重新注册、重新启用仍指向当前目录。
+
 **已知边界**：
 
-- 运行库路径变化（移动安装目录）后旧 manifest 失效，界面会给出 `app_key_conflict` 或
-  `binary_missing`，用户需先「移除注册」再重新打开开关。
+- 重复安装到新目录后，旧 manifest 仍以同一 `app_key` 注册着（SteamVR 以 app_key 为唯一键）。
+  「重新检测」/「打开自启动」会自动摘掉旧目录清单并登记当前目录；运行中的 vrserver
+  可能缓存旧 app 列表，此时状态原因为 `pending_restart`，下一次启动 SteamVR 即生效。
+- 「移除注册」是否成功以 `appconfig.json` 为准，不用 `IsApplicationInstalled`（后者会被
+  vrserver 的缓存骗到，刷新时会把刚移除的注册又加回来）。
 - 卸载/删除程序不会自动清理 SteamVR 的 manifest；发布说明要求卸载前点「移除注册」。
 - OpenVR 的 `dashboard overlay` 只是自启动机制的载体，FGB 不提供 VR 内面板。
 

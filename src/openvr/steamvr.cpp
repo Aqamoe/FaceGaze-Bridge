@@ -329,6 +329,35 @@ bool parse_openvrpaths_runtime(std::string_view text, std::string& runtime_dir) 
     return false;
 }
 
+std::vector<std::string> parse_manifest_paths(std::string_view text) {
+    std::vector<std::string> paths;
+    std::size_t pos = text.find("\"manifest_paths\"");
+    if (pos == std::string_view::npos) {
+        return paths;
+    }
+    pos = text.find('[', pos);
+    if (pos == std::string_view::npos) {
+        return paths;
+    }
+    ++pos;
+    for (;;) {
+        skip_space(text, pos);
+        if (pos >= text.size() || text[pos] == ']') {
+            break;
+        }
+        if (text[pos] == ',') {
+            ++pos;
+            continue;
+        }
+        std::string value;
+        if (!parse_json_string(text, pos, value)) {
+            break;
+        }
+        paths.push_back(std::move(value));
+    }
+    return paths;
+}
+
 std::string build_manifest_json(std::string_view exe_name, std::string_view arguments,
                                 std::string_view app_key) {
     std::string out;
@@ -412,6 +441,144 @@ std::filesystem::path find_runtime_dir() {
     return {};
 #endif
 }
+
+namespace {
+
+#ifdef _WIN32
+// Steam 根目录下的 config：appconfig.json 记录所有登记过的 manifest 路径。
+std::filesystem::path steam_config_dir() {
+    std::error_code ec;
+    const auto steam = read_registry_steam_path();
+    if (!steam.empty() && std::filesystem::is_directory(steam / "config", ec)) {
+        return steam / "config";
+    }
+    // 注册表没写时从运行库反推：<Steam>/steamapps/common/SteamVR
+    const auto runtime = find_runtime_dir();
+    if (!runtime.empty()) {
+        const auto root = runtime.parent_path().parent_path().parent_path();
+        if (std::filesystem::is_directory(root / "config", ec)) {
+            return root / "config";
+        }
+    }
+    return {};
+}
+
+bool manifest_mentions_app_key(const std::filesystem::path& manifest) {
+    std::ifstream input{manifest, std::ios::binary};
+    if (!input) {
+        return false;
+    }
+    const std::string text{std::istreambuf_iterator<char>(input),
+                           std::istreambuf_iterator<char>()};
+    return text.find(kAppKey) != std::string::npos;
+}
+
+std::vector<std::string> registered_manifest_paths() {
+    const auto config = steam_config_dir();
+    if (config.empty()) {
+        return {};
+    }
+    std::ifstream input{config / "appconfig.json", std::ios::binary};
+    if (!input) {
+        return {};
+    }
+    const std::string text{std::istreambuf_iterator<char>(input),
+                           std::istreambuf_iterator<char>()};
+    return parse_manifest_paths(text);
+}
+
+bool listed_manifest(const std::vector<std::string>& paths, const std::string& manifest_path) {
+    return std::any_of(paths.begin(), paths.end(), [&manifest_path](const std::string& path) {
+        return same_path(path, manifest_path);
+    });
+}
+
+// appconfig.json 里还有别的目录登记着同一个 app_key（旧安装）。
+bool foreign_manifest(const std::vector<std::string>& paths, const std::string& keep_manifest) {
+    for (const std::string& path : paths) {
+        if (same_path(path, keep_manifest)) {
+            continue;
+        }
+        std::error_code ec;
+        const auto manifest = from_utf8(path);
+        if (std::filesystem::exists(manifest, ec) && manifest_mentions_app_key(manifest)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool current_manifest_listed(const std::string& manifest_path) {
+    return listed_manifest(registered_manifest_paths(), manifest_path);
+}
+
+bool foreign_manifest_listed(const std::string& keep_manifest) {
+    return foreign_manifest(registered_manifest_paths(), keep_manifest);
+}
+
+// SteamVR 以 app_key 为唯一键：旧安装目录的 manifest 还登记着时，
+// AddApplicationManifest 只会回 AppKeyAlreadyExists，自启动永远指向旧 exe。
+// 这里把 keep_manifest 之外、内容里仍写着同一个 app_key 的 manifest 摘掉。
+int drop_stale_manifests(Session& session, const std::string& keep_manifest) {
+    int dropped = 0;
+    for (const std::string& path : registered_manifest_paths()) {
+        if (same_path(path, keep_manifest)) {
+            continue;
+        }
+        std::error_code ec;
+        const auto manifest = from_utf8(path);
+        if (!std::filesystem::exists(manifest, ec) || !manifest_mentions_app_key(manifest)) {
+            continue; // 文件不在就无法确认归属，别动别人的登记
+        }
+        const EVRApplicationError error = session.apps->RemoveApplicationManifest(path.c_str());
+        if (error == VRApplicationError_None) {
+            ++dropped;
+            FGB_INFO(kTag, "已摘除旧安装目录的 SteamVR manifest：%s", path.c_str());
+        } else {
+            FGB_WARN(kTag, "摘除旧 manifest 失败（%d）：%s", static_cast<int>(error),
+                     path.c_str());
+        }
+    }
+    return dropped;
+}
+
+std::string registered_binary(IVRApplications* apps) {
+    std::array<char, 1024> actual{};
+    EVRApplicationError error = VRApplicationError_None;
+    const std::uint32_t length = apps->GetApplicationPropertyString(
+        kAppKey, VRApplicationProperty_BinaryPath_String, actual.data(),
+        static_cast<std::uint32_t>(actual.size()), &error);
+    return error == VRApplicationError_None && length > 0 ? std::string{actual.data()}
+                                                          : std::string{};
+}
+
+// 让 app_key 指向当前目录。返回 true 表示"下一次启动 SteamVR 会拉起当前 exe"；
+// pending_restart 表示运行中的 vrserver 还缓存着旧 app 列表，本会话读不到新路径。
+bool ensure_target_is_current(Session& session, const std::string& manifest,
+                              const std::string& expected, std::string& detail,
+                              bool& pending_restart) {
+    pending_restart = false;
+    if (same_path(registered_binary(session.apps), expected)) {
+        return true;
+    }
+    drop_stale_manifests(session, manifest);
+    session.apps->AddApplicationManifest(manifest.c_str(), false);
+    if (same_path(registered_binary(session.apps), expected)) {
+        return true;
+    }
+    // vrserver 的 app 列表在启动时读取、运行中不重读旧引用的路径；磁盘上只剩
+    // 当前 manifest 时，下次启动 SteamVR 自然会用新路径。
+    if (current_manifest_listed(manifest) && !foreign_manifest_listed(manifest)) {
+        pending_restart = true;
+        return true;
+    }
+    const std::string seen = registered_binary(session.apps);
+    detail = seen.empty() ? expected : seen;
+    return false;
+}
+#endif
+
+} // namespace
 
 Manager::Manager(std::filesystem::path exe_dir) : exe_dir_(std::move(exe_dir)) {
     if (exe_dir_.empty()) {
@@ -516,20 +683,53 @@ Status Manager::probe(std::string_view action) {
         return status;
     }
 
+    const std::string expected_binary = utf8(exe_dir_ / "FaceGaze Bridge.exe");
+    const std::vector<std::string> manifest_paths = registered_manifest_paths();
+    const bool have_config = !manifest_paths.empty();
+
+    // 以磁盘上的 appconfig.json 为准：运行中的 vrserver 可能还缓存着刚移除的旧 app，
+    // 只看 IsApplicationInstalled 会把「移除注册」当成没生效、甚至把注册加回来。
+    if (have_config && !listed_manifest(manifest_paths, status.manifest_path) &&
+        !foreign_manifest(manifest_paths, status.manifest_path)) {
+        status.registered  = false;
+        status.autolaunch  = false;
+        status.binary_path = expected_binary;
+        status.state       = State::Off;
+        status.reason      = "ok";
+        status.ok          = true;
+        return status;
+    }
+
     status.registered = session.apps->IsApplicationInstalled(kAppKey);
     status.autolaunch = status.registered && session.apps->GetApplicationAutoLaunch(kAppKey);
 
-    std::array<char, 1024> actual{};
-    EVRApplicationError property_error = VRApplicationError_None;
-    const std::uint32_t length = session.apps->GetApplicationPropertyString(
-        kAppKey, VRApplicationProperty_BinaryPath_String, actual.data(),
-        static_cast<std::uint32_t>(actual.size()), &property_error);
-    if (property_error == VRApplicationError_None && length > 0) {
-        status.binary_path = actual.data();
+    const std::string actual_binary = registered_binary(session.apps);
+    status.binary_path = actual_binary.empty() ? expected_binary : actual_binary;
+
+    // 重新安装到新目录后旧 manifest 仍占着 app_key：检测（refresh）和开启自启动时
+    // 顺手摘掉它并重新登记当前目录，否则 SteamVR 永远拉起第一次注册的那个 exe。
+    bool pending_restart = false;
+    const bool may_repair = action != "remove" && action != "disable";
+    if (may_repair && !actual_binary.empty() && !same_path(actual_binary, expected_binary)) {
+        std::string detail;
+        if (!ensure_target_is_current(session, status.manifest_path, expected_binary, detail,
+                                      pending_restart)) {
+            status.state  = State::Error;
+            status.reason = "app_key_conflict";
+            status.detail = detail;
+            status.ok     = false;
+            return status;
+        }
+        status.binary_path = expected_binary;
+        status.registered  = session.apps->IsApplicationInstalled(kAppKey);
+        status.autolaunch  = status.registered &&
+                             session.apps->GetApplicationAutoLaunch(kAppKey);
+        FGB_INFO(kTag, "SteamVR 自启动目标已指向当前目录：%s%s", expected_binary.c_str(),
+                 pending_restart ? "（重启 SteamVR 后生效）" : "");
     }
 
     status.state  = status.autolaunch ? State::On : State::Off;
-    status.reason = "ok";
+    status.reason = pending_restart ? "pending_restart" : "ok";
     status.ok     = true;
 #endif
     return status;
@@ -553,22 +753,21 @@ Status Manager::set_autolaunch(bool enabled) {
     // probe() 在已注册时会把 status.binary_path 换成 SteamVR 里记录的实际路径；
     // 冲突判断必须用当前安装目录的期望路径，不能拿它自己比自己。
     const std::string expected_binary = utf8(exe_dir_ / "FaceGaze Bridge.exe");
-    const EVRApplicationError add = session.apps->AddApplicationManifest(manifest.c_str(), false);
-    if (add == VRApplicationError_AppKeyAlreadyExists) {
-        std::array<char, 1024> actual{};
-        EVRApplicationError property_error = VRApplicationError_None;
-        const std::uint32_t length = session.apps->GetApplicationPropertyString(
-            kAppKey, VRApplicationProperty_BinaryPath_String, actual.data(),
-            static_cast<std::uint32_t>(actual.size()), &property_error);
-        if (property_error != VRApplicationError_None || length == 0 ||
-            !same_path(actual.data(), expected_binary)) {
+    bool pending_restart = status.reason == "pending_restart";
+    EVRApplicationError add = session.apps->AddApplicationManifest(manifest.c_str(), false);
+    if (add == VRApplicationError_AppKeyAlreadyExists && enabled) {
+        std::string detail;
+        bool pending = false;
+        if (!ensure_target_is_current(session, manifest, expected_binary, detail, pending)) {
             status.state  = State::Error;
             status.reason = "app_key_conflict";
-            status.detail = length > 0 ? actual.data() : "无法读取现有注册的启动路径";
+            status.detail = detail;
             status.ok     = false;
             return status;
         }
-    } else if (add != VRApplicationError_None) {
+        pending_restart = pending_restart || pending;
+    } else if (add != VRApplicationError_None &&
+               add != VRApplicationError_AppKeyAlreadyExists) {
         status.state  = State::Error;
         status.reason = "manifest_add_failed";
         status.detail = "AddApplicationManifest: " + std::to_string(static_cast<int>(add));
@@ -595,14 +794,14 @@ Status Manager::set_autolaunch(bool enabled) {
         return status;
     }
 
-    status.registered = session.apps->IsApplicationInstalled(kAppKey);
+    status.registered = current_manifest_listed(manifest);
     status.autolaunch = readback;
     status.state      = readback ? State::On : State::Off;
-    status.reason     = "ok";
+    status.reason     = pending_restart ? "pending_restart" : "ok";
     status.ok         = status.registered;
     if (!status.ok) {
         status.reason = "manifest_not_registered";
-        status.detail = "AddApplicationManifest 返回成功，但 IsApplicationInstalled 仍为 false";
+        status.detail = "AddApplicationManifest 返回成功，但 manifest 没有出现在 appconfig.json 里";
     }
 #endif
     return status;
@@ -633,7 +832,13 @@ Status Manager::remove_registration() {
         return status;
     }
 
-    status.registered = session.apps->IsApplicationInstalled(kAppKey);
+    // 旧安装目录留下的 manifest 也可能占着同一个 app_key：一并摘掉，
+    // 「移除注册」才是真的移除干净。
+    drop_stale_manifests(session, manifest);
+
+    // 运行中的 vrserver 可能还缓存着刚移除的 app，以 appconfig.json 为准：
+    // 磁盘上没有我们的清单了，下一次启动 SteamVR 就不会再拉起 FGB。
+    status.registered = current_manifest_listed(manifest) || foreign_manifest_listed(manifest);
     status.autolaunch = false;
     status.state      = status.registered ? State::Error : State::Off;
     status.reason     = status.registered ? "remove_failed" : "ok";
