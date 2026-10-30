@@ -1,6 +1,7 @@
 # ADR-0033 · 2D 注视点坐标约定
 
-- 状态：**已实施**（2026-10-31）
+- 状态：**已实施**（2026-10-31）。**后续**：[ADR-0034](0034-native-module-v2-only.md)
+  把位名改为 `FGB_ATTR_LEFT/RIGHT_POINT` 与 `FGB_ATTR_POINT_VIEWPORT`，坐标约定本身不变
 - 日期：2026-10-31
 - 影响：`sdk/fgb_module_api.h`、`sdk/fgb_shared_frame.h`、`sdk/fgb_udp_frame.h`、
   `src/sources/native_gaze_parse.hpp`、`ui/`（状态页 2D 框）、`docs/05`、`docs/08`

@@ -3,10 +3,10 @@
   "ModuleName": "Native Openness Sample",
   "AuthorName": "FaceGaze Bridge",
   "Version": "1.0.0",
-  "ModuleDescription": "ABI v2 attribute module that only provides openness/pupil (no gaze).",
+  "ModuleDescription": "Attribute module that only provides openness/pupil (no gaze).",
   "ModulePageUrl": "https://github.com/Aqamoe/FaceGaze-Bridge",
   "DllFileName": "fgb-sample-openness.dll",
-  "Capabilities": ["eye_attributes"],
-  "RoleHint": "eyes",
-  "MinHostVersion": "1.0.2"
+  "AbiVersion": 2,
+  "Capabilities": ["eyes"],
+  "RoleHint": "eyes"
 }

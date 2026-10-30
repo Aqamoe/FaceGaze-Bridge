@@ -39,6 +39,9 @@
   静态文案用 `data-i18n` 属性。引擎日志保持中文，不要翻译。
 - **原生模块必须带 `fgb-native.json`**（字段同 module.json），模块仓不加载 DLL 就列出元数据；
   运行态统一走 `ISource::module_status()`，不要按具体 Source 类型分支。
+- **原生模块只有一套 ABI**（`sdk/fgb_module_api.h`，导出 `fgb_module_query_v2`，属性帧）。
+  v1 已于 2026-10-31 移除（[ADR-0034](docs/adr/0034-native-module-v2-only.md)）：
+  不要再加"第二套并行 ABI/兼容分支"，扩展只能在结构末尾追加字段并升 `abi_version`。
 - **模块只从 `%LOCALAPPDATA%\FaceGazeBridge\modules` 加载**；VRCFT 的 `CustomLibs` 只是导入候选，
   任何"直接扫别人的目录然后 LoadLibrary"的写法都不要加（[ADR-0017](docs/adr/0017-module-store-library-runtime.md)）。
 - **新增输入源必须声明 `frame.channels`**（`channel::kExpression / kEyes / kGaze / kHead`）。

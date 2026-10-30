@@ -1,7 +1,8 @@
 // 原生 C ABI 模块（进程内加载）。
 //
-// v1 的线程模型：宿主在引擎线程按 tick 调用 update()，模块在 update/initialize 里
-// 同步提交帧；不做跨线程保护。需要自驱线程的模块留到跨进程 ABI v2。
+// 唯一 ABI：v2 属性帧（见 sdk/fgb_module_api.h 与 docs/adr/0034）。线程模型：
+// 宿主在引擎线程按 tick 调用 update()，模块在 update/initialize 里同步提交帧；
+// 不做跨线程保护。
 #pragma once
 
 #include "fgb_module_api.h"
@@ -42,36 +43,36 @@ public:
 private:
     static void host_log(void* ctx, int level, const char* message);
     static void host_report(void* ctx, int state, const char* detail);
-    static FgbFrameSlotV1* host_acquire(void* ctx);
-    static void host_commit(void* ctx, FgbFrameSlotV1* slot, uint64_t capture_ts_ns);
+    static FgbFrameSlot* host_acquire(void* ctx);
+    static void host_commit(void* ctx, FgbFrameSlot* slot, uint64_t capture_ts_ns);
     static std::int32_t host_shape_index(void* ctx, const char* name);
-    static FgbFrameSlotV2* host_acquire_v2(void* ctx);
-    static void host_commit_v2(void* ctx, FgbFrameSlotV2* slot, uint64_t capture_ts_ns);
 
-    void apply_slot(const FgbFrameSlotV1& slot, std::uint64_t capture_ts_ns);
-    void apply_slot_v2(const FgbFrameSlotV2& slot, std::uint64_t capture_ts_ns);
+    void apply_slot(const FgbFrameSlot& slot, std::uint64_t capture_ts_ns);
+    // 模块写了自己没声明的能力位时告警一次（不改数据）。
+    void check_capabilities(std::uint64_t attributes);
+    // 注视数据的两个"看着不像真的"指纹，各告警一次（不改数据）。
+    void check_gaze_diagnostics(const FaceFrame& frame);
+    void warn_once(bool suspicious, int& frames, bool& warned, const std::string& text);
 
     NativeSourceConfig config_;
     std::string module_dir_utf8_;
+    std::string host_version_utf8_;
 
-    void* library_            = nullptr; // HMODULE
-    const FgbModuleV1* api_   = nullptr;
-    const FgbModuleV2* api_v2_ = nullptr;
-    bool v2_                  = false;
-    void* self_               = nullptr;
-    FgbHostServicesV1 services_{};
-    FgbHostServicesV2 services_v2_{};
-    FgbFrameSlotV1 slot_{};
-    FgbFrameSlotV2 slot_v2_{};
+    void* library_        = nullptr; // HMODULE
+    const FgbModule* api_ = nullptr;
+    void* self_           = nullptr;
+    FgbHostServices services_{};
+    FgbFrameSlot slot_{};
     FaceFrame pending_{};
     bool has_frame_   = false;
     bool initialized_ = false;
     std::string last_error_;
     // 逐帧诊断的连续帧计数与一次性告警（见 native_gaze_parse.hpp）
-    int placeholder_frames_  = 0; // 伪造 -Z 方向的指纹
-    bool placeholder_warned_ = false;
-    int range_frames_        = 0; // 2D 点持续越界（ADR-0033）
-    bool range_warned_       = false;
+    int placeholder_frames_   = 0; // 伪造 -Z 方向的指纹
+    bool placeholder_warned_  = false;
+    int range_frames_         = 0; // 2D 点持续越界（ADR-0033）
+    bool range_warned_        = false;
+    bool capability_warned_   = false; // 属性与能力位不一致
 
     std::atomic<std::uint64_t> frames_{0};
     std::atomic<bool> alive_{false};

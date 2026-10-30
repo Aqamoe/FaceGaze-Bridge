@@ -1,25 +1,22 @@
-# 原生模块开发指南（C ABI v1）
+# 原生模块开发指南（C ABI v2）
 
 面向想给 FaceGaze Bridge（下称 FGB）写输入模块的开发者。读完这份文档，你应该能：
 
 - 用 C/C++ 编译一个 DLL
-- 通过 `fgb_module_query` 暴露身份与回调
-- 在 `update()` 里提交表情 / 眼追 / 独立注视 / 头姿
+- 通过 `fgb_module_query_v2` 暴露身份与回调
+- 在 `update()` 里按属性提交表情 / 眼睛 / 注视 / 头姿
 - 打包成 `.zip`，在 FGB 的「模块库 → 原生模块」或「模块」页安装并选中
 
-参考实现：[`samples/native-sine`](../samples/native-sine)（完整通道）、
+参考实现：[`samples/native-sine`](../samples/native-sine)（全通道：表情 + 眼睛 + 头姿）、
 [`samples/native-face`](../samples/native-face)（仅表情）、
-[`samples/native-gaze`](../samples/native-gaze)（仅独立注视）、
-[`samples/native-openness`](../samples/native-openness)（ABI v2，仅 openness/pupil）；
+[`samples/native-gaze`](../samples/native-gaze)（仅独立注视，含 2D-only 模式）、
+[`samples/native-openness`](../samples/native-openness)（只给睁眼度/瞳孔）。
 都不需要硬件。头文件：[`sdk/fgb_module_api.h`](../sdk/fgb_module_api.h)。
 
-> **能力粒度（先读这一段）**
-> `FGB_CAP_EYE` 是**整块原子能力**：声明了它，就必须同时给出 gaze、openness 和 pupil。
-> 只提供注视点、不提供睁眼度的模块（例如 PICO 互联的独立眼动链路）**不要**声明
-> `EYE`，否则头像会因为 openness 缺失而闭眼；这类模块应声明 `FGB_CAP_GAZE` 并填
-> `FgbGazeV1`。`EYE` 与 `GAZE` 可以同时声明。v1.1 已经支持多模块按角色组合
-> （面捕 / 眼睛 / 注视 / 头姿），见 §11；属性级组合（A 的 openness + B 的 gaze、
-> 左右眼分源）仍是 v2 方向。
+> **ABI v1 已移除**（[ADR-0034](adr/0034-native-module-v2-only.md)）。
+> `FgbFrameSlotV1` / `FgbEyeV1` / `FgbGazeV1` / `fgb_module_query` / `FGB_CAP_EYE` /
+> `FGB_GAZE_*` 都不再存在。用旧头编译的 DLL 会加载失败并提示重新编译。
+> 迁移对照见 §12。
 
 ---
 
@@ -38,7 +35,7 @@ my-module/
   （可选）其它依赖 DLL / config.ini
 ```
 
-`fgb-native.json` 与 VRCFT 的 `module.json` 字段相同：
+`fgb-native.json` 与 VRCFT 的 `module.json` 字段相同，另加几个可选字段：
 
 ```json
 {
@@ -48,36 +45,53 @@ my-module/
   "Version": "1.0.0",
   "ModuleDescription": "Face tracking for ...",
   "ModulePageUrl": "https://github.com/you/my-module",
-  "DllFileName": "MyModule.dll"
+  "DllFileName": "MyModule.dll",
+
+  "AbiVersion": 2,
+  "Capabilities": ["expression", "eyes"],
+  "RoleHint": "expression",
+  "MinHostVersion": "1.1.0"
 }
 ```
 
-`ModuleId` 建议用反向域名或 GUID，安装后模块仓目录就是它。
-`DllFileName` 必须与实际 DLL 文件名一致。
+| 字段 | 必需 | 说明 |
+|---|---|---|
+| `ModuleId` | 是 | 反向域名或 GUID；安装后模块仓目录就是它 |
+| `DllFileName` | 是 | 必须与实际 DLL 文件名一致 |
+| `AbiVersion` | 建议 | 只接受 `2`。写 1 或更低的模块在列表里直接标成不兼容 |
+| `Capabilities` | 建议 | `expression` / `eyes` / `gaze` / `head`；运行时以模块自报为准 |
+| `RoleHint` | 可选 | 界面默认建议的角色，不改变实际加载 |
+| `MinHostVersion` | 可选 | 高于当前宿主版本时标记为不兼容 |
+
+宿主只在加载前用清单做列表/兼容性提示；加载后一律以 `fgb_module_query_v2`
+返回的 `capabilities` 为准，两者不一致会告警。
 
 ## 3. ABI 生命周期
 
 宿主只查找一个导出符号：
 
 ```c
-const FgbModuleV1* fgb_module_query(uint32_t host_abi_version);
+const FgbModule* fgb_module_query_v2(uint32_t host_abi_version);
 ```
 
 时序：
 
 ```
 LoadLibrary
-  → fgb_module_query(FGB_MODULE_ABI_V1)      // 版本不匹配返回 NULL
+  → fgb_module_query_v2(FGB_MODULE_ABI_V2)   // 版本不匹配返回 NULL
   → initialize(&self, host, params)          // 返回 1 成功
-  → update(self)                              // 引擎线程按 tick 调用
+  → update(self)                             // 引擎线程按 tick 调用
   → update(self) ...
   → teardown(self)
 FreeLibrary
 ```
 
-**线程模型（v1）**：`update` 在引擎线程同步调用；`commit` 只能在 `initialize` / `update`
-的调用栈里执行。不要在模块自己起的线程里写帧（v1 不做跨线程保护）。
+**线程模型**：`update` 在引擎线程同步调用；`commit` 只能在 `initialize` / `update`
+的调用栈里执行。不要在模块自己起的线程里写帧（ABI 不做跨线程保护）。
 如果模块需要收包/读设备，可以在内部起线程，但提交帧必须回到 `update` 里完成。
+
+模块崩溃会带走引擎——需要崩溃隔离时把实例设成跨进程宿主（§11），
+那种模式下模块仍然只写宿主分配的帧槽，代码不用改。
 
 ## 4. 最小实现
 
@@ -86,26 +100,28 @@ FreeLibrary
 #include <cstring>
 
 struct Instance {
-    const FgbHostServicesV1* host;
+    const FgbHostServices* host;
     int32_t jaw_open;
 };
 
-static int initialize(void** out, const FgbHostServicesV1* host, const FgbInitParamsV1*) {
-    auto* self = new Instance();
-    self->host = host;
-    self->jaw_open = host->shape_index(host->ctx, "JawOpen");
-    *out = self;
+static int initialize(void** out, const FgbHostServices* host, const FgbInitParams* params) {
+    auto* self      = new Instance();
+    self->host      = host;
+    self->jaw_open  = host->shape_index(host->ctx, "JawOpen");
+    *out            = self;
+    (void)params;
     return 1;
 }
 
 static void update(void* opaque) {
     auto* self = static_cast<Instance*>(opaque);
-    FgbFrameSlotV1* slot = self->host->acquire_frame_slot(self->host->ctx);
+    FgbFrameSlot* slot = self->host->acquire_frame_slot(self->host->ctx);
     if (slot == nullptr) {
         return;
     }
+    slot->attributes = FGB_ATTR_EXPRESSION;
     if (self->jaw_open >= 0) {
-        slot->shapes[self->jaw_open] = 0.5f;      // 0..1
+        slot->shapes[self->jaw_open]      = 0.5f;   // 0..1
         slot->shape_valid[self->jaw_open] = 1;
     }
     self->host->commit_frame_slot(self->host->ctx, slot, 0);
@@ -114,12 +130,12 @@ static void update(void* opaque) {
 static void teardown(void* opaque) { delete static_cast<Instance*>(opaque); }
 
 extern "C" __declspec(dllexport)
-const FgbModuleV1* fgb_module_query(uint32_t host_abi_version) {
-    if (host_abi_version != FGB_MODULE_ABI_V1) {
+const FgbModule* fgb_module_query_v2(uint32_t host_abi_version) {
+    if (host_abi_version != FGB_MODULE_ABI_V2) {
         return nullptr;
     }
-    static const FgbModuleV1 api = {
-        sizeof(FgbModuleV1), FGB_MODULE_ABI_V1,
+    static const FgbModule api = {
+        sizeof(FgbModule), FGB_MODULE_ABI_V2,
         "com.example.mydevice", "My Device", FGB_CAP_EXPRESSION,
         &initialize, &update, &teardown,
     };
@@ -129,27 +145,120 @@ const FgbModuleV1* fgb_module_query(uint32_t host_abi_version) {
 
 关键点：
 
-- `capabilities` 声明你能提供哪些通道：`FGB_CAP_EXPRESSION / FGB_CAP_EYE /
-  FGB_CAP_GAZE / FGB_CAP_HEAD`；ABI v2 属性模块用 `FGB_CAP_EYE_ATTRIBUTES`。
-  只声明真正有数据的通道；合并层只认声明。
-- `FGB_CAP_EYE` 是 v1 的整眼能力（gaze + openness + pupil）。**只给注视点**的模块不能借用它，
-  应声明 `FGB_CAP_GAZE` 并写 `slot->gaze`（见 §11.2）。
-- 只给 openness/pupil、或只给单眼数据的模块应使用 ABI v2 的
-  `FGB_CAP_EYE_ATTRIBUTES` + `FgbFrameSlotV2`（见 §11.5）。
-- 眼追填 `slot->left_eye/right_eye`；独立注视填 `slot->gaze`；头姿填
-  `has_head_pose/head_rotation/head_position`。
+- **`attributes` 是本帧的"数据声明"**。只置你真的填了的属性位；没置的字段宿主不会读，
+  0 也不会被当成"闭眼""看正前方"。
+- **能力位决定这一路进哪个通道**（见 §5 的表）。写了属性却没声明能力位时宿主会告警一次，
+  数据仍被采用，但界面/角色选择看不到这一路。
 - 形状用 `host->shape_index(ctx, "JawOpen")` 按名字查下标，**不要硬编码 88 项顺序**。
   未知名字返回 `-1`，跳过即可。
 - 每帧只填实际有效的形状，并把 `shape_valid[i]` 置 1；不填的保持 0。
-- 眼追填 `slot->left_eye/right_eye` 的 `valid/openness/gaze_dir`（-Z 为前，右手系），
-  头姿填 `has_head_pose/head_rotation/head_position`。
+- `initialize` 返回 0 会显示在模块卡片上；`report_status(ERROR, ...)` 的文本也会。
+- `params->host_version` 是宿主版本（0 = 旧宿主没给），只用于日志/适配提示。
 
-完整示例见 [`samples/native-sine/native_sine.cpp`](../samples/native-sine/native_sine.cpp)，
-它还演示了眼追、头姿、日志和状态上报。
+## 5. 能力位与属性位
 
-## 5. 宿主服务
+能力位（`FgbModule::capabilities`，也写进清单的 `Capabilities`）：
 
-`FgbHostServicesV1` 提供：
+| 能力位 | 清单字符串 | 含义 | 进入的通道 |
+|---|---|---|---|
+| `FGB_CAP_EXPRESSION` | `expression` | 88 个 Unified Expressions 形状 | Expression |
+| `FGB_CAP_EYES` | `eyes` | 逐眼属性：openness / pupil / 方向 / 点，可以是任意子集 | Eyes（头像与渲染回退） |
+| `FGB_CAP_GAZE` | `gaze` | 独立注视：逐眼/合并方向 + 可选 2D 点 | Gaze（渲染/foveation） |
+| `FGB_CAP_HEAD` | `head` | 头姿 | Head |
+
+属性位（`FgbFrameSlot::attributes`）：
+
+| 属性 | 说明 |
+|---|---|
+| `FGB_ATTR_EXPRESSION` | 88 形状 |
+| `FGB_ATTR_LEFT/RIGHT_OPENNESS` | 睁眼度 |
+| `FGB_ATTR_LEFT/RIGHT_PUPIL` | 瞳孔 |
+| `FGB_ATTR_LEFT/RIGHT_GAZE` | 逐眼方向（头像眼睛方向） |
+| `FGB_ATTR_COMBINED_GAZE` | 合并方向（渲染注视） |
+| `FGB_ATTR_LEFT/RIGHT_POINT` | 逐眼 2D 注视点 |
+| `FGB_ATTR_VERGENCE` | 聚散距离（米） |
+| `FGB_ATTR_HEAD` | 头姿 |
+| `FGB_ATTR_POINT_VIEWPORT` | 帧级：本帧 2D 点已标定到该眼显示视口（§6.2） |
+
+> **眼睛拆开给是合法的**。只给 openness（PICO 互联那类独立眼动链路）就声明
+> `EYES` 并只置 `FGB_ATTR_*_OPENNESS`，不会驱动渲染注视；只给注视点就声明 `GAZE`，
+> 不会碰头像的睁眼度。这正是 v2 相对 v1 的核心差别（v1 的 `EYE` 要求整眼原子）。
+
+## 6. 眼睛与注视怎么填
+
+### 6.1 逐眼属性
+
+```c
+slot->attributes |= FGB_ATTR_LEFT_OPENNESS | FGB_ATTR_RIGHT_OPENNESS |
+                    FGB_ATTR_LEFT_GAZE | FGB_ATTR_RIGHT_GAZE;
+slot->left_eye.openness          = 0.7f;      /* 0 闭眼，1 完全睁开 */
+slot->left_eye.openness_confidence = 0.9f;
+slot->left_eye.gaze_dir[0]     = dx;          /* HMD 局部单位向量，-Z 前 */
+slot->left_eye.gaze_dir[1]     = dy;
+slot->left_eye.gaze_dir[2]     = dz;
+slot->left_eye.gaze_confidence = 0.9f;
+slot->left_eye.openness_ts_ns  = device_ts_ns; /* 0 = 用帧的 capture_ts_ns */
+```
+
+- 方向会被宿主归一化；全零/NaN 退回 `-Z`，但有效性仍按你置的属性位走，
+  所以**不要把"还没算出来"写成方向属性**。
+- 逐眼属性可以来自不同时刻：openness/pupil/gaze 各有自己的时间戳。
+
+### 6.2 2D 注视点（ADR-0033）
+
+坐标约定：**该眼"最终看到的那块画面"的归一化坐标**，`x/y ∈ [0,1]`，原点左上，
+`+x` 向右、`+y` 向下，畸变前，逐眼独立（不是物理面板，也不是眼动相机图像）。
+
+```c
+slot->attributes |= FGB_ATTR_LEFT_POINT | FGB_ATTR_RIGHT_POINT | FGB_ATTR_POINT_VIEWPORT;
+slot->left_eye.gaze_point_2d[0]  = u;   /* 该眼视口归一化 */
+slot->left_eye.gaze_point_2d[1]  = v;
+slot->right_eye.gaze_point_2d[0] = u_r;
+slot->right_eye.gaze_point_2d[1] = v_r;
+```
+
+| 你有的数据 | 该置的属性 | 宿主给出的结果 |
+|---|---|---|
+| 逐眼方向 | `LEFT/RIGHT_GAZE`（`COMBINED_GAZE` 可选，缺了由左右眼推） | 渲染注视 `valid=true`，逐眼方向/角度、注视/扫视判定可用 |
+| 逐眼 2D 点，**已标定到该眼视口** | `LEFT/RIGHT_POINT \| POINT_VIEWPORT` | `valid=false`（不编方向）；点可用，`point_space="viewport"`，能用于 foveation |
+| 逐眼 2D 点，**只有原始坐标** | 只置 `LEFT/RIGHT_POINT` | `valid=false`；点可用但 `point_space="source"`，只能展示/看趋势 |
+| 方向 + 点 | 上面的组合 | 方向与点都可用 |
+
+- **映射由模块负责**，宿主不做换算：
+
+  ```c
+  u = px / viewport_w;  v = py / viewport_h;             /* 像素 → 视口归一化 */
+  u = (x_ndc + 1.0f) * 0.5f;  v = (1.0f - y_ndc) * 0.5f; /* NDC → 视口归一化 */
+  ```
+
+- 越界（看向画外、标定误差）不是错误，宿主**保留原值不裁剪**，消费端自己 clamp；
+- `NaN`/`Inf` 会把该眼的点标为无效（另一只眼不受影响）；
+- 声明了 `POINT_VIEWPORT` 却连续 30 帧明显越界（单轴超出 `[-0.25,1.25]`）时宿主告警一次。
+
+**两条会被宿主点名的一次性告警**（只记日志，不改数据）：
+
+| 指纹 | 含义 |
+|---|---|
+| 置了方向属性、方向恰好是 `(0,0,-1)`、同时有点 | 模块没有方向模型却伪装了方向；应只置点位属性，否则 `fixation` 永远成立 |
+| 置了 `POINT_VIEWPORT` 却持续越界 | 标定或声明错了；没有标定就只置 `LEFT/RIGHT_POINT` |
+
+### 6.3 头姿与聚散
+
+```c
+slot->attributes |= FGB_ATTR_HEAD;
+slot->head_rotation[0] = qx;  /* x,y,z,w，HMD 局部 */
+slot->head_rotation[1] = qy;
+slot->head_rotation[2] = qz;
+slot->head_rotation[3] = qw;
+slot->head_position[0] = px;  /* 米，HMD 局部 */
+```
+
+聚散（`FGB_ATTR_VERGENCE` + `vergence_distance_m`）跟着 `EYES` 通道走，只给注视的模块
+不需要填它。
+
+## 7. 宿主服务
+
+`FgbHostServices` 提供：
 
 | 服务 | 用途 |
 |---|---|
@@ -159,14 +268,15 @@ const FgbModuleV1* fgb_module_query(uint32_t host_abi_version) {
 | `commit_frame_slot` | 提交本帧；`capture_ts_ns` 可填 0 由宿主补时间 |
 | `shape_index(ctx, name)` | Unified Expressions 形状名 → 下标 |
 
-初始化参数 `FgbInitParamsV1`：
+初始化参数 `FgbInitParams`：
 
 - `tick_hz`：引擎当前 tick 频率
 - `module_dir`：模块目录（UTF-8），可用于读写自己的 `config.ini`
+- `host_version`：宿主版本（UTF-8，可能为 NULL）
 
-## 6. 编译
+## 8. 编译
 
-### 6.1 独立 CMake 工程（推荐）
+### 8.1 独立 CMake 工程（推荐）
 
 示例目录自带 [`CMakeLists.txt`](../samples/native-sine/CMakeLists.txt)：
 
@@ -178,7 +288,7 @@ cmake --build build/native-sample --config Release
 产物在 `build/native-sample/Release/fgb-sample-native.dll`。
 把 `fgb-native.json` 与 DLL 放在同一目录，压缩成 zip 即可安装。
 
-### 6.2 直接命令行（MSVC）
+### 8.2 直接命令行（MSVC）
 
 ```bat
 cl /nologo /LD /O2 /EHsc /std:c++20 /I sdk MyModule.cpp /Fe:MyModule.dll
@@ -187,10 +297,10 @@ cl /nologo /LD /O2 /EHsc /std:c++20 /I sdk MyModule.cpp /Fe:MyModule.dll
 注意：
 
 - 必须 **x64**，与 FGB 的位数一致
-- 只导出 `fgb_module_query`；C++ 内部随便用 STL，但不要跨 ABI 传 STL 对象
+- 只导出 `fgb_module_query_v2`；C++ 内部随便用 STL，但不要跨 ABI 传 STL 对象
 - 如果模块依赖其它 DLL，把它们一起放进 zip
 
-## 7. 打包与安装
+## 9. 打包与安装
 
 zip 根目录直接放清单和 DLL（可再带 config.ini）：
 
@@ -209,58 +319,15 @@ Compress-Archive -Path fgb-native.json,MyModule.dll -DestinationPath MyModule.zi
 2. 点「重启引擎」
 3. 状态页应该看到帧率/输入源，模块卡片会显示运行状态或具体错误
 
-## 8. 无硬件调试
+## 10. 多模块组合
 
-用示例模块验证整条链路：
-
-- 构建 `fgb-sample-native.dll`
-- 把它和 `samples/native-sine/fgb-native.json` 放进 zip 安装
-- 选中并重启，状态页帧率应 > 0，参数热力图出现正弦变化
-
-引擎日志里原生模块的 tag 是 `native`；模块通过 `host->log` 输出的内容也会带上模块名。
-
-## 9. 限制与版本演进
-
-- **默认是进程内加载**：模块崩溃会带走引擎。`--native-host` 可让原生模块走
-  `fgb-host-native.exe` 独立进程（V2 阶段 C MVP），崩溃不再影响引擎；默认关闭
-- 界面可以配置多个启动实例并按“表情 / 眼睛 / 注视 / 头姿”选来源；CLI 还支持
-  左右眼/左右注视分源与 `--avatar-eye-from-gaze`。ABI v2 属性帧支持只给
-  openness/pupil 或单眼数据。见
-  [ADR-0030](adr/0030-native-module-v2-composition.md)、
-  [ADR-0031](adr/0031-native-module-v2-attribute-fusion.md)
-- `update` 不要阻塞（读设备建议自带线程 + 非阻塞队列，提交仍回到 `update`）
-- v1 结构只允许在末尾追加字段；v2 是独立的 `FgbFrameSlotV2`，通过
-  `fgb_module_query_v2` 选择，两者并存
-- 宿主对 `struct_size` 做兼容读取；请始终用当前 SDK 头编译
-- 原生模块没有在线注册表；通过 `.zip` / `.dll` 分发和安装
-
-## 10. 常见问题
-
-| 现象 | 原因 |
+| 需求 | 做法 |
 |---|---|
-| 模块列表里没有 | `fgb-native.json` 缺失或 `ModuleId` 为空；或在错误的目录层级 |
-| 加载失败“没有导出 fgb_module_query” | 忘记 `extern "C" __declspec(dllexport)`，或编译成了 C++ 修饰名 |
-| ABI 版本不兼容 | 用了旧/新 SDK 头；重新用 `sdk/fgb_module_api.h` 编译 |
-| 卡片显示故障 | 看模块 `report_status(ERROR, ...)` / 日志里的具体原因；初始化返回 0 也会显示 |
-| 帧率 0 | `update` 没有 `commit`，或 `shape_valid` 全 0（表情通道不会启用） |
-| 位数错误 | DLL 不是 x64，`LoadLibrary` 会失败并给出错误码 |
-| 注视一直「注视中」、方向恒 `(0,0,-1)` | 声明了 `LEFT/RIGHT` 却没有方向模型（伪造方向）；只声明 `POINT_2D` |
-| 状态页注视是 `—`、但逐眼有 `2D (x,y)` | 正常：只报点的源没有方向，`valid=false` |
-| 逐眼显示的是 `2D~ (x,y)` | 模块没声明 `POINT_VIEWPORT`：点在来源自己的空间（原始坐标），不是视口坐标 |
-| 只声明 `POINT_2D` 却一帧都没有 | 1.0.2 及更早的宿主会丢弃这类帧；升级到带本次修复的版本 |
-
-## 11. 多模块与注视通道（ADR-0030 v1.1，已实现）
-
-### 11.1 能表达的组合
-
-| 需求 | 能否做到 | 做法 |
-|---|---|---|
-| A 面捕 + B 整眼 | ✅ | A 供 Expression，B 供 Eyes |
-| A 完整 + B 注视点 | ✅ | 头像用 A，渲染注视用 B 的 `GAZE` |
-| A 面捕 + B 整眼 + C 注视 | ✅ | 三路各取所需 |
-| A 的 openness + B 的 gaze | ✅ | v1 模块用 `--eye-source A --gaze-source B --avatar-eye-from-gaze`；v2 模块可直接只给 openness |
-| 左眼 A、右眼 B | ✅（CLI） | `--eye-left-source A --eye-right-source B` |
-| A 只给 openness、不给 gaze | ✅（ABI v2） | 声明 `FGB_CAP_EYE_ATTRIBUTES`，只填 openness 属性位 |
+| A 面捕 + B 眼睛 | `EYES` 来自 B，`expression` 角色给 A |
+| A 面捕 + B 注视点 | 头像用 A，渲染注视用 B 的 `GAZE` |
+| A 的 openness + B 的 gaze | B 声明 `GAZE`；`--eye-source A --gaze-source B --avatar-eye-from-gaze`，或直接 `--attr-source left-openness=A --attr-source left-gaze=B` |
+| 左眼 A、右眼 B | `--eye-left-source A --eye-right-source B` |
+| A 只给 openness、不给 gaze | A 声明 `EYES` 且只置 openness 属性 |
 
 配置方式有两种：
 
@@ -282,7 +349,7 @@ fgb-cli run `
 face = com.example.pico-face
 gaze = com.example.pico-gaze
 
-# 可选：只让这个实例走跨进程宿主（原生模块）
+# 可选：只让这个实例走跨进程宿主
 [instance_host]
 gaze = 1
 
@@ -293,114 +360,10 @@ gaze       = com.example.pico-gaze
 head       = com.example.pico-face
 ```
 
-### 11.2 写一个注视模块
-
-声明 `FGB_CAP_GAZE`，不要声明 `EYE`；在 `update()` 里填 `slot->gaze`。它位于
-`FgbFrameSlotV1` 末尾，旧宿主不会分配这段内存，所以写之前必须检查 `struct_size`。
-
-**先确定你手上有什么数据**——方向位和 2D 点位是两条独立的位，有哪样写哪样：
-
-| 你有的数据 | `valid` 该写 | 宿主给出的结果 |
-|---|---|---|
-| 逐眼方向 | `LEFT \| RIGHT`（`COMBINED` 可选，缺了由左右眼推） | `valid=true`；逐眼方向/角度、注视/扫视判定可用 |
-| 逐眼 2D 点，**已标定到该眼视口** | `POINT_2D \| POINT_VIEWPORT` | `valid=false`（不编方向）；点可用，`point_space="viewport"`，能用于 foveation |
-| 逐眼 2D 点，**只有原始坐标**（未标定） | 只写 `POINT_2D` | `valid=false`；点可用但 `point_space="source"`，只能展示/看趋势 |
-| 方向 + 点 | 方向位 + 上面的点位组合 | 方向与点都可用 |
-
-方向型模块：
-
-```c
-const size_t needed = offsetof(FgbFrameSlotV1, gaze) + sizeof(FgbGazeV1);
-if (slot->struct_size >= needed) {
-    slot->gaze.valid = FGB_GAZE_LEFT | FGB_GAZE_RIGHT | FGB_GAZE_COMBINED |
-                       FGB_GAZE_POINT_2D | FGB_GAZE_POINT_VIEWPORT;
-    slot->gaze.left_dir[0] = dx;   /* HMD 局部单位向量，-Z 前 */
-    slot->gaze.left_dir[1] = dy;
-    slot->gaze.left_dir[2] = dz;
-    /* right_dir / combined_dir 同上 */
-    slot->gaze.left_point_2d[0]  = u; /* 该眼视口归一化 [0,1]，左上原点 */
-    slot->gaze.left_point_2d[1]  = v;
-    slot->gaze.confidence = 0.9f;
-    slot->gaze.capture_ts_ns = device_ts_ns; /* 0 = 用帧时间戳 */
-}
-```
-
-只报点的模块（**没有方向就不要写方向位**，标定过再加 `POINT_VIEWPORT`）：
-
-```c
-if (slot->struct_size >= needed) {
-    slot->gaze.valid              = FGB_GAZE_POINT_2D; /* 标定过就 | FGB_GAZE_POINT_VIEWPORT */
-    slot->gaze.left_point_2d[0]   = x_l;
-    slot->gaze.left_point_2d[1]   = y_l;
-    slot->gaze.right_point_2d[0]  = x_r;
-    slot->gaze.right_point_2d[1]  = y_r;
-    slot->gaze.confidence         = 0.9f;
-    slot->gaze.capture_ts_ns      = device_ts_ns;
-}
-```
-
-- `LEFT/RIGHT` 是**方向**有效位，`POINT_2D` 是**点**有效位，两者互不连坐；
-  `POINT_2D` 一次覆盖左右眼，没有"单眼点"单独的位。
-- **写了 `LEFT/RIGHT` 就必须给真实方向。** 伪造 `(0,0,-1)` 会让 `/api/gaze`、共享内存、
-  UDP 里出现一个恒定的"正前方"，`fixation` 永远成立、`vergence` 恒 0。
-  宿主发现这个指纹（方向位 + 方向恰好 `-Z` + 有点，连续 30 帧）会在日志里警告一次。
-- 方向会被宿主归一化；全零/NaN 退回 `-Z` 但 `valid` 仍按你声明的位走，所以不要把
-  "还没算出来"写成方向位。
-- **2D 点坐标约定（[ADR-0033](adr/0033-gaze-point-2d-space.md)）**：
-  - `POINT_2D` = 有点；`POINT_VIEWPORT` = 这些点**已标定到该眼显示视口**：
-    `x/y ∈ [0,1]`、原点左上、+x 向右、+y 向下、畸变前、逐眼独立
-    （不是物理面板、不是眼动相机图像）。
-  - **不写 `POINT_VIEWPORT` 就按"来源原始坐标"处理**：能看趋势，但消费端不会拿它做
-    foveation。原始坐标（相机图像、协议字段）请只报 `POINT_2D`，别声称视口坐标。
-  - 映射由模块负责，宿主不做换算：
-
-    ```c
-    u = px / viewport_w;  v = py / viewport_h;             /* 像素 → 视口归一化 */
-    u = (x_ndc + 1.0f) * 0.5f;  v = (1.0f - y_ndc) * 0.5f; /* NDC → 视口归一化 */
-    ```
-
-  - 越界（看向画外、标定误差）不是错误，宿主**保留原值不裁剪**，消费端自己 clamp；
-  - `NaN`/`Inf` 会把该眼的点标为无效（另一只眼不受影响）；
-  - 声明了 `POINT_VIEWPORT` 却连续 30 帧明显越界（单轴超出 `[-0.25,1.25]`）
-    宿主告警一次：多半是标定或声明错了。
-- 合并层每个通道独立选源、独立新鲜度：表情 500 ms、眼睛 250 ms、注视 100 ms
-  （CLI 可用 `--*-stale-ms` 覆盖）。状态页会显示每个通道的来源与年龄。
-- 头像输出默认只看 `Eyes`；渲染/foveation 用 `Gaze`，没有时回退到眼睛反算。
-  所以“面捕 A + 注视 B”不会让 B 接管头像眼睛。
-
-### 11.3 模块清单的可选字段
-
-```json
-{
-  "AbiVersion": 1,
-  "Capabilities": ["expression", "gaze"],
-  "RoleHint": "gaze",
-  "MinHostVersion": "1.0.2"
-}
-```
-
-宿主只在加载前用它们做列表/兼容性提示；加载后以 `fgb_module_query` 的
-`capabilities` 为准。旧清单不写这些字段也照常工作。`MinHostVersion` 高于当前
-宿主版本时，界面会标记为不兼容。
-
-### 11.4 属性级眼睛合成（V2 阶段 A，v1 输入）
-
-V2 阶段 A 让头像眼睛可以拆开取值，但默认行为仍是 v1.1：
+### 10.1 属性级选源
 
 ```powershell
-# A 提供 openness/pupil，B 提供注视方向；头像眼睛方向改用 B，睁眼度仍来自 A
-fgb-cli run --source vrcft --module-id <A> --source vrcft --module-id <B> `
-  --eye-source "native[1]" --gaze-source "native[2]" --avatar-eye-from-gaze
-
-# 左眼来自 A、右眼来自 B（两个都必须是 EYE 模块）
-fgb-cli run --source vrcft --module-id <A> --source vrcft --module-id <B> `
-  --eye-left-source "native[1]" --eye-right-source "native[2]"
-
-# 渲染注视也按左右分源
-fgb-cli run ... --gaze-left-source "native[1]" --gaze-right-source "native[2]"
-
-# B.2：同一只眼的 openness 来自 A、pupil 来自 B、gaze 来自 C。
-# 列表按优先级取第一个新鲜且提供该属性的源；未列出的属性回退整眼策略。
+# 同一只眼的 openness 来自 A、pupil 来自 B、gaze 来自 C
 fgb-cli run --source vrcft --module-id <A> --source vrcft --module-id <B> `
   --source vrcft --module-id <C> `
   --attr-source left-openness="native[1],native[2]" `
@@ -411,66 +374,25 @@ fgb-cli run --source vrcft --module-id <A> --source vrcft --module-id <B> `
 fgb-cli run ... --attr-source left-openness="native[1],native[2]" --attr-fuse
 ```
 
-- 不传这些参数时，左右眼来自同一个 `EYE` 源，头像眼睛不会被 `Gaze` 通道改写。
-- `--avatar-eye-from-gaze` 只替换方向；openness/pupil 仍来自 `EYE` 源。
-- `--attr-source` 的属性名：`left/right-openness`、`left/right-pupil`、
-  `left/right-gaze`、`vergence`。显式列表找不到源时该字段为空，不会回退到列表外。
+- 属性名：`left/right-openness`、`left/right-pupil`、`left/right-gaze`、`vergence`。
+  显式列表找不到源时该字段为空，不会回退到列表外。
 - `--attr-fuse` 让列表里多个新鲜源按置信度加权平均；默认取第一个可用源。
   vergence 没有置信度，融合模式下仍取第一个。
 - 逐属性列表只影响**头像眼睛**；渲染注视继续由 `--gaze-source` /
   `--gaze-left/right-source` 选择。
 - 合并结果会逐眼记录来源与捕获时间；左右眼来自不同源时，`Eyes` 通道的整通道
   来源记为未知，诊断以逐眼字段为准。
-- 这仍是 V2 阶段 A：模块必须用 v1 ABI 的整眼 `FgbEyeV1`。真正“只给 openness”
-  或“只给单眼”的模块要等阶段 B 的 `FgbFrameSlotV2` 属性掩码。
 
-### 11.5 ABI v2：属性帧
+### 10.2 新鲜度
 
-只提供部分眼睛属性的模块使用 `FgbFrameSlotV2`，不要伪造 `FgbEyeV1`：
+每个通道独立判过期：表情 500 ms、眼睛 250 ms、注视 100 ms、头姿 500 ms
+（CLI 可用 `--expression-stale-ms` / `--eye-stale-ms` / `--gaze-stale-ms` /
+`--head-stale-ms` 覆盖）。状态页会显示每个通道的来源与年龄。
 
-```c
-const FgbModuleV2* fgb_module_query_v2(uint32_t host_abi_version) {
-    if (host_abi_version != FGB_MODULE_ABI_V2) return NULL;
-    return &kModule; // capabilities = FGB_CAP_EYE_ATTRIBUTES
-}
-```
+头像输出默认只看 `Eyes`；渲染/foveation 用 `Gaze`，没有时回退到眼睛反算。
+所以"面捕 A + 注视 B"不会让 B 接管头像眼睛。
 
-`update()` 里按属性填写：
-
-```c
-FgbFrameSlotV2* slot = host->acquire_frame_slot(host->ctx);
-if (slot->struct_size < sizeof(FgbFrameSlotV2)) return;
-
-slot->attributes = FGB_ATTR_LEFT_OPENNESS | FGB_ATTR_RIGHT_OPENNESS |
-                   FGB_ATTR_LEFT_PUPIL | FGB_ATTR_RIGHT_PUPIL;
-slot->left_eye.openness  = 0.7f;
-slot->right_eye.openness = 0.6f;
-slot->left_eye.openness_ts_ns = device_ts_ns; /* 0 = 帧时间戳 */
-slot->capture_ts_ns = device_ts_ns;
-host->commit_frame_slot(host->ctx, slot, 0);
-```
-
-属性位（`FgbFrameSlotV2::attributes`）：
-
-| 属性 | 说明 |
-|---|---|
-| `FGB_ATTR_EXPRESSION` | 88 形状 |
-| `FGB_ATTR_LEFT/RIGHT_OPENNESS` | 睁眼度 |
-| `FGB_ATTR_LEFT/RIGHT_PUPIL` | 瞳孔 |
-| `FGB_ATTR_LEFT/RIGHT_GAZE` | 逐眼方向 |
-| `FGB_ATTR_COMBINED_GAZE` | 合并方向 |
-| `FGB_ATTR_LEFT/RIGHT_POINT` | 2D 点 |
-| `FGB_ATTR_VERGENCE` | 聚散距离 |
-| `FGB_ATTR_HEAD` | 头姿 |
-
-- 宿主优先查 `fgb_module_query_v2`；没有或返回空时回退 v1 `fgb_module_query`。
-- v2 模块的 `capabilities` 用 `FGB_CAP_EYE_ATTRIBUTES` 表示“按属性提供眼睛”；
-  仍可同时声明 `EXPRESSION / GAZE / HEAD`。
-- 只给 openness 的模块不会产生渲染注视；宿主用 `EyeState.gazeValid` 区分
-  “真的给了方向”和“默认正前方”。只给 gaze 的模块不会驱动头像 openness。
-- 参考实现：[`samples/native-openness`](../samples/native-openness)。
-
-### 11.6 跨进程宿主（V2 阶段 C）
+## 11. 跨进程宿主
 
 ```powershell
 fgb-cli run --source vrcft --native-host
@@ -483,21 +405,63 @@ fgb-cli run --source vrcft --native-host-exe "D:\FGB\fgb-host-native.exe"
 - 崩溃/心跳超时后默认自动重启最多 3 次（退避），不阻塞引擎 tick；
   `--no-host-restart` 可关闭。自动重启会重新 initialize，模块状态不保留。
 - 模块页实例行有「停止 / 启动 / 重启实例」：热替换 DLL 时先「停止」（宿主退出、
-  文件解锁），替换模块文件后再「启动」，不需要重启整个引擎；「重启实例」是
-  停止+启动一步完成。
+  文件解锁），替换模块文件后再「启动」，不需要重启整个引擎。
 - 宿主模式暂不支持 `--record`；模块日志经共享内存 ring 回传引擎日志，同时写到
   `%LOCALAPPDATA%\FaceGazeBridge\logs\native-host-*.log`。
 - 发布包需要 `fgb-host-native.exe` 与主程序放在一起；缺失时自动回退进程内。
   协议布局见 [`sdk/fgb_native_host_shm.h`](../sdk/fgb_native_host_shm.h)。
+- 崩溃隔离是**进程级**的，不是沙箱：模块仍以当前用户身份运行，读写文件不改权限。
 
-### 11.7 PICO 类设备怎么拆
+## 12. 从 v1 迁移
 
-| 模块 | 能力 | 数据来源 |
-|---|---|---|
-| `pico-connect-face` | `EXPRESSION` | PICO 互联面捕协议 |
-| `pico-connect-gaze` | `GAZE`（可选 openness/pupil） | PICO 互联内部 RPC / OpenXR 眼动 |
-| `pico-full`（可选） | `EXPRESSION \| EYE \| GAZE \| HEAD` | 头显 APK |
+v1 的结构和符号全部删除（[ADR-0034](adr/0034-native-module-v2-only.md)）。对照：
 
-这样面捕模块和注视模块可以独立更新、独立故障；PICO 互联接口变化时只换
-`pico-connect-gaze`，不影响面捕。详细设计与开放问题见
-[ADR-0030](adr/0030-native-module-v2-composition.md)。
+| v1 | v2 |
+|---|---|
+| `fgb_module_query` | `fgb_module_query_v2` |
+| `FgbModuleV1` | `FgbModule` |
+| `FgbHostServicesV1` / `FgbInitParamsV1` | `FgbHostServices` / `FgbInitParams` |
+| `FgbFrameSlotV1` | `FgbFrameSlot`（末尾多了 `attributes` 和逐属性时间戳） |
+| `FGB_CAP_EYE`（整眼原子） | `FGB_CAP_EYES`（逐眼属性，任意子集） |
+| `FGB_CAP_GAZE` + `FgbGazeV1` | `FGB_CAP_GAZE` + `FGB_ATTR_*_GAZE` / `FGB_ATTR_*_POINT` |
+| `FgbEyeV1.openness` | `FGB_ATTR_*_OPENNESS` + `left_eye.openness` |
+| `FgbEyeV1.gaze_dir` | `FGB_ATTR_*_GAZE` + `left_eye.gaze_dir` |
+| `FgbEyeV1.valid` | 没有逐眼 valid：该眼的属性位没置就是没数据 |
+| `FgbGazeV1.valid` 的 `FGB_GAZE_*` 位 | `FGB_ATTR_*` 位（方向与点各自独立） |
+| `FGB_GAZE_POINT_VIEWPORT` | `FGB_ATTR_POINT_VIEWPORT` |
+| `slot->has_head_pose` | `FGB_ATTR_HEAD` |
+| `slot->has_vergence` | `FGB_ATTR_VERGENCE` |
+
+机械迁移三步：
+
+1. 把导出改成 `fgb_module_query_v2`，结构换名，`FGB_MODULE_ABI_V1` → `FGB_MODULE_ABI_V2`。
+2. 在每帧开头按"这帧真的有什么"拼 `attributes`，而不是无条件填所有字段。
+3. `EYE` 拆成 `EYES`（头像）+ `GAZE`（渲染）；只给注视的模块只声明 `GAZE`。
+
+不需要改的：形状名查下标、`acquire/commit` 生命周期、日志/状态上报、打包与安装流程。
+
+## 13. 限制与版本演进
+
+- **默认是进程内加载**：模块崩溃会带走引擎。`--native-host` 可让原生模块走
+  独立进程（§11）；默认关闭。
+- `update` 不要阻塞（读设备建议自带线程 + 非阻塞队列，提交仍回到 `update`）。
+- 结构只允许在末尾追加字段；宿主对 `struct_size` 做兼容读取，模块始终用当前 SDK 头编译。
+- 帧槽由宿主分配，模块写"可能不存在"的字段前先比较 `slot->struct_size`。
+- 原生模块没有在线注册表；通过 `.zip` / `.dll` 分发和安装。
+
+## 14. 常见问题
+
+| 现象 | 原因 |
+|---|---|
+| 模块列表里没有 | `fgb-native.json` 缺失或 `ModuleId` 为空；或在错误的目录层级 |
+| 列表里标「不兼容」 | 清单 `AbiVersion` 不是 2，或 `MinHostVersion` 高于当前宿主 |
+| 加载失败“用的是已移除的 ABI v1” | 用旧 SDK 头编译过；换当前 `sdk/fgb_module_api.h` 重新编译 |
+| 加载失败“没有导出 fgb_module_query_v2” | 忘记 `extern "C" __declspec(dllexport)`，或编译成了 C++ 修饰名 |
+| ABI 版本不兼容 | 模块返回了框架外的 `abi_version`；重新用当前 SDK 头编译 |
+| 卡片显示故障 | 看模块 `report_status(ERROR, ...)` / 日志里的具体原因；初始化返回 0 也会显示 |
+| 帧率 0 | `update` 没有 `commit`，或 `attributes` 一直是 0 |
+| 眼睛不动但表情正常 | 没声明 `FGB_CAP_EYES`，或没置 `FGB_ATTR_*_OPENNESS/GAZE` |
+| 注视一直「注视中」、方向恒 `(0,0,-1)` | 置了方向属性却没有方向模型（伪造方向）；只置 `LEFT/RIGHT_POINT` |
+| 状态页注视是 `—`、但逐眼有 `2D (x,y)` | 正常：只报点的源没有方向，`valid=false` |
+| 逐眼显示的是 `2D~ (x,y)` | 模块没置 `FGB_ATTR_POINT_VIEWPORT`：点在来源自己的空间（原始坐标） |
+| 位数错误 | DLL 不是 x64，`LoadLibrary` 会失败并给出错误码 |

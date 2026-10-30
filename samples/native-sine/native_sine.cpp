@@ -1,7 +1,7 @@
 // 示例原生模块：不需要任何硬件，按正弦波产生表情/眼追/头姿。
 //
 // 它的用途有三个：
-//   1. ABI 的唯一可执行参考实现
+//   1. ABI 的唯一可执行参考实现（全通道：expression + eyes + head）
 //   2. CI / 本机无硬件时验证原生模块链路
 //   3. 模块作者可以从这里抄骨架（初始化、按名取形状下标、提交帧）
 #include "fgb_module_api.h"
@@ -16,7 +16,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 struct Instance {
-    const FgbHostServicesV1* host = nullptr;
+    const FgbHostServices* host = nullptr;
     Clock::time_point start{};
     std::int32_t jaw = -1;
     std::int32_t squint_left = -1;
@@ -30,7 +30,7 @@ int32_t shape(Instance* self, const char* name) {
     return self->host->shape_index(self->host->ctx, name);
 }
 
-int initialize(void** out, const FgbHostServicesV1* host, const FgbInitParamsV1* params) {
+int initialize(void** out, const FgbHostServices* host, const FgbInitParams* params) {
     if (out == nullptr || host == nullptr || host->ctx == nullptr) {
         return 0;
     }
@@ -48,6 +48,9 @@ int initialize(void** out, const FgbHostServicesV1* host, const FgbInitParamsV1*
     if (params != nullptr && params->module_dir != nullptr) {
         host->log(host->ctx, FGB_LOG_DEBUG, params->module_dir);
     }
+    if (params != nullptr && params->host_version != nullptr) {
+        host->log(host->ctx, FGB_LOG_DEBUG, params->host_version);
+    }
     host->report_status(host->ctx, FGB_STATUS_ACTIVE, "");
     return 1;
 }
@@ -59,10 +62,12 @@ void update(void* opaque) {
     }
     const double t = std::chrono::duration<double>(Clock::now() - self->start).count();
 
-    FgbFrameSlotV1* slot = self->host->acquire_frame_slot(self->host->ctx);
+    FgbFrameSlot* slot = self->host->acquire_frame_slot(self->host->ctx);
     if (slot == nullptr) {
         return;
     }
+    slot->attributes = FGB_ATTR_EXPRESSION | FGB_ATTR_LEFT_OPENNESS | FGB_ATTR_RIGHT_OPENNESS |
+                       FGB_ATTR_LEFT_GAZE | FGB_ATTR_RIGHT_GAZE | FGB_ATTR_HEAD;
 
     const float jaw_open = static_cast<float>(0.5 + 0.5 * std::sin(t * 1.5));
     if (self->jaw >= 0) {
@@ -95,24 +100,21 @@ void update(void* opaque) {
     const float cp        = std::cos(pitch);
     const float dir[3]    = {-std::sin(yaw) * cp, std::sin(pitch), -std::cos(yaw) * cp};
 
-    slot->left_eye.valid                 = 1;
-    slot->left_eye.openness              = static_cast<float>(0.5 + 0.4 * std::sin(t * 1.1));
-    slot->left_eye.openness_confidence   = 1.0f;
-    slot->left_eye.gaze_dir[0]           = dir[0];
-    slot->left_eye.gaze_dir[1]           = dir[1];
-    slot->left_eye.gaze_dir[2]           = dir[2];
-    slot->left_eye.gaze_confidence       = 1.0f;
+    slot->left_eye.openness            = static_cast<float>(0.5 + 0.4 * std::sin(t * 1.1));
+    slot->left_eye.openness_confidence = 1.0f;
+    slot->left_eye.gaze_dir[0]         = dir[0];
+    slot->left_eye.gaze_dir[1]         = dir[1];
+    slot->left_eye.gaze_dir[2]         = dir[2];
+    slot->left_eye.gaze_confidence     = 1.0f;
 
-    slot->right_eye.valid                = 1;
-    slot->right_eye.openness             = static_cast<float>(0.5 + 0.4 * std::sin(t * 1.1 + 0.7));
-    slot->right_eye.openness_confidence  = 1.0f;
-    slot->right_eye.gaze_dir[0]          = dir[0];
-    slot->right_eye.gaze_dir[1]          = dir[1];
-    slot->right_eye.gaze_dir[2]          = dir[2];
-    slot->right_eye.gaze_confidence      = 1.0f;
+    slot->right_eye.openness            = static_cast<float>(0.5 + 0.4 * std::sin(t * 1.1 + 0.7));
+    slot->right_eye.openness_confidence = 1.0f;
+    slot->right_eye.gaze_dir[0]         = dir[0];
+    slot->right_eye.gaze_dir[1]         = dir[1];
+    slot->right_eye.gaze_dir[2]         = dir[2];
+    slot->right_eye.gaze_confidence     = 1.0f;
 
     const double head_yaw_rad = 0.15 * std::sin(t * 0.4);
-    slot->has_head_pose       = 1;
     slot->head_rotation[0]    = 0.0f;
     slot->head_rotation[1]    = static_cast<float>(std::sin(head_yaw_rad / 2.0));
     slot->head_rotation[2]    = 0.0f;
@@ -131,12 +133,12 @@ void teardown(void* opaque) {
     delete self;
 }
 
-const FgbModuleV1 kModule = {
-    sizeof(FgbModuleV1),
-    FGB_MODULE_ABI_V1,
+const FgbModule kModule = {
+    sizeof(FgbModule),
+    FGB_MODULE_ABI_V2,
     "com.fgbbridge.sample.sine",
     "Sine Sample Module",
-    FGB_CAP_EYE | FGB_CAP_EXPRESSION | FGB_CAP_HEAD,
+    FGB_CAP_EYES | FGB_CAP_EXPRESSION | FGB_CAP_HEAD,
     &initialize,
     &update,
     &teardown,
@@ -144,8 +146,8 @@ const FgbModuleV1 kModule = {
 
 } // namespace
 
-extern "C" FGB_MODULE_EXPORT const FgbModuleV1* fgb_module_query(uint32_t host_abi_version) {
-    if (host_abi_version != FGB_MODULE_ABI_V1) {
+extern "C" FGB_MODULE_EXPORT const FgbModule* fgb_module_query_v2(uint32_t host_abi_version) {
+    if (host_abi_version != FGB_MODULE_ABI_V2) {
         return nullptr;
     }
     return &kModule;

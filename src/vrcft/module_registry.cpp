@@ -79,10 +79,10 @@ std::uint32_t parse_capabilities(const std::vector<std::string>& names) {
         });
         if (name == "expression") {
             bits |= FGB_CAP_EXPRESSION;
-        } else if (name == "eye" || name == "eyes") {
-            bits |= FGB_CAP_EYE;
-        } else if (name == "eye_attributes" || name == "eye-attributes") {
-            bits |= FGB_CAP_EYE_ATTRIBUTES;
+        } else if (name == "eyes" || name == "eye" || name == "eye_attributes" ||
+                   name == "eye-attributes") {
+            // ABI v1 的 "eye"（整眼原子）已并入属性级眼睛，清单里两种写法都接受
+            bits |= FGB_CAP_EYES;
         } else if (name == "gaze") {
             bits |= FGB_CAP_GAZE;
         } else if (name == "head") {
@@ -285,6 +285,15 @@ bool parse_module_metadata(std::string_view text, ModuleInfo& out) {
     if (fgb::json::field_string(text, "MinHostVersion", value)) {
         out.min_host_version = value;
         out.host_compatible  = !version_greater(value, FGB_VERSION);
+    }
+    // ABI v2 是唯一 ABI（ADR-0034）：清单写明更低/更高的 ABI 版本时提前在列表里
+    // 标成不兼容，不必等到 LoadLibrary 才失败。
+    double abi = 0.0;
+    if (fgb::json::field_number(text, "AbiVersion", abi)) {
+        out.abi_version = static_cast<int>(abi);
+        if (out.abi_version != static_cast<int>(FGB_MODULE_ABI_V2)) {
+            out.host_compatible = false;
+        }
     }
 
     out.metadata_ok = any;

@@ -1,6 +1,7 @@
 # ADR-0026 · 注视估计与 `/api/gaze`
 
-- 状态：**已实施**（2026-10-30）
+- 状态：**已实施**（2026-10-30）。**后续**：[ADR-0034](0034-native-module-v2-only.md)
+  把文中的 `FGB_GAZE_*` 位改名为 `FGB_ATTR_*`（语义不变）
 - 日期：2026-10-30
 - 影响：`src/core/model/gaze.hpp`（新增，`GazeState` 从 sinks 上移）、
   `src/core/process/gaze_estimator.*`（新增）、`src/engine/engine.*`、

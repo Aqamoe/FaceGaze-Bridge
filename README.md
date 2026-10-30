@@ -37,8 +37,8 @@ VRCFT 解决的是「我的面捕硬件怎么驱动 VRChat 头像」。FGB 解�
 | 能力 | 说明 |
 |---|---|
 | VRCFT 模块兼容 | 自带精简模块宿主运行时，卸载 VRCFT 后仍可加载模块；支持导入本机模块、`.zip` 安装、启停 |
-| 原生 C ABI | 单导出符号、POD 结构、共享内存传帧；附带不需要硬件的示例模块 |
-| 多源合并 | 表情 / 眼睛 / 渲染注视 / 头姿可分别选择提供者，支持 VMC、模块、抓包回放同时输入；可组合多个原生模块，左右眼/左右注视分源，ABI v2 支持只给 openness 或单眼属性，`--attr-source` 支持逐属性有序源；`--native-host` 可把原生模块放进独立宿主进程，崩溃自动重启（V2 阶段 A/B/C） |
+| 原生 C ABI | 单一 ABI（`fgb_module_query_v2`）、POD 属性帧、能力位分通道；附带不需要硬件的示例模块，见 [docs/05](docs/05-native-module-guide.md) |
+| 多源合并 | 表情 / 眼睛 / 渲染注视 / 头姿可分别选择提供者，支持 VMC、模块、抓包回放同时输入；可组合多个原生模块，左右眼/左右注视分源，模块可只给 openness 或单眼属性，`--attr-source` 支持逐属性有序源；`--native-host` 可把原生模块放进独立宿主进程，崩溃自动重启 |
 | 直连输入 | VMC、ARKit LiveLink（iPhone，UDP 11111）、通用 OSC 映射表（任意发送端） |
 | 多路输出 | VRChat OSC、VMC、命名共享内存、WebSocket JSON、UDP 二进制 |
 | 注视点服务 | `GET /api/gaze` 与 30 Hz WS 推送：注视方向、扫视/注视状态、聚散、头姿 |

@@ -1131,6 +1131,7 @@ void IpcServer::build_modules(std::string& out) {
                 .integer(static_cast<long long>(module.declared_capabilities));
             writer.key("role_hint").str(module.role_hint);
             writer.key("min_host_version").str(module.min_host_version);
+            writer.key("abi_version").integer(static_cast<long long>(module.abi_version));
             writer.key("host_compatible").boolean(module.host_compatible);
 
             // 这个模块现在是不是被某个实例加载着？是的话状态来自那个实例，

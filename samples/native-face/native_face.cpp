@@ -1,6 +1,6 @@
 // 示例原生模块：只提供表情（ADR-0030 的“面捕 A”）。
 //
-// 与 native-sine 的区别：它没有眼睛/头姿通道。用来验证“面捕 A + 注视 B”
+// 与 native-sine 的区别：它没有眼睛/头姿属性。用来验证“面捕 A + 注视 B”
 // 的组合不会让 A 被误判成眼追来源，也不会让 B 的注视接管头像眼睛。
 #include "fgb_module_api.h"
 
@@ -13,7 +13,7 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 struct Instance {
-    const FgbHostServicesV1* host = nullptr;
+    const FgbHostServices* host = nullptr;
     Clock::time_point start{};
     std::int32_t jaw = -1;
     std::int32_t brow_left = -1;
@@ -24,7 +24,7 @@ std::int32_t shape(Instance* self, const char* name) {
     return self->host->shape_index(self->host->ctx, name);
 }
 
-int initialize(void** out, const FgbHostServicesV1* host, const FgbInitParamsV1* params) {
+int initialize(void** out, const FgbHostServices* host, const FgbInitParams* params) {
     (void)params;
     if (out == nullptr || host == nullptr || host->ctx == nullptr) {
         return 0;
@@ -47,10 +47,11 @@ void update(void* opaque) {
     }
     const double t = std::chrono::duration<double>(Clock::now() - self->start).count();
 
-    FgbFrameSlotV1* slot = self->host->acquire_frame_slot(self->host->ctx);
+    FgbFrameSlot* slot = self->host->acquire_frame_slot(self->host->ctx);
     if (slot == nullptr) {
         return;
     }
+    slot->attributes = FGB_ATTR_EXPRESSION;
 
     const float jaw = static_cast<float>(0.5 + 0.5 * std::sin(t * 1.4));
     if (self->jaw >= 0) {
@@ -78,9 +79,9 @@ void teardown(void* opaque) {
     delete self;
 }
 
-const FgbModuleV1 kModule = {
-    sizeof(FgbModuleV1),
-    FGB_MODULE_ABI_V1,
+const FgbModule kModule = {
+    sizeof(FgbModule),
+    FGB_MODULE_ABI_V2,
     "com.fgbbridge.sample.face",
     "Native Face Sample",
     FGB_CAP_EXPRESSION,
@@ -91,8 +92,8 @@ const FgbModuleV1 kModule = {
 
 } // namespace
 
-extern "C" FGB_MODULE_EXPORT const FgbModuleV1* fgb_module_query(uint32_t host_abi_version) {
-    if (host_abi_version != FGB_MODULE_ABI_V1) {
+extern "C" FGB_MODULE_EXPORT const FgbModule* fgb_module_query_v2(uint32_t host_abi_version) {
+    if (host_abi_version != FGB_MODULE_ABI_V2) {
         return nullptr;
     }
     return &kModule;

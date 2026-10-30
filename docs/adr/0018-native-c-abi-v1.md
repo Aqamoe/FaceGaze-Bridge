@@ -1,6 +1,7 @@
 # ADR-0018 · 原生 C ABI 模块 v1
 
-- 状态：已采纳
+- 状态：**已被 [ADR-0034](0034-native-module-v2-only.md) 取代**（v1 ABI 于 2026-10-31 移除，
+  本文保留为设计记录；`FgbModuleV1` / `FgbFrameSlotV1` / `fgb_module_query` 等符号已不存在）
 - 日期：2026-10-29
 - 影响：新增 `sdk/fgb_module_api.h`、`sources/native_source`、`samples/native-sine`；
   `ModuleInfo.kind` 生效；`--source vrcft` 按模块类型分发；`ISource::module_status()` 统一运行态

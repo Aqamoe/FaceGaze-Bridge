@@ -1092,16 +1092,15 @@ const MODULE_STATE_STYLES = {
   external: "",
 };
 
-// 与 sdk/fgb_module_api.h 的 FGB_CAP_* 对齐
-const CAP_EYE = 0x1;
+// 与 sdk/fgb_module_api.h 的 FGB_CAP_* 对齐（ABI v2 是唯一 ABI，ADR-0034）
+const CAP_EYES = 0x1;
 const CAP_EXPRESSION = 0x2;
 const CAP_HEAD = 0x4;
 const CAP_GAZE = 0x8;
-const CAP_EYE_ATTRIBUTES = 0x10;
 const ROLE_KEYS = ["expression", "eyes", "gaze", "head"];
 const ROLE_CAPS = {
   expression: CAP_EXPRESSION,
-  eyes: CAP_EYE | CAP_EYE_ATTRIBUTES,
+  eyes: CAP_EYES,
   gaze: CAP_GAZE,
   head: CAP_HEAD,
 };
@@ -1243,6 +1242,12 @@ function installed_card(item) {
     ? t("modules.kind.native") : t("modules.kind.vrcft")));
   for (const node of capability_chips(item)) {
     badges.append(node);
+  }
+  if (item.host_compatible === false) {
+    // 清单声明的 ABI/宿主版本和当前对不上：不用等到启动失败才发现
+    const warn = el("span", "chip err", t("modules.incompatible"));
+    warn.title = t("modules.incompatible.hint");
+    badges.append(warn);
   }
   const chip_state = module_chip(item);
   const chip = el("span", `chip ${chip_state.cls}`.trim(), chip_state.text);

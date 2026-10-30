@@ -111,6 +111,8 @@ add_library(fgb_engine STATIC
 target_link_libraries(fgb_engine PUBLIC fgb_core fgb_osc fgb_net fgb_vrcft fgb_params fgb_capture
                                       fgb_config fgb_process fgb_vmc)
 target_include_directories(fgb_engine PUBLIC "${CMAKE_SOURCE_DIR}/sdk")
+# 原生模块的 FgbInitParams::host_version 用它填（模块据此做日志/适配提示）
+target_compile_definitions(fgb_engine PRIVATE FGB_VERSION="${PROJECT_VERSION}")
 
 # 控制面：WebSocket IPC + 本地静态页面
 add_library(fgb_web STATIC

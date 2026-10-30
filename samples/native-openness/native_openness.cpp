@@ -1,7 +1,7 @@
-// 示例原生模块（ABI v2）：只提供睁眼度/瞳孔，不提供注视方向。
+// 示例原生模块：只提供睁眼度/瞳孔，不提供注视方向。
 //
-// v1 的 FGB_CAP_EYE 是整眼原子能力，这个模块在 v1 下无法存在。它用来验证
-// FgbFrameSlotV2 的属性掩码：宿主能把 openness 与另一个模块的 gaze 拼成头像眼睛。
+// 用它验证属性掩码：宿主能把 openness 与另一个模块的 gaze 方向拼成头像眼睛
+// （ADR-0031 的阶段 A/B）。在 v1 的整眼原子能力下这种模块无法存在。
 #include "fgb_module_api.h"
 
 #include <chrono>
@@ -14,21 +14,20 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 struct Instance {
-    const FgbHostServicesV2* host = nullptr;
+    const FgbHostServices* host = nullptr;
     Clock::time_point start{};
 };
 
-void set_openness(FgbEyeAttributesV2& eye, float openness, std::uint64_t ts) {
+void set_openness(FgbEyeAttributes& eye, float openness, std::uint64_t ts) {
     eye.openness            = openness;
     eye.openness_confidence = 1.0f;
     eye.pupil_diameter_mm   = 3.0f + 0.5f * openness;
     eye.pupil_dilation      = 0.0f;
     eye.openness_ts_ns      = ts;
     eye.pupil_ts_ns         = ts;
-    eye.valid = 0; // 宿主以帧的 attributes 为准
 }
 
-int initialize(void** out, const FgbHostServicesV2* host, const FgbInitParamsV2* params) {
+int initialize(void** out, const FgbHostServices* host, const FgbInitParams* params) {
     (void)params;
     if (out == nullptr || host == nullptr || host->ctx == nullptr) {
         return 0;
@@ -46,8 +45,8 @@ void update(void* opaque) {
     if (self == nullptr || self->host == nullptr) {
         return;
     }
-    FgbFrameSlotV2* slot = self->host->acquire_frame_slot(self->host->ctx);
-    if (slot == nullptr || slot->struct_size < sizeof(FgbFrameSlotV2)) {
+    FgbFrameSlot* slot = self->host->acquire_frame_slot(self->host->ctx);
+    if (slot == nullptr || slot->struct_size < sizeof(FgbFrameSlot)) {
         return;
     }
 
@@ -74,12 +73,12 @@ void teardown(void* opaque) {
     delete self;
 }
 
-const FgbModuleV2 kModule = {
-    sizeof(FgbModuleV2),
+const FgbModule kModule = {
+    sizeof(FgbModule),
     FGB_MODULE_ABI_V2,
     "com.fgbbridge.sample.openness",
     "Native Openness Sample",
-    FGB_CAP_EYE_ATTRIBUTES,
+    FGB_CAP_EYES,
     &initialize,
     &update,
     &teardown,
@@ -87,7 +86,7 @@ const FgbModuleV2 kModule = {
 
 } // namespace
 
-extern "C" FGB_MODULE_EXPORT const FgbModuleV2* fgb_module_query_v2(uint32_t host_abi_version) {
+extern "C" FGB_MODULE_EXPORT const FgbModule* fgb_module_query_v2(uint32_t host_abi_version) {
     if (host_abi_version != FGB_MODULE_ABI_V2) {
         return nullptr;
     }

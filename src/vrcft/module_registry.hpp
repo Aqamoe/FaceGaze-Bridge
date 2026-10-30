@@ -57,7 +57,8 @@ struct ModuleInfo {
     std::uint32_t declared_capabilities = 0; // FGB_CAP_* 位；0 = 清单没写
     std::string role_hint;
     std::string min_host_version;
-    bool host_compatible = true;
+    int abi_version      = 0;    // 清单里的 AbiVersion；0 = 没写
+    bool host_compatible = true; // MinHostVersion / AbiVersion 任一不满足即为 false
 };
 
 // 启动时加载的模块实例。名字用于展示与 --*-source 匹配；角色绑定用 module_id，

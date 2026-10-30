@@ -264,9 +264,8 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > **V2 阶段 A 已实施（2026-10-30）**：属性级眼睛合成见
 > [ADR-0031](adr/0031-native-module-v2-attribute-fusion.md)——左右眼/左右注视可分源，
 > 头像眼睛可保留 A 的 openness/pupil、改用 B 的 gaze 方向；默认仍是 v1.1 行为。
-> **V2 阶段 B 已实施（2026-10-30）**：`FgbFrameSlotV2` 属性掩码与
-> `fgb_module_query_v2` 落地，支持只给 openness/pupil 或单眼属性的模块；v1 模块
-> 继续走原路径。
+> **V2 阶段 B 已实施（2026-10-30）**：`FgbFrameSlot` 属性掩码与
+> `fgb_module_query_v2` 落地，支持只给 openness/pupil 或单眼属性的模块。
 >
 > **V2 阶段 C MVP 已实施（2026-10-30）**：`fgb-host-native.exe` 一模块一进程，
 > 共享内存 seqlock 传帧；CLI `--native-host` 与模块页实例级「独立进程」开关
@@ -278,6 +277,11 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > V2 计划内条目已完成。见
 > [ADR-0031](adr/0031-native-module-v2-attribute-fusion.md)、
 > [ADR-0032](adr/0032-native-host-process.md)。
+>
+> **ABI v1 已移除（2026-10-31）**：v2 成为唯一 ABI（`fgb_module_query_v2` +
+> 属性帧 + 能力位门控），旧的整眼原子接口、`FgbGazeV1`、`FGB_GAZE_*` 全部删除；
+> v1 装机量为 0，示例/测试/文档随之迁移，见
+> [ADR-0034](adr/0034-native-module-v2-only.md)。
 
 **验收**：5 个 Sink 同时输出时，主链路延迟不增加 > 0.5 ms；录制 10 分钟文件 < 20 MB。
 
@@ -307,7 +311,7 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > 同日真机（PICO + 一个只给逐眼 2D 点的原生模块）：`left_valid/right_valid` 均为真、
 > 逐眼点差异稳定 3–9% 屏宽，但该模块没有方向模型，方向恒 `-Z` → 状态页改为**有点显示点**。
 > 同日完成「方向有效」与「2D 点有效」解耦（`sources/native_gaze_parse.hpp`）：
-> 只声明 `FGB_GAZE_POINT_2D` 的帧不再被丢，`valid` 在有方向时才为真、
+> 只置点位属性的帧不再被丢，`valid` 在有方向时才为真、
 > `fixation` 对 2D-only 源不再恒「注视中」；`/api/gaze` 增 `left/right_point_valid`。
 > 示例模块加了 `FGB_SAMPLE_GAZE_POINTS_ONLY=1` 覆盖这条 ABI 路径。
 > 同日收口 ADR-0030 的「2D 点坐标约定」开放问题 → [ADR-0033](adr/0033-gaze-point-2d-space.md)：

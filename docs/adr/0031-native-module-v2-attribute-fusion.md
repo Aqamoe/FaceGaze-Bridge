@@ -1,6 +1,8 @@
 # ADR-0031 · 原生模块 v2：属性级眼睛合成
 
-- 状态：**已实施（阶段 A/B/B.2）**（2026-10-30）
+- 状态：**已实施（阶段 A/B/B.2）**（2026-10-30）。**后续**：
+  [ADR-0034](0034-native-module-v2-only.md) 移除了 v1 ABI，公开类型去掉 `V2` 后缀
+  （`FgbFrameSlotV2` → `FgbFrameSlot`），`FGB_CAP_EYE_ATTRIBUTES` 并入 `FGB_CAP_EYES`
 - 日期：2026-10-30
 - 影响：`src/core/model/frame.hpp`、`src/engine/source_merger.*`、`src/engine/engine.cpp`、
   `src/cli/main.cpp`、`src/web/ipc.cpp`、后续 `sdk/fgb_module_api.h`

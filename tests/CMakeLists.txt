@@ -37,6 +37,17 @@ if(TARGET fgb-sample-native)
     add_dependencies(fgb-tests fgb-sample-native)
 endif()
 
+# ABI v1 移除后的失败路径夹具：只导出老符号 fgb_module_query 的 DLL。
+# 不 include SDK 头（v1 结构已删），见 tests/fixtures/legacy_v1_module.cpp。
+add_library(fgb-test-legacy-v1 MODULE fixtures/legacy_v1_module.cpp)
+target_link_libraries(fgb-test-legacy-v1 PRIVATE fgb_options)
+set_target_properties(fgb-test-legacy-v1 PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "fgb-test-legacy-v1"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+add_dependencies(fgb-tests fgb-test-legacy-v1)
+
 # C4127: 测试里比较编译期常量（如 kShapeCount == 86）是有意为之——
 #        这些断言的作用就是在编译期常量被误改时炸掉。
 if(MSVC)

@@ -94,13 +94,18 @@ FGB_TEST(native_sample_module_loads_and_emits_frames) {
         FGB_CHECK(frame.has_channel(channel::kExpression));
         FGB_CHECK(frame.has_channel(channel::kEyes));
         FGB_CHECK(frame.has_channel(channel::kHead));
-        // v1 旧模块不写 gaze 字段；宿主不能凭空造出注视通道
+        // 头像眼睛方向来自 EYES 属性，不等于独立注视通道
         FGB_CHECK(!frame.has_channel(channel::kGaze));
         FGB_CHECK(frame.eyes.left.valid);
+        FGB_CHECK(frame.eyes.left.gazeValid);
         FGB_CHECK(frame.eyes.left.openness > 0.05f && frame.eyes.left.openness < 0.95f);
         FGB_CHECK(frame.shape_is_valid(Shape::JawOpen));
         FGB_CHECK(frame.shape(Shape::JawOpen) > 0.05f);
         FGB_CHECK(frame.hasHeadPose);
+        // 属性帧带逐通道时间戳：v2 的通道新鲜度不退化成整帧时间
+        FGB_CHECK(frame.channelStamps[channel::index(channel::kEyes)].captureTsNs != 0);
+        FGB_CHECK(frame.channelStamps[channel::index(channel::kExpression)].captureTsNs != 0);
+        FGB_CHECK(frame.channelStamps[channel::index(channel::kHead)].captureTsNs != 0);
     }
 
     const auto status = source.module_status();
@@ -171,61 +176,43 @@ FGB_TEST(native_gaze_only_module_emits_gaze_channel) {
     source.stop();
 }
 
-// SDK 说"方向位与 2D 点位分别有效，互不连坐"。只声明 POINT_2D 的模块
+// SDK 说"方向属性与点位属性分别有效，互不连坐"。只给点位的模块
 // （PICO Connect 私有通道就是这样）以前会被整帧丢掉，逼得模块伪造一个 -Z 方向。
 FGB_TEST(native_gaze_points_only_frame_is_kept) {
-    FgbGazeV1 in{};
-    in.valid               = FGB_GAZE_POINT_2D;
-    in.left_point_2d[0]    = 0.82f;
-    in.left_point_2d[1]    = 0.90f;
-    in.right_point_2d[0]   = 0.91f;
-    in.right_point_2d[1]   = 0.90f;
-    in.confidence          = 0.9f;
-    in.capture_ts_ns       = 777;
+    FgbEyeAttributes eye{};
+    eye.gaze_point_2d[0] = 0.82f;
+    eye.gaze_point_2d[1] = 0.90f;
+    eye.gaze_ts_ns       = 777;
 
-    GazePair out;
-    native::apply_gaze_v1(in, out);
+    GazeSample out;
+    native::apply_eye_gaze(eye, FGB_ATTR_LEFT_POINT, FGB_ATTR_LEFT_GAZE, FGB_ATTR_LEFT_POINT, 0,
+                           out);
 
-    FGB_CHECK(!out.left.valid);   // 没有方向就是没有方向
-    FGB_CHECK(!out.right.valid);
-    FGB_CHECK(!out.combinedValid);
-    FGB_CHECK(out.any_valid());   // 但"有点"也算有数据，不能整帧丢
-    FGB_CHECK(out.left.pointValid);
-    FGB_CHECK(out.right.pointValid);
-    FGB_CHECK(out.pointsValid);
-    FGB_CHECK_NEAR(out.left.point2d.x, 0.82, 1e-6);
-    FGB_CHECK_NEAR(out.right.point2d.x, 0.91, 1e-6);
+    FGB_CHECK(!out.valid); // 没有方向就是没有方向
+    FGB_CHECK(out.pointValid); // 但"有点"也算有数据，不能丢
+    FGB_CHECK_NEAR(out.point2d.x, 0.82, 1e-6);
     FGB_CHECK(out.captureTsNs == 777);
-    FGB_CHECK(!out.pointViewport); // 没声明 VIEWPORT：按来源原始坐标处理
-}
-
-FGB_TEST(native_gaze_viewport_bit_marks_point_space) {
-    FgbGazeV1 in{};
-    in.valid             = FGB_GAZE_POINT_2D | FGB_GAZE_POINT_VIEWPORT;
-    in.left_point_2d[0]  = 0.25f;
-    in.right_point_2d[0] = 0.75f;
-
-    GazePair out;
-    native::apply_gaze_v1(in, out);
-    FGB_CHECK(out.pointViewport); // 模块声明已标定到视口
-    FGB_CHECK(out.left.pointValid && out.right.pointValid);
 }
 
 FGB_TEST(native_gaze_direction_and_points_stay_independent) {
-    // 只有左眼方向 + 双眼点：右眼方向无效，但右眼的点照样要留下
-    FgbGazeV1 in{};
-    in.valid             = FGB_GAZE_LEFT | FGB_GAZE_POINT_2D;
-    in.left_dir[2]       = -1.0f;
-    in.left_point_2d[0]  = 0.1f;
-    in.right_point_2d[0] = 0.3f;
+    // 左眼同时有方向与点：两个属性各自生效
+    FgbEyeAttributes eye{};
+    eye.gaze_dir[2]      = -1.0f;
+    eye.gaze_point_2d[0] = 0.1f;
 
-    GazePair out;
-    native::apply_gaze_v1(in, out);
+    GazeSample left;
+    native::apply_eye_gaze(eye, FGB_ATTR_LEFT_GAZE | FGB_ATTR_LEFT_POINT, FGB_ATTR_LEFT_GAZE,
+                           FGB_ATTR_LEFT_POINT, 0, left);
+    FGB_CHECK(left.valid);
+    FGB_CHECK(left.pointValid);
 
-    FGB_CHECK(out.left.valid);
-    FGB_CHECK(!out.right.valid);
-    FGB_CHECK(out.left.pointValid && out.right.pointValid);
-    FGB_CHECK_NEAR(out.right.point2d.x, 0.3, 1e-6);
+    // 同一只眼只置点位：方向必须保持无效，不能被默认 -Z 冒充
+    GazeSample right;
+    native::apply_eye_gaze(eye, FGB_ATTR_RIGHT_POINT, FGB_ATTR_RIGHT_GAZE, FGB_ATTR_RIGHT_POINT,
+                           0, right);
+    FGB_CHECK(!right.valid);
+    FGB_CHECK(right.pointValid);
+    FGB_CHECK_NEAR(right.point2d.x, 0.1, 1e-6);
 }
 
 FGB_TEST(native_gaze_placeholder_direction_is_detectable) {
@@ -256,20 +243,22 @@ FGB_TEST(native_gaze_placeholder_direction_is_detectable) {
 
 // ADR-0033：NaN/Inf 是"没算出来"，不是"看向角落"，必须逐眼否掉（另一只眼不受影响）
 FGB_TEST(native_gaze_non_finite_point_is_rejected_per_eye) {
-    FgbGazeV1 in{};
-    in.valid             = FGB_GAZE_POINT_2D;
-    in.left_point_2d[0]  = std::numeric_limits<float>::quiet_NaN();
-    in.left_point_2d[1]  = 0.5f;
-    in.right_point_2d[0] = 0.4f;
-    in.right_point_2d[1] = 0.6f;
+    FgbEyeAttributes bad{};
+    bad.gaze_point_2d[0] = std::numeric_limits<float>::quiet_NaN();
+    bad.gaze_point_2d[1] = 0.5f;
 
-    GazePair out;
-    native::apply_gaze_v1(in, out);
+    GazeSample left;
+    native::apply_eye_gaze(bad, FGB_ATTR_LEFT_POINT, FGB_ATTR_LEFT_GAZE, FGB_ATTR_LEFT_POINT, 0,
+                           left);
+    FGB_CHECK(!left.pointValid); // 这只眼算坏了
 
-    FGB_CHECK(!out.left.pointValid);  // 左眼算坏了
-    FGB_CHECK(out.right.pointValid);  // 右眼照样能用
-    FGB_CHECK(!out.pointsValid);      // 兼容字段要求两眼都有点
-    FGB_CHECK(out.any_valid());       // 但这一帧仍然有数据
+    FgbEyeAttributes good{};
+    good.gaze_point_2d[0] = 0.4f;
+    good.gaze_point_2d[1] = 0.6f;
+    GazeSample right;
+    native::apply_eye_gaze(good, FGB_ATTR_RIGHT_POINT, FGB_ATTR_RIGHT_GAZE, FGB_ATTR_RIGHT_POINT,
+                           0, right);
+    FGB_CHECK(right.pointValid); // 另一只眼照样能用
 }
 
 // ADR-0033 的越界诊断：视口坐标 [0,1]，0.25 余量内不算异常
@@ -290,23 +279,23 @@ FGB_TEST(native_gaze_point_range_diagnostic) {
     FGB_CHECK(native::gaze_point_out_of_viewport(gaze));
 }
 
-FGB_TEST(native_gaze_v2_point_attribute_alone_is_kept) {
-    FgbEyeAttributesV2 in{};
+FGB_TEST(native_gaze_point_attribute_alone_uses_frame_timestamp) {
+    FgbEyeAttributes in{};
     in.gaze_point_2d[0] = 0.4f;
     in.gaze_point_2d[1] = 0.6f;
     in.gaze_ts_ns       = 0; // 0 = 用整帧时刻
 
     GazeSample sample;
-    native::apply_eye_gaze_v2(in, FGB_ATTR_LEFT_POINT, FGB_ATTR_LEFT_GAZE, FGB_ATTR_LEFT_POINT,
-                              4242, sample);
+    native::apply_eye_gaze(in, FGB_ATTR_LEFT_POINT, FGB_ATTR_LEFT_GAZE, FGB_ATTR_LEFT_POINT,
+                           4242, sample);
 
-    FGB_CHECK(!sample.valid);       // 没给方向属性
+    FGB_CHECK(!sample.valid); // 没给方向属性
     FGB_CHECK(sample.pointValid);
     FGB_CHECK_NEAR(sample.point2d.y, 0.6, 1e-6);
     FGB_CHECK(sample.captureTsNs == 4242);
 }
 
-// 2D-only 模块（只声明 FGB_GAZE_POINT_2D）走完整 ABI：帧要留下来，
+// 2D-only 模块（只置点位属性）走完整 ABI：帧要留下来，
 // 方向必须无效，点要一路到 Engine。示例模块用环境变量模拟这种模块。
 FGB_TEST(native_gaze_points_only_module_reaches_engine) {
     if (!fs::exists(sample_gaze_dll())) {
@@ -484,7 +473,7 @@ FGB_TEST(native_v2_openness_module_emits_eye_attributes_without_gaze) {
     const auto status = source.module_status();
     FGB_CHECK(status.has_value());
     if (status.has_value()) {
-        FGB_CHECK(status->capabilities == FGB_CAP_EYE_ATTRIBUTES);
+        FGB_CHECK(status->capabilities == FGB_CAP_EYES);
     }
     source.stop();
 }
@@ -550,7 +539,7 @@ FGB_TEST(native_manifest_optional_capability_fields) {
     if (face != nullptr) {
         FGB_CHECK(face->declared_capabilities == FGB_CAP_EXPRESSION);
         FGB_CHECK(face->role_hint == "expression");
-        FGB_CHECK(face->min_host_version == "1.0.2");
+        FGB_CHECK(face->abi_version == 2);
         FGB_CHECK(face->host_compatible);
     }
     const vrcft::ModuleInfo* gaze = registry.find("com.fgbbridge.sample.gaze");
@@ -562,9 +551,55 @@ FGB_TEST(native_manifest_optional_capability_fields) {
     const vrcft::ModuleInfo* openness = registry.find("com.fgbbridge.sample.openness");
     FGB_CHECK(openness != nullptr);
     if (openness != nullptr) {
-        FGB_CHECK(openness->declared_capabilities == FGB_CAP_EYE_ATTRIBUTES);
+        FGB_CHECK(openness->declared_capabilities == FGB_CAP_EYES);
         FGB_CHECK(openness->role_hint == "eyes");
     }
+}
+
+// ABI v1 已移除（ADR-0034）：清单写 AbiVersion 1 的模块在列表里就标成不兼容，
+// 不必等 LoadLibrary 才失败。
+FGB_TEST(native_manifest_rejects_removed_abi_version) {
+    TempDir root;
+    const fs::path dir = root.path / "store" / "com.example.legacy";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    {
+        std::ofstream out{dir / "fgb-native.json"};
+        out << R"({
+  "ModuleId": "com.example.legacy",
+  "ModuleName": "Legacy Module",
+  "Version": "0.9.0",
+  "DllFileName": "legacy.dll",
+  "AbiVersion": 1,
+  "Capabilities": ["expression"]
+})";
+    }
+
+    vrcft::ModuleRegistry registry{root.path / "modules.ini", root.path / "store"};
+    registry.rescan();
+    const vrcft::ModuleInfo* module = registry.find("com.example.legacy");
+    FGB_CHECK(module != nullptr);
+    if (module != nullptr) {
+        FGB_CHECK(module->abi_version == 1);
+        FGB_CHECK(!module->host_compatible);
+    }
+}
+
+// ABI v1 已移除（ADR-0034）：只有老符号的 DLL 必须被拒绝，并说清怎么修，
+// 不能让用户以为"这不是 FGB 模块"。
+FGB_TEST(native_v1_only_dll_is_rejected_with_migration_hint) {
+    const fs::path legacy = exe_dir() / "fgb-test-legacy-v1.dll";
+    if (!fs::exists(legacy)) {
+        return;
+    }
+    NativeSourceConfig config;
+    config.dll         = legacy;
+    config.module_id   = "com.example.legacy-v1";
+    config.module_name = "Legacy V1 Fixture";
+    NativeModuleSource source{config};
+    FGB_CHECK(!source.start());
+    FGB_CHECK(source.last_error().find("v1") != std::string::npos);
+    FGB_CHECK(source.last_error().find("重新编译") != std::string::npos);
 }
 
 FGB_TEST(native_module_rejects_dll_without_export) {

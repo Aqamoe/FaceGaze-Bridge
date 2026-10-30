@@ -1,5 +1,6 @@
 // 跨进程原生模块宿主：真实启动 host 子进程，读共享内存并验证崩溃隔离。
 #include "base/clock.hpp"
+#include "fgb_module_api.h"
 #include "sources/native_host_source.hpp"
 
 #include "test_framework.hpp"
@@ -104,7 +105,7 @@ FGB_TEST(native_host_process_loads_v2_module) {
     const auto status = source.module_status();
     FGB_CHECK(status.has_value());
     if (status.has_value()) {
-        FGB_CHECK((status->capabilities & 0x10u) != 0);
+        FGB_CHECK((status->capabilities & FGB_CAP_EYES) != 0);
     }
     source.stop();
 }

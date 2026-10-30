@@ -5,5 +5,8 @@
   "Version": "1.0.0",
   "ModuleDescription": "Synthetic sine-wave module for native ABI tests (no hardware required).",
   "ModulePageUrl": "https://github.com/Aqamoe/FaceGaze-Bridge",
-  "DllFileName": "fgb-sample-native.dll"
+  "DllFileName": "fgb-sample-native.dll",
+  "AbiVersion": 2,
+  "Capabilities": ["expression", "eyes", "head"],
+  "RoleHint": "expression"
 }

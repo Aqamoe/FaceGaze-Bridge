@@ -2,7 +2,9 @@
 
 - 状态：**已实施（v1.1 + v2 阶段 A/B/C.2）**；属性级细节见
   [ADR-0031](0031-native-module-v2-attribute-fusion.md)，跨进程宿主见
-  [ADR-0032](0032-native-host-process.md)
+  [ADR-0032](0032-native-host-process.md)。
+  **后续**：[ADR-0034](0034-native-module-v2-only.md) 删除了 v1 ABI，文中的
+  `FgbGazeV1` / `FGB_GAZE_*` / `FgbEyeV1` 现由 `FgbEyeAttributes` + `FGB_ATTR_*` 表达
 - 日期：2026-10-30
 - 影响：`sdk/fgb_module_api.h`、`sources/native_source`、`engine/source_merger`、
   `engine/engine`（注视服务）、`sinks/*`、`ui/`（模块页 / 输出页）、模块清单

@@ -147,16 +147,16 @@ print(g["valid"], g["fixation"], g["pitch_deg"], g["yaw_deg"], g["vergence_dista
 - **逐眼数据不全**：左右眼方向/角度/2D 点/来源与捕获时刻已提供；
   逐眼置信度、瞳孔直径、逐眼注视判定、眨眼分类尚未加入。
   控制面状态页把左右眼分行显示，单眼失效时该行为 `—`。
-- **只给 2D 点的来源**（`FGB_GAZE_POINT_2D`，没有方向模型的原生模块）：
+- **只给 2D 点的来源**（`FGB_ATTR_LEFT/RIGHT_POINT`，没有方向模型的原生模块）：
   帧会被正常接收，`point2d_valid` / `left_point_valid` / `right_point_valid` 为真，
   而 `valid` / `left_valid` / `right_valid` 为假——**没有方向就不返回方向**，
   `pitch_deg` / `yaw_deg` 保持 0 且不应被消费。
   这类来源没有角速度可算，`fixation` / `fixation_ms` / `saccade_vel_deg_s` 恒为假/0，
   `vergence_distance` 也是 0；消费端看 `point2d_valid` 而不是 `fixation`。
   状态页对它们**优先显示 2D 点**（坐标约定见上文 §2D 注视点坐标），2D 框也按点画。
-- **方向与 2D 点在 SDK 层是两条独立位**（`FGB_GAZE_LEFT/RIGHT/COMBINED` 与
-  `FGB_GAZE_POINT_2D`），解析层现在也按这个约定走（`sources/native_gaze_parse.hpp`）。
-  **模块只给点时必须只声明 `FGB_GAZE_POINT_2D`**：伪造一个 `-Z` 方向位会让
+- **方向与 2D 点在 SDK 层是两条独立属性**（`FGB_ATTR_LEFT/RIGHT/COMBINED_GAZE` 与
+  `FGB_ATTR_LEFT/RIGHT_POINT`），解析层也按这个约定走（`sources/native_gaze_parse.hpp`）。
+  **模块只给点时就只置点位属性**：伪造一个 `-Z` 方向会让
   `valid` 变真、`fixation` 永远「注视中」，第三方还会拿到假方向。
 - **本地回环**：控制面只绑 `127.0.0.1`，无鉴权。
 - **没有新帧时 `ts_ns` 不前进**：消费者应按 `ts_ns` 判断是否过期，而不是假设 30 Hz 一定有新数据。

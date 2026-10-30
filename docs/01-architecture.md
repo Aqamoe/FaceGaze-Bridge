@@ -452,59 +452,70 @@ FaceFrame
 
 **风险与兜底**：若某天 VRCFT 改了协议，A 层会失效。兜底方案是 §8.1 的自带 pinned 版本 —— 即"协议变了但我们不跟着变"，直到我们主动升级。这条兜底必须在 M0 就验证。
 
-### 8.2 B 层 · 原生 C ABI
+### 8.2 B 层 · 原生 C ABI（v2，唯一 ABI）
 
-> **v1 已实现**（2026-10-29，见 [ADR-0018](adr/0018-native-c-abi-v1.md)）：进程内加载、
-> `sdk/fgb_module_api.h`、`samples/native-sine`。与下面的纸面设计相比多了
-> `shape_index(name)` 服务（模块不硬编码形状下标），帧槽 v1 是宿主堆内存，布局按跨进程兼容设计。
->
-> **v1.1 已实现**（2026-10-30，见 [ADR-0030](adr/0030-native-module-v2-composition.md)）：
-> 模块能力扩展 `FGB_CAP_GAZE`，合并层增加独立注视通道，注视新鲜度与头像眼睛分开；
-> 多模块按角色组合（面捕 / 眼睛 / 注视 / 头姿），头像输出与 foveation 渲染输出分路。
-> 属性级组合的分阶段设计见 [ADR-0031](adr/0031-native-module-v2-attribute-fusion.md)：
-> 阶段 A 支持左右眼/左右注视分源与“A 的 openness + B 的 gaze”合成（默认关闭）；
-> 阶段 B 增加 `FgbFrameSlotV2` 属性掩码与 `fgb_module_query_v2`，v1/v2 模块并存。
-> 阶段 C 增加 `fgb-host-native.exe`：一模块一进程、共享内存 seqlock 传帧，
-> 引擎通过 `NativeHostSource` 读取（[ADR-0032](adr/0032-native-host-process.md)）。
+> **当前形态**（2026-10-31，见 [ADR-0034](adr/0034-native-module-v2-only.md)）：只有一套 ABI，
+> `sdk/fgb_module_api.h` 只导出 `fgb_module_query_v2`，帧是**按属性分组**的 `FgbFrameSlot`。
+> 历史演进：v1（整眼原子，[ADR-0018](adr/0018-native-c-abi-v1.md)）→ v1.1 独立注视通道
+> （[ADR-0030](adr/0030-native-module-v2-composition.md)）→ v2 属性掩码与逐属性时间戳
+> （[ADR-0031](adr/0031-native-module-v2-attribute-fusion.md)）→ 跨进程宿主
+> （[ADR-0032](adr/0032-native-host-process.md)）→ 移除 v1。v1 从未有第三方模块，删除不影响任何现存模块。
 
-给新模块用的高性能接口。设计要点：
+给模块用的高性能接口。设计要点：
 
 ```c
 /* fgb_module_api.h —— 唯一需要分发的头文件，纯 C，无 STL */
-#define FGB_MODULE_ABI_V1 1
+#define FGB_MODULE_ABI_V2 2
 
-typedef struct FgbHostServicesV1 {
+typedef struct FgbHostServices {
     uint32_t struct_size;
     uint32_t abi_version;
     void  (*log)(void* ctx, int level, const char* msg);
     void  (*report_status)(void* ctx, int state, const char* detail);
-    /* 由宿主分配、模块写入的共享内存帧槽 */
-    FgbFrameSlotV1* (*acquire_frame_slot)(void* ctx);
-    void  (*commit_frame_slot)(void* ctx, FgbFrameSlotV1*, uint64_t capture_ts_ns);
+    /* 由宿主分配、模块写入的帧槽 */
+    FgbFrameSlot* (*acquire_frame_slot)(void* ctx);
+    void  (*commit_frame_slot)(void* ctx, FgbFrameSlot*, uint64_t capture_ts_ns);
+    int32_t (*shape_index)(void* ctx, const char* name);  /* 不硬编码 88 项顺序 */
     void* ctx;
-} FgbHostServicesV1;
+} FgbHostServices;
 
-typedef struct FgbModuleV1 {
+typedef struct FgbFrameSlot {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t shape_count;
+    uint32_t reserved;
+    uint64_t attributes;   /* FGB_ATTR_* 位或：这一帧真的带了哪些属性 */
+    float shapes[88];
+    uint8_t shape_valid[88];
+    uint64_t expression_ts_ns;
+    FgbEyeAttributes left_eye, right_eye;  /* openness/pupil/gaze/point 各自独立 */
+    ...
+} FgbFrameSlot;
+
+typedef struct FgbModule {
     uint32_t struct_size;
     uint32_t abi_version;
     const char* id;            // 反向域名，如 "com.example.questpro"
     const char* display_name;
-    uint32_t capabilities;     // FGB_CAP_EYE | FGB_CAP_EXPRESSION | FGB_CAP_GAZE | FGB_CAP_HEAD
+    uint32_t capabilities;     // FGB_CAP_EYES | EXPRESSION | GAZE | HEAD
 
-    bool (*initialize)(void** self, const FgbHostServicesV1*, const FgbInitParamsV1*);
-    void (*update)(void* self);          /* 宿主按 tick 调用，或模块自驱 push */
+    int  (*initialize)(void** self, const FgbHostServices*, const FgbInitParams*);
+    void (*update)(void* self);          /* 宿主按 tick 调用 */
     void (*teardown)(void* self);
-} FgbModuleV1;
+} FgbModule;
 
 /* 唯一导出符号 —— 避免 C++ name mangling 与 STL ABI 问题 */
-FGB_EXPORT const FgbModuleV1* fgb_module_query(uint32_t host_abi_version);
+FGB_EXPORT const FgbModule* fgb_module_query_v2(uint32_t host_abi_version);
 ```
 
 三条铁律：
 
-- **只导出 `fgb_module_query` 一个符号**。模块内部随便用 C++20、随便用 STL，跨边界只走 POD。
-- **`struct_size` 前向兼容**。宿主按 `min(module.struct_size, host.expected)` 读取，新字段追加在尾部，永不重排。
-- **帧数据走共享内存，不走函数返回**。避免每次调用都拷贝 500 字节。
+- **属性帧而不是整通道**。模块只置自己真有数据的 `FGB_ATTR_*` 位；没有位就没有数据，
+  宿主不会把 0 当成"闭眼"或"看正前方"。眼、注视、头部可以分别来自不同模块。
+- **能力位决定通道归属**。`EYES` → 头像眼睛，`GAZE` → 渲染注视/foveation；
+  写了某类属性却没声明对应能力位时宿主告警一次（数据仍采用），界面按能力位展示角色。
+- **`struct_size` 前向兼容**。宿主按 `min(module.struct_size, host.expected)` 读取，新字段追加在尾部，永不重排；
+  帧槽由宿主分配，模块写新字段前先比较 `slot->struct_size`。
 
 ### 8.3 C 层 · 协议直连
 

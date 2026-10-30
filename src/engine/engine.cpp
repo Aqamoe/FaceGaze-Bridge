@@ -80,6 +80,10 @@ bool Engine::start_source(std::string_view name, std::string& error) {
         }
         if (!source->start()) {
             error = "输入源启动失败";
+            if (const auto status = source->module_status(); status.has_value() &&
+                                                             !status->error.empty()) {
+                error += "：" + status->error;
+            }
             return false;
         }
         FGB_INFO(kTag, "输入源 '%s' 已启动", source->name());
@@ -92,7 +96,15 @@ bool Engine::start_source(std::string_view name, std::string& error) {
 bool Engine::start() {
     for (auto& source : sources_) {
         if (!source->start()) {
-            FGB_ERROR(kTag, "source '%s' 启动失败", source->name());
+            // 模块给的失败原因（ABI 不兼容、缺 DLL、初始化返回 0）必须进日志，
+            // 否则命令行用户只能看到"启动失败"，诊断要回界面翻模块卡片。
+            const auto status = source->module_status();
+            if (status.has_value() && !status->error.empty()) {
+                FGB_ERROR(kTag, "source '%s' 启动失败：%s", source->name(),
+                          status->error.c_str());
+            } else {
+                FGB_ERROR(kTag, "source '%s' 启动失败", source->name());
+            }
             return false;
         }
     }
