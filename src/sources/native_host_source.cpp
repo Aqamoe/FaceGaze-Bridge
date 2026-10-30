@@ -136,6 +136,12 @@ bool NativeHostSource::start() {
     if (started_) {
         return true;
     }
+    if (restart_thread_.joinable()) {
+        restart_thread_.join();
+    }
+    stopping_.store(false, std::memory_order_release);
+    restarting_.store(false, std::memory_order_release);
+    restarts_.store(0, std::memory_order_release);
     last_error_.clear();
     exited_ = false;
     if (!spawn()) {
@@ -150,6 +156,7 @@ bool NativeHostSource::start() {
         return false;
     }
     started_ = true;
+    last_log_sequence_ = 0;
     FGB_INFO(kTag, "%s 宿主已就绪（pid=%lu）", config_.display_name.c_str(),
              static_cast<unsigned long>(pid_));
     return true;
@@ -394,14 +401,22 @@ bool NativeHostSource::read_frame(FaceFrame& out) {
 }
 
 bool NativeHostSource::poll(FaceFrame& out) {
+    if (restarting_.load(std::memory_order_acquire)) {
+        return false;
+    }
+    if (restart_thread_.joinable()) {
+        restart_thread_.join();
+    }
     if (!started_ || view_ == nullptr) {
         return false;
     }
     if (exited_) {
+        schedule_restart();
         return false;
     }
     if (!process_alive()) {
         mark_process_exit();
+        schedule_restart();
         return false;
     }
     auto* block = static_cast<FgbNativeHostBlockV1*>(view_);
@@ -416,10 +431,129 @@ bool NativeHostSource::poll(FaceFrame& out) {
 #endif
         mark_process_exit();
         last_error_ = "原生模块宿主心跳超时（模块可能卡死），已终止";
-        stop();
+        schedule_restart();
         return false;
     }
-    return read_frame(out);
+    if (read_frame(out)) {
+        drain_logs();
+        return true;
+    }
+    drain_logs();
+    return false;
+}
+
+bool NativeHostSource::restart() {
+    stopping_.store(true, std::memory_order_release);
+    if (restart_thread_.joinable()) {
+        restart_thread_.join();
+    }
+    stop_host();
+    stopping_.store(false, std::memory_order_release);
+    started_ = false;
+    exited_  = false;
+    restarting_.store(false, std::memory_order_release);
+    restarts_.store(0, std::memory_order_release);
+    last_error_.clear();
+    last_sequence_     = 0;
+    last_log_sequence_ = 0;
+    return start();
+}
+
+void NativeHostSource::schedule_restart() {
+    if (!config_.auto_restart || stopping_.load(std::memory_order_acquire) ||
+        restarting_.load(std::memory_order_acquire)) {
+        return;
+    }
+    if (restarts_.load(std::memory_order_acquire) >= config_.max_restarts) {
+        return;
+    }
+    if (restart_thread_.joinable()) {
+        restart_thread_.join();
+    }
+    restarting_.store(true, std::memory_order_release);
+    restart_thread_ = std::thread([this] { restart_worker(); });
+}
+
+void NativeHostSource::restart_worker() {
+    const int max_restarts = std::max(0, config_.max_restarts);
+    while (!stopping_.load(std::memory_order_acquire) &&
+           restarts_.load(std::memory_order_acquire) < max_restarts) {
+        const int attempt = restarts_.load(std::memory_order_acquire) + 1;
+        const std::uint64_t delay =
+            config_.restart_delay_ns * static_cast<std::uint64_t>(std::min(attempt, 3));
+        const std::uint64_t deadline = clock::now_ns() + delay;
+        while (!stopping_.load(std::memory_order_acquire) && clock::now_ns() < deadline) {
+            clock::sleep_for_ns(50'000'000);
+        }
+        if (stopping_.load(std::memory_order_acquire)) {
+            break;
+        }
+
+        stop_host();
+        exited_    = false;
+        last_error_.clear();
+        last_sequence_     = 0;
+        last_log_sequence_ = 0;
+        if (spawn() && open_block() && wait_ready()) {
+            started_ = true;
+            restarts_.fetch_add(1, std::memory_order_release);
+            FGB_INFO(kTag, "%s 已自动重启（第 %d 次）", config_.display_name.c_str(), attempt);
+            restarting_.store(false, std::memory_order_release);
+            return;
+        }
+        close_handles();
+        restarts_.fetch_add(1, std::memory_order_release);
+        last_error_ = "自动重启失败：" + last_error_;
+        FGB_WARN(kTag, "%s", last_error_.c_str());
+    }
+    started_ = false;
+    restarting_.store(false, std::memory_order_release);
+}
+
+void NativeHostSource::drain_logs() {
+#ifdef _WIN32
+    if (view_ == nullptr) {
+        return;
+    }
+    auto* block = static_cast<FgbNativeHostBlockV1*>(view_);
+    const std::uint32_t head =
+        std::atomic_ref<std::uint32_t>(block->log_head).load(std::memory_order_acquire);
+    if (head == 0 || head <= last_log_sequence_) {
+        return;
+    }
+    const std::uint32_t first =
+        std::max(last_log_sequence_ + 1, head > FGB_HOST_SHM_LOG_ENTRIES
+                                             ? head - FGB_HOST_SHM_LOG_ENTRIES + 1
+                                             : 1u);
+    for (std::uint32_t seq = first; seq <= head; ++seq) {
+        const FgbNativeHostLogV1& entry =
+            block->logs[(seq - 1) % FGB_HOST_SHM_LOG_ENTRIES];
+        if (entry.sequence != seq) {
+            continue;
+        }
+        const char* end = std::find(entry.text, entry.text + FGB_HOST_SHM_LOG_TEXT, '\0');
+        const std::string message =
+            std::string{entry.text, end} + " [" + config_.display_name + "]";
+        switch (entry.level) {
+        case 0:
+            FGB_TRACE(kTag, "%s", message.c_str());
+            break;
+        case 1:
+            FGB_DEBUG(kTag, "%s", message.c_str());
+            break;
+        case 3:
+            FGB_WARN(kTag, "%s", message.c_str());
+            break;
+        case 4:
+            FGB_ERROR(kTag, "%s", message.c_str());
+            break;
+        default:
+            FGB_INFO(kTag, "%s", message.c_str());
+            break;
+        }
+    }
+    last_log_sequence_ = head;
+#endif
 }
 
 SourceStats NativeHostSource::stats() const noexcept {
@@ -430,11 +564,14 @@ SourceStats NativeHostSource::stats() const noexcept {
 
 std::optional<ModuleRuntimeStatus> NativeHostSource::module_status() const {
     ModuleRuntimeStatus status;
-    status.alive        = started_ && !exited_ && process_alive();
+    const bool restarting = restarting_.load(std::memory_order_acquire);
+    status.alive        = !restarting && started_ && !exited_ && process_alive();
     status.frames       = frames_.load(std::memory_order_relaxed);
-    status.restarts     = 0;
+    status.restarts     = restarts_.load(std::memory_order_acquire);
     status.capabilities = capabilities_;
-    if (view_ != nullptr) {
+    if (restarting) {
+        status.error = "宿主正在重启";
+    } else if (view_ != nullptr) {
         const std::string detail = block_error();
         status.error = !last_error_.empty() ? last_error_ : detail;
     } else {
@@ -443,7 +580,7 @@ std::optional<ModuleRuntimeStatus> NativeHostSource::module_status() const {
     return status;
 }
 
-void NativeHostSource::stop() noexcept {
+void NativeHostSource::stop_host() noexcept {
 #ifdef _WIN32
     if (view_ != nullptr) {
         auto* block = static_cast<FgbNativeHostBlockV1*>(view_);
@@ -459,6 +596,17 @@ void NativeHostSource::stop() noexcept {
     }
 #endif
     close_handles();
+    started_ = false;
+}
+
+void NativeHostSource::stop() noexcept {
+    stopping_.store(true, std::memory_order_release);
+    if (restart_thread_.joinable() &&
+        restart_thread_.get_id() != std::this_thread::get_id()) {
+        restart_thread_.join();
+    }
+    stop_host();
+    restarting_.store(false, std::memory_order_release);
     started_ = false;
 }
 

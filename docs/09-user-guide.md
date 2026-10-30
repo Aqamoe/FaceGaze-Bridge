@@ -68,8 +68,11 @@ sdk\                   集成文档与示例
 - `--avatar-eye-from-gaze`：头像眼睛保留 `EYE` 源的 openness/pupil，方向改用
   `Gaze` 通道（默认关闭，头像仍只看 `Eyes`）。
 - `--native-host`：原生模块走独立 `fgb-host-native.exe` 进程，模块崩溃不带走引擎；
-  默认关闭。`--native-host-exe <路径>` 可覆盖宿主位置。界面「模块 → 启动实例」
-  的「独立进程」开关按实例配置，写入 `modules.ini` 的 `[instance_host]`。
+  默认关闭。`--native-host-exe <路径>` 可覆盖宿主位置；`--no-host-restart` 关闭
+  崩溃后的自动重启。界面「模块 → 启动实例」的「独立进程」开关按实例配置，
+  写入 `modules.ini` 的 `[instance_host]`；宿主实例行还有「重启实例」。
+- `--attr-source <属性=源[,源]>`：逐属性有序源列表，属性包括
+  `left/right-openness`、`left/right-pupil`、`left/right-gaze`、`vergence`。
 
 注视通道默认 100 ms 过期，可用 `--gaze-stale-ms` 调整；`--stale-ms` 会一次
 设置所有通道。桌面入口会把不认识的参数转给引擎，所以也可以先托盘「退出」，

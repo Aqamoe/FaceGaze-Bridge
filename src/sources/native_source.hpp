@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 
 namespace fgb {
@@ -20,6 +21,8 @@ struct NativeSourceConfig {
     std::string module_name;
     std::string display_name = "native";
     int tick_hz              = 100;
+    // 跨进程宿主用它把模块日志转发到共享内存；进程内模式留空。
+    std::function<void(int, const char*)> log_sink;
 };
 
 class NativeModuleSource final : public ISource {

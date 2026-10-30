@@ -1,6 +1,6 @@
 # ADR-0031 · 原生模块 v2：属性级眼睛合成
 
-- 状态：**提议并分阶段实施**（2026-10-30）
+- 状态：**已实施（阶段 A/B/B.2）**（2026-10-30）
 - 日期：2026-10-30
 - 影响：`src/core/model/frame.hpp`、`src/engine/source_merger.*`、`src/engine/engine.cpp`、
   `src/cli/main.cpp`、`src/web/ipc.cpp`、后续 `sdk/fgb_module_api.h`
@@ -115,10 +115,12 @@ expression、左右 openness/pupil/gaze、combined gaze、左右 2D 点、vergen
 属性到 `FaceFrame` 的转换、与 `native-gaze` 组合成“A openness + B gaze”的头像眼睛，
 以及 v1 模块继续走原路径。阶段 B **仍是进程内加载**；跨进程宿主留待阶段 C。
 
-本阶段先把 ABI/宿主打通；更细的“每个属性独立有序源列表”目前由
-`eye_left/right_source`、`gaze_left/right_source` 与 `avatar_eye_from_gaze` 覆盖
-常见组合。逐字段加权融合（例如同一只眼的 openness 取 A、pupil 取 B）留到 B.2，
-在真实模块提出需求前不提前引入更复杂的策略配置。
+B.2 已实现：`MergePolicy::attribute_sources` 与 CLI `--attr-source
+left-openness=A,B` 支持“属性 → 有序源列表”；`EyeState` 增加
+`opennessValid/pupilValid`，同一只眼的 openness、pupil、gaze 可来自不同源，
+未列出的属性回退到整眼/整通道策略。列表内按顺序取第一个新鲜且确实提供该属性的源，
+不存在的属性清空，不会偷偷回退到列表外。逐字段加权（多源平均）仍未做，
+目前是“首个可用源”；等真实模块需要融合时再加。
 
 ## 阶段 A 实施记录（2026-10-30）
 

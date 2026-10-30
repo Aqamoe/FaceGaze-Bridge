@@ -30,8 +30,9 @@ void FaceFrame::sanitize() noexcept {
     EyeState* const both[2] = {&eyes.left, &eyes.right};
     for (EyeState* e : both) {
         if (!std::isfinite(e->openness)) {
-            e->openness = 1.0f;
-            e->valid    = false;
+            e->openness      = 1.0f;
+            e->valid         = false;
+            e->opennessValid = false;
         }
         e->openness = clamp01(e->openness);
 

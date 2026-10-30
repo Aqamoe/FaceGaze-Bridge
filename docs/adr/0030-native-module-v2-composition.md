@@ -1,6 +1,8 @@
 # ADR-0030 · 原生模块 v2：注视通道与多模块组合
 
-- 状态：**已实施（v1.1）**；v2 分阶段实施，阶段 A 见 [ADR-0031](0031-native-module-v2-attribute-fusion.md)
+- 状态：**已实施（v1.1 + v2 阶段 A/B/C.2）**；属性级细节见
+  [ADR-0031](0031-native-module-v2-attribute-fusion.md)，跨进程宿主见
+  [ADR-0032](0032-native-host-process.md)
 - 日期：2026-10-30
 - 影响：`sdk/fgb_module_api.h`、`sources/native_source`、`engine/source_merger`、
   `engine/engine`（注视服务）、`sinks/*`、`ui/`（模块页 / 输出页）、模块清单

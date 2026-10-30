@@ -76,6 +76,9 @@ void NativeModuleSource::host_log(void* ctx, int level, const char* message) {
         FGB_INFO(kTag, "%s", detail.c_str());
         break;
     }
+    if (self->config_.log_sink) {
+        self->config_.log_sink(level, detail.c_str());
+    }
 }
 
 void NativeModuleSource::host_report(void* ctx, int state, const char* detail) {
@@ -208,8 +211,10 @@ void NativeModuleSource::apply_slot_v2(const FgbFrameSlotV2& slot,
             return;
         }
 
-        out.valid     = has_openness || has_pupil;
-        out.gazeValid = has_gaze;
+        out.valid         = has_openness || has_pupil;
+        out.opennessValid = has_openness;
+        out.pupilValid    = has_pupil;
+        out.gazeValid     = has_gaze;
         if (has_openness) {
             out.openness       = clamp01(in.openness);
             out.opennessConf   = clamp01(in.openness_confidence);

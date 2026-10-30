@@ -28,6 +28,8 @@
 #define FGB_HOST_SHM_SLOTS 2u
 #define FGB_HOST_SHM_MAX_SHAPES 88u
 #define FGB_HOST_SHM_ERROR_MAX 256u
+#define FGB_HOST_SHM_LOG_ENTRIES 32u
+#define FGB_HOST_SHM_LOG_TEXT 192u
 
 /* block->state */
 #define FGB_HOST_STATE_STARTING 0u
@@ -104,6 +106,12 @@ typedef struct FgbNativeHostFrameV1 {
     uint8_t shape_valid[FGB_HOST_SHM_MAX_SHAPES];
 } FgbNativeHostFrameV1;
 
+typedef struct FgbNativeHostLogV1 {
+    uint32_t sequence;
+    uint32_t level; /* FGB_LOG_* */
+    char text[FGB_HOST_SHM_LOG_TEXT];
+} FgbNativeHostLogV1;
+
 typedef struct FgbNativeHostBlockV1 {
     uint32_t magic;
     uint32_t version;
@@ -119,6 +127,11 @@ typedef struct FgbNativeHostBlockV1 {
     uint32_t stop_requested;
     uint32_t reserved;
     char error[FGB_HOST_SHM_ERROR_MAX]; /* UTF-8 */
+
+    /* 模块日志环：sequence 单调递增；消费者只读自己还没读过的序号。 */
+    uint32_t log_head;
+    uint32_t log_reserved;
+    FgbNativeHostLogV1 logs[FGB_HOST_SHM_LOG_ENTRIES];
 
     FgbNativeHostFrameV1 slots[FGB_HOST_SHM_SLOTS];
 } FgbNativeHostBlockV1;

@@ -348,10 +348,22 @@ fgb-cli run --source vrcft --module-id <A> --source vrcft --module-id <B> `
 
 # 渲染注视也按左右分源
 fgb-cli run ... --gaze-left-source "native[1]" --gaze-right-source "native[2]"
+
+# B.2：同一只眼的 openness 来自 A、pupil 来自 B、gaze 来自 C。
+# 列表按优先级取第一个新鲜且提供该属性的源；未列出的属性回退整眼策略。
+fgb-cli run --source vrcft --module-id <A> --source vrcft --module-id <B> `
+  --source vrcft --module-id <C> `
+  --attr-source left-openness="native[1],native[2]" `
+  --attr-source left-pupil="native[2]" `
+  --attr-source left-gaze="native[3]"
 ```
 
 - 不传这些参数时，左右眼来自同一个 `EYE` 源，头像眼睛不会被 `Gaze` 通道改写。
 - `--avatar-eye-from-gaze` 只替换方向；openness/pupil 仍来自 `EYE` 源。
+- `--attr-source` 的属性名：`left/right-openness`、`left/right-pupil`、
+  `left/right-gaze`、`vergence`。显式列表找不到源时该字段为空，不会回退到列表外。
+- 逐属性列表只影响**头像眼睛**；渲染注视继续由 `--gaze-source` /
+  `--gaze-left/right-source` 选择。
 - 合并结果会逐眼记录来源与捕获时间；左右眼来自不同源时，`Eyes` 通道的整通道
   来源记为未知，诊断以逐眼字段为准。
 - 这仍是 V2 阶段 A：模块必须用 v1 ABI 的整眼 `FgbEyeV1`。真正“只给 openness”
@@ -413,8 +425,11 @@ fgb-cli run --source vrcft --native-host-exe "D:\FGB\fgb-host-native.exe"
 
 - 每个原生模块一个 `fgb-host-native.exe` 进程；引擎通过 `Local\FGB_NativeHost_*`
   共享内存读帧，模块崩溃/卡死不会阻塞引擎。
-- 首版不做自动重启：模块卡片会显示宿主退出原因，重启引擎即可恢复。
-- 宿主模式暂不支持 `--record`；模块日志写到
+- 崩溃/心跳超时后默认自动重启最多 3 次（退避），不阻塞引擎 tick；
+  `--no-host-restart` 可关闭。自动重启会重新 initialize，模块状态不保留。
+- 模块页实例行的「重启实例」会停宿主再拉起；DLL 在宿主退出期间解锁，
+  替换文件后点它即可加载新 DLL，不需要重启整个引擎。
+- 宿主模式暂不支持 `--record`；模块日志经共享内存 ring 回传引擎日志，同时写到
   `%LOCALAPPDATA%\FaceGazeBridge\logs\native-host-*.log`。
 - 发布包需要 `fgb-host-native.exe` 与主程序放在一起；缺失时自动回退进程内。
   协议布局见 [`sdk/fgb_native_host_shm.h`](../sdk/fgb_native_host_shm.h)。

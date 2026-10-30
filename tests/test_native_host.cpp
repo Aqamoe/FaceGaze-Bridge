@@ -113,8 +113,10 @@ FGB_TEST(native_host_crash_does_not_look_alive) {
     if (!fs::exists(host_exe()) || !fs::exists(sine_dll())) {
         return;
     }
-    NativeHostSource source{base_config("host-crash", sine_dll(),
-                                        "com.fgbbridge.sample.sine", "Sine Sample Module")};
+    NativeHostConfig config = base_config("host-crash", sine_dll(),
+                                          "com.fgbbridge.sample.sine", "Sine Sample Module");
+    config.auto_restart = false;
+    NativeHostSource source{config};
     FGB_CHECK(source.start());
     const std::uint32_t pid = source.host_pid();
     FGB_CHECK(pid != 0);
@@ -133,6 +135,66 @@ FGB_TEST(native_host_crash_does_not_look_alive) {
         FGB_CHECK(!status->alive);
         FGB_CHECK(!status->error.empty());
     }
+    source.stop();
+}
+
+FGB_TEST(native_host_auto_restarts_after_crash) {
+    if (!fs::exists(host_exe()) || !fs::exists(sine_dll())) {
+        return;
+    }
+    NativeHostConfig config = base_config("host-restart", sine_dll(),
+                                          "com.fgbbridge.sample.sine", "Sine Sample Module");
+    config.auto_restart      = true;
+    config.max_restarts      = 2;
+    config.restart_delay_ns  = 100'000'000ULL;
+    NativeHostSource source{config};
+    FGB_CHECK(source.start());
+
+    const std::uint32_t pid = source.host_pid();
+    HANDLE process = ::OpenProcess(PROCESS_TERMINATE, FALSE, pid);
+    FGB_CHECK(process != nullptr);
+    if (process != nullptr) {
+        ::TerminateProcess(process, 7);
+        ::CloseHandle(process);
+    }
+
+    bool recovered = false;
+    for (int i = 0; i < 300 && !recovered; ++i) {
+        FaceFrame frame;
+        source.poll(frame);
+        const auto status = source.module_status();
+        recovered = status.has_value() && status->alive && status->restarts > 0;
+        if (!recovered) {
+            clock::sleep_for_ns(10'000'000);
+        }
+    }
+    FGB_CHECK(recovered);
+    if (recovered) {
+        FGB_CHECK(source.host_pid() != pid);
+    }
+    source.stop();
+}
+
+FGB_TEST(native_host_manual_restart_reloads_process) {
+    if (!fs::exists(host_exe()) || !fs::exists(sine_dll())) {
+        return;
+    }
+    NativeHostSource source{base_config("host-manual-restart", sine_dll(),
+                                        "com.fgbbridge.sample.sine", "Sine Sample Module")};
+    FGB_CHECK(source.start());
+    const std::uint32_t first_pid = source.host_pid();
+    FGB_CHECK(source.restart());
+    FGB_CHECK(source.host_pid() != 0);
+    FGB_CHECK(source.host_pid() != first_pid);
+    FaceFrame frame;
+    bool got = false;
+    for (int i = 0; i < 200 && !got; ++i) {
+        got = source.poll(frame);
+        if (!got) {
+            clock::sleep_for_ns(5'000'000);
+        }
+    }
+    FGB_CHECK(got);
     source.stop();
 }
 

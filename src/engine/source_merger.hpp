@@ -25,9 +25,16 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace fgb {
+
+// V2 B.2：属性 → 有序源列表。列表为空时回退到 eye_left/right_source 等旧策略。
+struct AttributeSourceList {
+    std::string attribute;             // left-openness / right-pupil / left-gaze / vergence ...
+    std::vector<std::string> sources;  // 注册名，按优先级排列
+};
 
 struct MergePolicy {
     // 空串 = 按注册顺序自动选
@@ -45,6 +52,9 @@ struct MergePolicy {
     // 头像眼睛保留 EYE 源的 openness/pupil，方向改用融合后的 Gaze 通道。
     // 默认 false：v1.1 的“头像只看 Eyes、渲染只看 Gaze”行为不变。
     bool avatar_eye_from_gaze = false;
+
+    // 非空时启用逐属性选源；未列出的属性仍回退到左右眼/注视的整通道策略。
+    std::vector<AttributeSourceList> attribute_sources;
 
     std::uint64_t expression_stale_ns = 500'000'000ULL;
     std::uint64_t eye_stale_ns        = 250'000'000ULL;
@@ -109,6 +119,9 @@ private:
                  std::uint64_t now_ns) const noexcept;
     int pick_eye_side(bool right, std::uint64_t now_ns) const noexcept;
     int pick_gaze_side(bool right, std::uint64_t now_ns) const noexcept;
+    const std::vector<std::string>* attribute_list(std::string_view attribute) const;
+    int pick_attribute(std::string_view attribute, int fallback_index,
+                       std::uint64_t now_ns) const noexcept;
 
     MergePolicy policy_;
     std::vector<Slot> slots_;

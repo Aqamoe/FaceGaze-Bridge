@@ -1677,6 +1677,13 @@ function render_instance_section(data) {
       if (!instance.enabled) {
         row.append(el("span", "chip err", t("modules.instance.unavailable")));
       }
+      if (instance.host_process) {
+        const restart = el("button", "btn ghost small", t("modules.instance.restart"));
+        restart.addEventListener("click", () => {
+          send({ type: "restart_instance", name: instance.name });
+        });
+        row.append(restart);
+      }
       const remove = el("button", "btn danger small", t("modules.instance.remove"));
       remove.addEventListener("click", async () => {
         const text = t("modules.instance.remove_confirm", { name: instance.name });

@@ -35,6 +35,8 @@ public:
     virtual void stop() noexcept                = 0;
     // 有新帧返回 true 并写入 out；无新数据返回 false。
     virtual bool poll(FaceFrame& out)           = 0;
+    // 可选：模块型源可以原地重启（跨进程宿主用于崩溃恢复/热替换）。
+    virtual bool restart()                       { return false; }
     virtual SourceStats stats() const noexcept  = 0;
 
     // 只有"宿主管理的模块"才有运行态；UDP/VMC 等返回 nullopt。

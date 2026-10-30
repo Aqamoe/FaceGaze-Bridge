@@ -41,6 +41,23 @@ void Engine::add_processor(std::unique_ptr<IFaceProcessor> processor) {
     }
 }
 
+bool Engine::restart_source(std::string_view name, std::string& error) {
+    error.clear();
+    for (auto& source : sources_) {
+        if (source == nullptr || name != source->name()) {
+            continue;
+        }
+        if (!source->restart()) {
+            error = "该输入源不支持重启或重启失败";
+            return false;
+        }
+        FGB_INFO(kTag, "输入源 '%s' 已重启", source->name());
+        return true;
+    }
+    error = "找不到输入源";
+    return false;
+}
+
 bool Engine::start() {
     for (auto& source : sources_) {
         if (!source->start()) {

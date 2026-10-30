@@ -272,7 +272,10 @@ def main():
         "    options: selects.map(node => node.options.length),"
         "    hosts: document.querySelectorAll('.instance-host input').length,"
         "    host_values: [...document.querySelectorAll('.instance-host input')].map(n => n.checked),"
-        "    host_expected: state.modules && state.modules.instances ? state.modules.instances.length : 0"
+        "    host_expected: state.modules && state.modules.instances ? state.modules.instances.length : 0,"
+        "    restart_buttons: document.querySelectorAll('.instance-row .btn.ghost').length,"
+        "    host_count: state.modules && state.modules.instances"
+        "      ? state.modules.instances.filter(i => i.host_process).length : 0"
         "  });"
         "})()"))
     print(f"角色来源：{roles}")
@@ -731,6 +734,9 @@ def main():
         ok = False
     if roles.get("hosts") != roles.get("host_expected"):
         print(f"FAIL 实例的独立进程开关数量与 modules.instances 不一致：{roles}")
+        ok = False
+    if roles.get("restart_buttons") != roles.get("host_count"):
+        print(f"FAIL 宿主实例的重启按钮数量不一致：{roles}")
         ok = False
     if output.get("active") != "output" or not output.get("text"):
         print("FAIL 输出页的 VMC 行没有渲染")

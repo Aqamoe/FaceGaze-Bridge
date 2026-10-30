@@ -75,6 +75,21 @@ void heartbeat(FgbNativeHostBlockV1* block, std::uint64_t now_ns) {
     std::atomic_ref<std::uint64_t>(block->heartbeat_ns).store(now_ns, std::memory_order_release);
 }
 
+void write_log(FgbNativeHostBlockV1* block, int level, const char* text) {
+    if (block == nullptr || text == nullptr) {
+        return;
+    }
+    std::atomic_ref<std::uint32_t> head(block->log_head);
+    const std::uint32_t sequence = head.load(std::memory_order_relaxed) + 1;
+    FgbNativeHostLogV1& entry =
+        block->logs[(sequence - 1) % FGB_HOST_SHM_LOG_ENTRIES];
+    entry.sequence = sequence;
+    entry.level    = static_cast<std::uint32_t>(level);
+    std::memset(entry.text, 0, sizeof(entry.text));
+    std::strncpy(entry.text, text, sizeof(entry.text) - 1);
+    head.store(sequence, std::memory_order_release);
+}
+
 bool stop_requested(const FgbNativeHostBlockV1* block) {
     return std::atomic_ref<std::uint32_t>(const_cast<FgbNativeHostBlockV1*>(block)->stop_requested)
                .load(std::memory_order_acquire) != 0;
@@ -212,6 +227,9 @@ int run(const Options& options) {
     config.module_name  = options.module_name;
     config.display_name = options.display_name;
     config.tick_hz      = options.tick_hz;
+    config.log_sink     = [block](int level, const char* message) {
+        write_log(block, level, message);
+    };
 
     fgb::NativeModuleSource source{config};
     if (!source.start()) {

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <thread>
 
 namespace fgb {
 
@@ -23,6 +24,9 @@ struct NativeHostConfig {
     std::string display_name = "native-host";
     std::string shm_name;
     int tick_hz = 100;
+    bool auto_restart          = true;
+    int max_restarts           = 3;
+    std::uint64_t restart_delay_ns = 1'000'000'000ULL;
 };
 
 class NativeHostSource final : public ISource {
@@ -34,6 +38,7 @@ public:
     bool start() override;
     void stop() noexcept override;
     bool poll(FaceFrame& out) override;
+    bool restart() override;
     SourceStats stats() const noexcept override;
     std::optional<ModuleRuntimeStatus> module_status() const override;
 
@@ -50,6 +55,10 @@ private:
     void mark_process_exit();
     std::string block_error() const;
     bool read_frame(FaceFrame& out);
+    void drain_logs();
+    void stop_host() noexcept;
+    void schedule_restart();
+    void restart_worker();
 
     NativeHostConfig config_;
     std::string mapping_name_;
@@ -64,8 +73,13 @@ private:
     bool exited_       = false;
     std::uint64_t last_sequence_ = 0;
     std::uint64_t last_heartbeat_ns_ = 0;
+    std::uint32_t last_log_sequence_ = 0;
     std::atomic<std::uint64_t> frames_{0};
     std::uint32_t capabilities_ = 0;
+    std::atomic<bool> restarting_{false};
+    std::atomic<bool> stopping_{false};
+    std::atomic<int> restarts_{0};
+    std::thread restart_thread_;
 };
 
 } // namespace fgb

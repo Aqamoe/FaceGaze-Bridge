@@ -119,6 +119,34 @@ FaceFrame eyes_pair_frame(float left_open, float right_open, float left_yaw, flo
     return frame;
 }
 
+FaceFrame eye_attrs_frame(bool left_open, bool right_open, bool left_pupil, bool right_pupil,
+                          float left_open_value, float right_open_value,
+                          float left_pupil_value, float right_pupil_value,
+                          float left_yaw, float right_yaw, bool gaze) {
+    FaceFrame frame = FaceFrame::neutral();
+    frame.eyes.left.opennessValid  = left_open;
+    frame.eyes.right.opennessValid = right_open;
+    frame.eyes.left.pupilValid     = left_pupil;
+    frame.eyes.right.pupilValid    = right_pupil;
+    frame.eyes.left.gazeValid      = gaze;
+    frame.eyes.right.gazeValid     = gaze;
+    frame.eyes.left.valid          = left_open || left_pupil;
+    frame.eyes.right.valid         = right_open || right_pupil;
+    frame.eyes.left.openness       = left_open_value;
+    frame.eyes.right.openness      = right_open_value;
+    frame.eyes.left.pupilDiameterMm  = left_pupil_value;
+    frame.eyes.right.pupilDiameterMm = right_pupil_value;
+    frame.eyes.left.gazeDirLocal =
+        Vec3{std::sin(left_yaw * kDegToRad), 0.0f, -std::cos(left_yaw * kDegToRad)};
+    frame.eyes.right.gazeDirLocal =
+        Vec3{std::sin(right_yaw * kDegToRad), 0.0f, -std::cos(right_yaw * kDegToRad)};
+    frame.eyes.left.gazePitchYawDeg  = Vec2{0.0f, left_yaw};
+    frame.eyes.right.gazePitchYawDeg = Vec2{0.0f, right_yaw};
+    frame.add_channel(channel::kEyes);
+    frame.captureTsNs = 2000;
+    return frame;
+}
+
 FaceFrame head_frame() {
     FaceFrame frame    = FaceFrame::neutral();
     frame.hasHeadPose  = true;
@@ -509,6 +537,110 @@ FGB_TEST(merge_gaze_sides_can_come_from_different_sources) {
     // 左右来自不同源时，合并方向由两侧平均得到
     FGB_CHECK_NEAR(merged.gaze.combinedDirLocal.x, 0.0, 1e-5);
     FGB_CHECK(merged.channelStamps[channel::index(channel::kGaze)].source == kInvalidSource);
+}
+
+FGB_TEST(merge_attribute_openness_and_pupil_can_come_from_different_sources) {
+    FakeSource openness{"open"};
+    FakeSource pupil{"pupil"};
+
+    SourceMerger merger;
+    MergePolicy policy;
+    policy.attribute_sources = {
+        {"left-openness", {"open"}}, {"right-openness", {"open"}},
+        {"left-pupil", {"pupil"}},   {"right-pupil", {"pupil"}},
+    };
+    merger.set_policy(policy);
+    merger.add(&openness);
+    merger.add(&pupil);
+
+    openness.push(eye_attrs_frame(true, true, false, false, 0.2f, 0.8f, 0.0f, 0.0f,
+                                  -10.0f, -10.0f, false));
+    pupil.push(eye_attrs_frame(false, false, true, true, 0.0f, 0.0f, 4.0f, 5.0f, 0.0f, 0.0f,
+                               false));
+
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(10'000'000ULL, merged));
+    FGB_CHECK_NEAR(merged.eyes.left.openness, 0.2, 1e-6);
+    FGB_CHECK_NEAR(merged.eyes.right.openness, 0.8, 1e-6);
+    FGB_CHECK_NEAR(merged.eyes.left.pupilDiameterMm, 4.0, 1e-6);
+    FGB_CHECK_NEAR(merged.eyes.right.pupilDiameterMm, 5.0, 1e-6);
+    FGB_CHECK(merged.eyes.left.opennessSource == 1);
+    FGB_CHECK(merged.eyes.left.pupilSource == 2);
+    FGB_CHECK(merged.eyes.right.opennessSource == 1);
+    FGB_CHECK(merged.eyes.right.pupilSource == 2);
+    FGB_CHECK(merged.contributingSources == 0b11u);
+    FGB_CHECK(merged.channelStamps[channel::index(channel::kEyes)].source == kInvalidSource);
+}
+
+FGB_TEST(merge_attribute_ordered_list_skips_stale_source) {
+    FakeSource first{"first"};
+    FakeSource second{"second"};
+
+    SourceMerger merger;
+    MergePolicy policy;
+    policy.eye_stale_ns = 100'000'000ULL;
+    policy.attribute_sources = {{"left-openness", {"first", "second"}}};
+    merger.set_policy(policy);
+    merger.add(&first);
+    merger.add(&second);
+
+    first.push(eye_attrs_frame(true, true, false, false, 0.2f, 0.2f, 0, 0, 0, 0, false));
+    second.push(eye_attrs_frame(true, true, false, false, 0.4f, 0.4f, 0, 0, 0, 0, false));
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(1'000'000'000ULL, merged));
+    FGB_CHECK_NEAR(merged.eyes.left.openness, 0.2, 1e-6);
+
+    // 150 ms 后第一个源过期，第二仍在列表里且新鲜；属性不能继续用 first。
+    second.push(eye_attrs_frame(true, true, false, false, 0.6f, 0.6f, 0, 0, 0, 0, false));
+    FGB_CHECK(merger.poll(1'150'000'000ULL, merged));
+    FGB_CHECK_NEAR(merged.eyes.left.openness, 0.6, 1e-6);
+    FGB_CHECK(merged.eyes.left.opennessSource == 2);
+}
+
+FGB_TEST(merge_attribute_gaze_can_come_from_another_source) {
+    FakeSource first{"first"};
+    FakeSource second{"second"};
+
+    SourceMerger merger;
+    MergePolicy policy;
+    policy.attribute_sources = {{"left-openness", {"first"}}, {"left-gaze", {"second"}}};
+    merger.set_policy(policy);
+    merger.add(&first);
+    merger.add(&second);
+
+    first.push(eye_attrs_frame(true, true, false, false, 0.3f, 0.3f, 0, 0, -10.0f, -10.0f,
+                               true));
+    second.push(eye_attrs_frame(true, true, false, false, 0.9f, 0.9f, 0, 0, 20.0f, 20.0f,
+                                true));
+
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(10'000'000ULL, merged));
+    FGB_CHECK_NEAR(merged.eyes.left.openness, 0.3, 1e-6);
+    FGB_CHECK(merged.eyes.left.opennessSource == 1);
+    FGB_CHECK(merged.eyes.left.gazeSource == 2);
+    FGB_CHECK_NEAR(merged.eyes.left.gazePitchYawDeg.y, 20.0, 1e-4);
+}
+
+FGB_TEST(merge_attribute_missing_source_clears_only_that_field) {
+    FakeSource only{"only"};
+
+    SourceMerger merger;
+    MergePolicy policy;
+    policy.attribute_sources = {{"left-openness", {"missing"}}};
+    merger.set_policy(policy);
+    merger.add(&only);
+
+    only.push(eye_attrs_frame(true, true, true, true, 0.5f, 0.6f, 4.0f, 4.5f, 0, 0, false));
+
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(10'000'000ULL, merged));
+    // 显式列表里没有可用源：left openness 必须空，而不是偷偷回退到 only。
+    FGB_CHECK(!merged.eyes.left.opennessValid);
+    // 未配置的 pupil/right 字段仍按整眼回退。
+    FGB_CHECK(merged.eyes.left.pupilValid);
+    FGB_CHECK_NEAR(merged.eyes.left.pupilDiameterMm, 4.0, 1e-6);
+    FGB_CHECK(merged.eyes.right.opennessValid);
+    FGB_CHECK_NEAR(merged.eyes.right.openness, 0.6, 1e-6);
 }
 
 FGB_TEST(engine_uses_gaze_channel_for_render_gaze) {

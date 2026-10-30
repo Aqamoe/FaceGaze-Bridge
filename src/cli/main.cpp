@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -94,6 +95,9 @@ void print_usage() {
                  "  --gaze-left-source <名> 左眼注视单独选源\n"
                  "  --gaze-right-source <名> 右眼注视单独选源\n"
                  "  --avatar-eye-from-gaze  头像眼睛用 Gaze 方向，保留 Eyes 的 openness/pupil\n"
+                 "  --attr-source <属性=源[,源]> 逐属性有序源，如 left-openness=A,B\n"
+                 "                          属性：left/right-openness、left/right-pupil、\n"
+                 "                          left/right-gaze、vergence\n"
                  "  --expression-source <名> 指定表情来自哪个源（默认自动）\n"
                  "  --head-source <名>      指定头姿来自哪个源（默认自动）\n"
                  "  --stale-ms <毫秒>       同时设置所有通道的过期阈值\n"
@@ -122,6 +126,7 @@ void print_usage() {
                  "  --module-id <id>        按 id 或名字选模块，可重复（见 fgb-cli modules）\n"
                  "  --native-host           原生模块走独立宿主进程（崩溃隔离，默认关）\n"
                  "  --native-host-exe <路径> 指定 fgb-host-native.exe（默认 exe 旁边）\n"
+                 "  --no-host-restart       宿主崩溃后不自动重启（默认最多重试 3 次）\n"
                  "  --vrchat <host:port>    VRChat OSC 目标 (默认 127.0.0.1:9000)\n"
                  "  --vmc-out <host:port>   额外按 VMC 协议输出一份（如 127.0.0.1:39539）\n"
                  "  --shm <名字>            共享内存输出（Local\\FGB_Shm_<名字>，给 Unity/UE 读取）\n"
@@ -143,6 +148,62 @@ void print_usage() {
                  "  --tick-hz <hz>          引擎 tick 频率 (默认 120)\n"
                  "  --duration <秒>         运行指定秒数后退出，0 为不限 (默认 0)\n"
                  "  --verbose               打开调试日志\n");
+}
+
+bool parse_attr_source(std::string_view text, fgb::AttributeSourceList& out,
+                       std::string& error) {
+    const std::size_t eq = text.find('=');
+    if (eq == std::string_view::npos || eq == 0 || eq + 1 >= text.size()) {
+        error = "格式应为 <属性>=<源1[,源2...]>";
+        return false;
+    }
+    std::string attribute{text.substr(0, eq)};
+    std::transform(attribute.begin(), attribute.end(), attribute.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    std::replace(attribute.begin(), attribute.end(), '_', '-');
+    static constexpr std::string_view kAttributes[] = {
+        "left-openness", "right-openness", "left-pupil", "right-pupil",
+        "left-gaze",     "right-gaze",     "vergence",
+    };
+    const bool known = std::any_of(std::begin(kAttributes), std::end(kAttributes),
+                                   [&attribute](std::string_view name) {
+                                       return name == attribute;
+                                   });
+    if (!known) {
+        error = "未知属性：" + attribute;
+        return false;
+    }
+
+    std::vector<std::string> sources;
+    std::string_view rest = text.substr(eq + 1);
+    while (!rest.empty()) {
+        const std::size_t comma = rest.find(',');
+        const std::string_view part =
+            comma == std::string_view::npos ? rest : rest.substr(0, comma);
+        std::size_t begin = 0;
+        std::size_t end   = part.size();
+        while (begin < end && (part[begin] == ' ' || part[begin] == '\t')) {
+            ++begin;
+        }
+        while (end > begin && (part[end - 1] == ' ' || part[end - 1] == '\t')) {
+            --end;
+        }
+        if (end > begin) {
+            sources.emplace_back(part.substr(begin, end - begin));
+        }
+        if (comma == std::string_view::npos) {
+            break;
+        }
+        rest.remove_prefix(comma + 1);
+    }
+    if (sources.empty()) {
+        error = "没有给出源名";
+        return false;
+    }
+    out.attribute = std::move(attribute);
+    out.sources   = std::move(sources);
+    return true;
 }
 
 bool parse_uint16(std::string_view text, std::uint16_t& out) {
@@ -328,6 +389,7 @@ int cmd_run(int argc, char** argv) {
     std::string merge_gaze_right_source;
     std::string merge_head_source;
     bool avatar_eye_from_gaze = false;
+    std::vector<fgb::AttributeSourceList> attribute_sources;
     int expression_stale_ms = 500;
     int eye_stale_ms        = 250;
     int gaze_stale_ms       = 100;
@@ -335,6 +397,7 @@ int cmd_run(int argc, char** argv) {
     std::filesystem::path module_exe;
     std::filesystem::path module_dll;
     bool native_host = false;
+    bool host_auto_restart = true;
     std::filesystem::path native_host_exe;
     int native_host_counter = 0;
     std::string active_module_id;
@@ -436,6 +499,25 @@ int cmd_run(int argc, char** argv) {
             merge_gaze_right_source = std::string{next_value(arg)};
         } else if (arg == "--avatar-eye-from-gaze") {
             avatar_eye_from_gaze = true;
+        } else if (arg == "--attr-source") {
+            fgb::AttributeSourceList entry;
+            std::string error;
+            if (!parse_attr_source(next_value(arg), entry, error)) {
+                std::fputs("--attr-source 无效：", stderr);
+                std::fputs(error.c_str(), stderr);
+                std::fputc('\n', stderr);
+                return 2;
+            }
+            const auto existing = std::find_if(
+                attribute_sources.begin(), attribute_sources.end(),
+                [&entry](const fgb::AttributeSourceList& item) {
+                    return item.attribute == entry.attribute;
+                });
+            if (existing != attribute_sources.end()) {
+                existing->sources = std::move(entry.sources);
+            } else {
+                attribute_sources.push_back(std::move(entry));
+            }
         } else if (arg == "--expression-source") {
             merge_expression_source = std::string{next_value(arg)};
         } else if (arg == "--head-source") {
@@ -524,6 +606,8 @@ int cmd_run(int argc, char** argv) {
             if (!v.empty()) {
                 native_host_exe = std::filesystem::path{std::string{v}};
             }
+        } else if (arg == "--no-host-restart") {
+            host_auto_restart = false;
         } else if (arg == "--vmc-port") {
             const auto v = next_value(arg);
             if (v.empty() || !parse_uint16(v, vmc_cfg.port)) {
@@ -777,6 +861,7 @@ int cmd_run(int argc, char** argv) {
                 host_cfg.display_name = display;
                 host_cfg.shm_name    = "module-" + std::to_string(index);
                 host_cfg.tick_hz     = tick_hz;
+                host_cfg.auto_restart = host_auto_restart;
                 if (!record_path.empty()) {
                     FGB_WARN("native-host", "宿主模式暂不支持 --record，已忽略");
                 }
@@ -1068,6 +1153,7 @@ int cmd_run(int argc, char** argv) {
         merge_policy.gaze_right_source = merge_gaze_right_source;
         merge_policy.head_source       = merge_head_source;
         merge_policy.avatar_eye_from_gaze = avatar_eye_from_gaze;
+        merge_policy.attribute_sources   = attribute_sources;
         merge_policy.expression_stale_ns =
             static_cast<std::uint64_t>(expression_stale_ms) * 1'000'000ULL;
         merge_policy.eye_stale_ns = static_cast<std::uint64_t>(eye_stale_ms) * 1'000'000ULL;
@@ -1094,6 +1180,9 @@ int cmd_run(int argc, char** argv) {
                  gaze_right_name.c_str(), name_or_auto(merge_head_source).c_str(),
                  avatar_eye_from_gaze ? "gaze" : "eyes", expression_stale_ms, eye_stale_ms,
                  gaze_stale_ms, head_stale_ms);
+        if (!attribute_sources.empty()) {
+            FGB_INFO("cli", "逐属性源：%zu 组（见 --attr-source）", attribute_sources.size());
+        }
     }
     // 校准链路的顺序：取样（校准前的原始值）→ 校准 → 滤波。
     // 取样只服务于界面预览，默认关闭；校准与滤波才是真正改变输出的两步。

@@ -30,9 +30,11 @@ struct EyeState {
     Vec2 gazePitchYawDeg{0.0f, 0.0f};     // 缓存，避免每帧重复三角函数
     float gazeConf = 0.0f;
 
-    // 方向是否由来源真实提供。v1 整眼默认 true；v2 只给 openness 的模块必须置 false，
-    // 否则渲染注视会把默认的“正前方”当成真实方向。
-    bool gazeValid = true;
+    // 属性是否由来源真实提供。v1 整眼默认 true；v2 属性模块按 attributes 位设置，
+    // 否则逐字段选源会把默认值当成真实数据。
+    bool opennessValid = true;
+    bool pupilValid    = true;
+    bool gazeValid     = true;
 
     // 属性级来源（ADR-0031）。v1 输入整眼来自同一个源，三个字段通常相同；
     // 开启 avatar_eye_from_gaze 后 gazeSource/gazeTsNs 会单独指向 Gaze 通道。

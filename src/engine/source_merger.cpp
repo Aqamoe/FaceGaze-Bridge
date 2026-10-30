@@ -143,6 +143,66 @@ int SourceMerger::pick_gaze_side(bool right, std::uint64_t now_ns) const noexcep
     return pick_for(kGaze, side.empty() ? policy_.gaze_source : side, now_ns);
 }
 
+const std::vector<std::string>* SourceMerger::attribute_list(std::string_view attribute) const {
+    const std::string needle = lower(attribute);
+    for (const AttributeSourceList& entry : policy_.attribute_sources) {
+        if (lower(entry.attribute) == needle) {
+            return &entry.sources;
+        }
+    }
+    return nullptr;
+}
+
+int SourceMerger::pick_attribute(std::string_view attribute, int fallback_index,
+                                 std::uint64_t now_ns) const noexcept {
+    const std::vector<std::string>* sources = attribute_list(attribute);
+    if (sources == nullptr) {
+        return fallback_index;
+    }
+    if (sources->empty()) {
+        return -1;
+    }
+    const std::string attr = lower(attribute);
+    auto provides = [&attr](const Slot& slot) {
+        const EyeState* eye = nullptr;
+        if (attr.rfind("left-", 0) == 0) {
+            eye = &slot.last.eyes.left;
+        } else if (attr.rfind("right-", 0) == 0) {
+            eye = &slot.last.eyes.right;
+        }
+        if (attr == "vergence") {
+            return slot.last.eyes.hasVergence;
+        }
+        if (eye == nullptr || !eye->valid) {
+            return false;
+        }
+        if (attr.size() >= 8 && attr.compare(attr.size() - 8, 8, "openness") == 0) {
+            return eye->opennessValid;
+        }
+        if (attr.size() >= 5 && attr.compare(attr.size() - 5, 5, "pupil") == 0) {
+            return eye->pupilValid;
+        }
+        if (attr.size() >= 4 && attr.compare(attr.size() - 4, 4, "gaze") == 0) {
+            return eye->gazeValid;
+        }
+        return false;
+    };
+    const std::uint64_t stale_ns = stale_for(kEyes);
+    for (const std::string& wanted_name : *sources) {
+        const std::string wanted = lower(wanted_name);
+        for (std::size_t i = 0; i < slots_.size(); ++i) {
+            const Slot& slot = slots_[i];
+            if (slot.source == nullptr || lower(slot.source->name()) != wanted) {
+                continue;
+            }
+            if (fresh(slot, now_ns, stale_ns) && provides(slot)) {
+                return static_cast<int>(i);
+            }
+        }
+    }
+    return -1;
+}
+
 bool SourceMerger::poll(std::uint64_t now_ns, FaceFrame& out) {
     bool got_new = false;
     for (Slot& slot : slots_) {
@@ -232,36 +292,141 @@ bool SourceMerger::poll(std::uint64_t now_ns, FaceFrame& out) {
             eye.gazeTsNs = ts;
         }
     };
-    if (eye_left >= 0) {
-        mark(eye_left);
-        merged.eyes.left = slots_[static_cast<std::size_t>(eye_left)].last.eyes.left;
-        stamp_eye(merged.eyes.left, eye_left, slot_ts(eye_left));
+    const bool attribute_mode = !policy_.attribute_sources.empty();
+    if (!attribute_mode) {
+        if (eye_left >= 0) {
+            mark(eye_left);
+            merged.eyes.left = slots_[static_cast<std::size_t>(eye_left)].last.eyes.left;
+            stamp_eye(merged.eyes.left, eye_left, slot_ts(eye_left));
+        }
+        if (eye_right >= 0) {
+            mark(eye_right);
+            merged.eyes.right = slots_[static_cast<std::size_t>(eye_right)].last.eyes.right;
+            stamp_eye(merged.eyes.right, eye_right, slot_ts(eye_right));
+        }
+        if (eye_left >= 0 && slots_[static_cast<std::size_t>(eye_left)].last.eyes.hasVergence) {
+            merged.eyes.hasVergence = true;
+            merged.eyes.vergenceDistanceM =
+                slots_[static_cast<std::size_t>(eye_left)].last.eyes.vergenceDistanceM;
+            merged.eyes.vergenceSource = static_cast<SourceId>(eye_left + 1);
+            merged.eyes.vergenceTsNs   = slot_ts(eye_left);
+        } else if (eye_right >= 0 &&
+                   slots_[static_cast<std::size_t>(eye_right)].last.eyes.hasVergence) {
+            merged.eyes.hasVergence = true;
+            merged.eyes.vergenceDistanceM =
+                slots_[static_cast<std::size_t>(eye_right)].last.eyes.vergenceDistanceM;
+            merged.eyes.vergenceSource = static_cast<SourceId>(eye_right + 1);
+            merged.eyes.vergenceTsNs   = slot_ts(eye_right);
+        }
+    } else {
+        // B.2：属性级选源。每个字段独立走“属性 → 有序源列表”；未配置的属性
+        // 回退到该眼的整眼源。
+        const auto attr_name = [](bool right, const char* field) {
+            return std::string{right ? "right-" : "left-"} + field;
+        };
+        const auto source_eye = [this](int index, bool right) -> const EyeState& {
+            const FaceFrame& frame = slots_[static_cast<std::size_t>(index)].last;
+            return right ? frame.eyes.right : frame.eyes.left;
+        };
+        const auto merge_side = [&](bool right, int fallback) {
+            EyeState& out = right ? merged.eyes.right : merged.eyes.left;
+            out           = EyeState{};
+            out.opennessValid = false;
+            out.pupilValid    = false;
+            out.gazeValid     = false;
+
+            const int open_idx =
+                pick_attribute(attr_name(right, "openness"), fallback, now_ns);
+            if (open_idx >= 0) {
+                const EyeState& src = source_eye(open_idx, right);
+                if (src.valid && src.opennessValid) {
+                    out.openness      = src.openness;
+                    out.opennessConf  = src.opennessConf;
+                    out.opennessTsNs  = src.opennessTsNs != 0 ? src.opennessTsNs : slot_ts(open_idx);
+                    out.opennessSource = static_cast<SourceId>(open_idx + 1);
+                    out.opennessValid = true;
+                    mark(open_idx);
+                }
+            }
+            const int pupil_idx =
+                pick_attribute(attr_name(right, "pupil"), fallback, now_ns);
+            if (pupil_idx >= 0) {
+                const EyeState& src = source_eye(pupil_idx, right);
+                if (src.valid && src.pupilValid) {
+                    out.pupilDiameterMm = src.pupilDiameterMm;
+                    out.pupilDilation   = src.pupilDilation;
+                    out.pupilTsNs       = src.pupilTsNs != 0 ? src.pupilTsNs : slot_ts(pupil_idx);
+                    out.pupilSource     = static_cast<SourceId>(pupil_idx + 1);
+                    out.pupilValid      = true;
+                    mark(pupil_idx);
+                }
+            }
+            const int gaze_idx = pick_attribute(attr_name(right, "gaze"), fallback, now_ns);
+            if (gaze_idx >= 0) {
+                const EyeState& src = source_eye(gaze_idx, right);
+                if (src.valid && src.gazeValid) {
+                    out.gazeDirLocal    = src.gazeDirLocal;
+                    out.gazePitchYawDeg = src.gazePitchYawDeg;
+                    out.gazeConf        = src.gazeConf;
+                    out.gazeTsNs        = src.gazeTsNs != 0 ? src.gazeTsNs : slot_ts(gaze_idx);
+                    out.gazeSource      = static_cast<SourceId>(gaze_idx + 1);
+                    out.gazeValid       = true;
+                    mark(gaze_idx);
+                }
+            }
+            out.valid = out.opennessValid || out.pupilValid;
+        };
+        merge_side(false, eye_left);
+        merge_side(true, eye_right);
+
+        const int verg_fallback = eye_left >= 0 ? eye_left : eye_right;
+        const int verg_idx = pick_attribute("vergence", verg_fallback, now_ns);
+        if (verg_idx >= 0 &&
+            slots_[static_cast<std::size_t>(verg_idx)].last.eyes.hasVergence) {
+            const EyePair& src = slots_[static_cast<std::size_t>(verg_idx)].last.eyes;
+            merged.eyes.hasVergence       = true;
+            merged.eyes.vergenceDistanceM = src.vergenceDistanceM;
+            merged.eyes.vergenceTsNs =
+                src.vergenceTsNs != 0 ? src.vergenceTsNs : slot_ts(verg_idx);
+            merged.eyes.vergenceSource = static_cast<SourceId>(verg_idx + 1);
+            mark(verg_idx);
+        }
     }
-    if (eye_right >= 0) {
-        mark(eye_right);
-        merged.eyes.right = slots_[static_cast<std::size_t>(eye_right)].last.eyes.right;
-        stamp_eye(merged.eyes.right, eye_right, slot_ts(eye_right));
-    }
-    if (eye_left >= 0 && slots_[static_cast<std::size_t>(eye_left)].last.eyes.hasVergence) {
-        merged.eyes.hasVergence      = true;
-        merged.eyes.vergenceDistanceM =
-            slots_[static_cast<std::size_t>(eye_left)].last.eyes.vergenceDistanceM;
-        merged.eyes.vergenceSource = static_cast<SourceId>(eye_left + 1);
-        merged.eyes.vergenceTsNs   = slot_ts(eye_left);
-    } else if (eye_right >= 0 &&
-               slots_[static_cast<std::size_t>(eye_right)].last.eyes.hasVergence) {
-        merged.eyes.hasVergence      = true;
-        merged.eyes.vergenceDistanceM =
-            slots_[static_cast<std::size_t>(eye_right)].last.eyes.vergenceDistanceM;
-        merged.eyes.vergenceSource = static_cast<SourceId>(eye_right + 1);
-        merged.eyes.vergenceTsNs   = slot_ts(eye_right);
-    }
+
     if (merged.eyes.any_valid()) {
         ChannelStamp& entry = merged.channelStamps[channel::index(channel::kEyes)];
-        entry.source        = (eye_left >= 0 && eye_left == eye_right)
-                                  ? static_cast<SourceId>(eye_left + 1)
-                                  : kInvalidSource;
-        entry.captureTsNs   = std::max(slot_ts(eye_left), slot_ts(eye_right));
+        if (!attribute_mode) {
+            entry.source = (eye_left >= 0 && eye_left == eye_right)
+                               ? static_cast<SourceId>(eye_left + 1)
+                               : kInvalidSource;
+            entry.captureTsNs = std::max(slot_ts(eye_left), slot_ts(eye_right));
+        } else {
+            SourceId unique = kInvalidSource;
+            bool mixed      = false;
+            const auto consider = [&unique, &mixed](SourceId value) {
+                if (value == kInvalidSource) {
+                    return;
+                }
+                if (unique == kInvalidSource) {
+                    unique = value;
+                } else if (unique != value) {
+                    mixed = true;
+                }
+            };
+            consider(merged.eyes.left.opennessSource);
+            consider(merged.eyes.left.pupilSource);
+            consider(merged.eyes.left.gazeSource);
+            consider(merged.eyes.right.opennessSource);
+            consider(merged.eyes.right.pupilSource);
+            consider(merged.eyes.right.gazeSource);
+            consider(merged.eyes.vergenceSource);
+            entry.source = mixed ? kInvalidSource : unique;
+            entry.captureTsNs = std::max(
+                {merged.eyes.left.opennessTsNs, merged.eyes.left.pupilTsNs,
+                 merged.eyes.left.gazeTsNs, merged.eyes.right.opennessTsNs,
+                 merged.eyes.right.pupilTsNs, merged.eyes.right.gazeTsNs,
+                 merged.eyes.vergenceTsNs});
+        }
         merged.add_channel(channel::kEyes);
     } else {
         merged.clear_channel(channel::kEyes);

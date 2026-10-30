@@ -1662,6 +1662,37 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         } else {
             error = "unknown instance";
         }
+    } else if (has_type && type == "restart_instance") {
+        std::string name;
+        json::field_string(text, "name", name);
+        if (ctx_.engine == nullptr) {
+            error = "engine not available";
+        } else if (name.empty()) {
+            error = "missing instance name";
+        } else {
+            const RunningModule* target = nullptr;
+            const std::string suffix = ":" + name;
+            for (const RunningModule& module : ctx_.running_modules) {
+                if (module.display_name == name ||
+                    (module.display_name.size() >= suffix.size() &&
+                     module.display_name.compare(module.display_name.size() - suffix.size(),
+                                                 suffix.size(), suffix) == 0)) {
+                    target = &module;
+                    break;
+                }
+            }
+            std::string restart_error;
+            if (target == nullptr) {
+                error = "unknown instance";
+            } else if (ctx_.engine->restart_source(target->display_name, restart_error)) {
+                modules_touched = true;
+                modules_message = "实例已重启";
+                ack_message     = target->display_name + " 已重启";
+                ok              = true;
+            } else {
+                error = restart_error;
+            }
+        }
     } else if (has_type && type == "set_module_roles") {
         if (ctx_.modules == nullptr) {
             error = "module registry not available";
