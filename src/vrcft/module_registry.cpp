@@ -382,7 +382,8 @@ void ModuleRegistry::load_state() {
     if (state_path_.empty()) {
         return;
     }
-    config::ini_load(state_path_.string(), [this](const config::IniEntry& entry) {
+    std::unordered_map<std::string, bool> host_flags;
+    config::ini_load(state_path_.string(), [this, &host_flags](const config::IniEntry& entry) {
         if (entry.section == "state" && entry.key == "active") {
             active_id_ = entry.value;
             return;
@@ -399,7 +400,13 @@ void ModuleRegistry::load_state() {
                     return lower(instance.name) == lower(name);
                 });
             if (!duplicate) {
-                instances_.push_back(ModuleInstance{name, id});
+                instances_.push_back(ModuleInstance{name, id, false});
+            }
+            return;
+        }
+        if (entry.section == "instance_host") {
+            if (valid_instance_name(entry.key)) {
+                host_flags[entry.key] = config::parse_bool(entry.value, false);
             }
             return;
         }
@@ -432,6 +439,12 @@ void ModuleRegistry::load_state() {
             state.order = static_cast<std::uint64_t>(std::strtoull(entry.value.c_str(), nullptr, 10));
         }
     });
+    for (ModuleInstance& instance : instances_) {
+        const auto it = host_flags.find(instance.name);
+        if (it != host_flags.end()) {
+            instance.host_process = it->second;
+        }
+    }
     for (const auto& [id, state] : states_) {
         (void)id;
         if (state.order >= next_order_) {
@@ -459,8 +472,16 @@ void ModuleRegistry::save_state() const {
     writer.kv("active", active_id_);
     if (!instances_.empty()) {
         writer.section("instances");
+        bool any_host = false;
         for (const ModuleInstance& instance : instances_) {
             writer.kv(instance.name, instance.module_id);
+            any_host = any_host || instance.host_process;
+        }
+        if (any_host) {
+            writer.section("instance_host");
+            for (const ModuleInstance& instance : instances_) {
+                writer.kv_bool(instance.name, instance.host_process);
+            }
         }
     }
     if (!roles_.expression.empty() || !roles_.eyes.empty() || !roles_.gaze.empty() ||
@@ -678,7 +699,8 @@ bool ModuleRegistry::set_active(std::string_view id) {
     return true;
 }
 
-bool ModuleRegistry::add_instance(std::string_view name, std::string_view module_id) {
+bool ModuleRegistry::add_instance(std::string_view name, std::string_view module_id,
+                                  bool host_process) {
     if (!valid_instance_name(name)) {
         return false;
     }
@@ -693,7 +715,7 @@ bool ModuleRegistry::add_instance(std::string_view name, std::string_view module
     if (duplicate) {
         return false;
     }
-    instances_.push_back(ModuleInstance{std::string{name}, module->id});
+    instances_.push_back(ModuleInstance{std::string{name}, module->id, host_process});
     save_state();
     return true;
 }
@@ -708,6 +730,20 @@ bool ModuleRegistry::remove_instance(std::string_view name) {
         return false;
     }
     instances_.erase(it);
+    save_state();
+    return true;
+}
+
+bool ModuleRegistry::set_instance_host(std::string_view name, bool host_process) {
+    const std::string needle = lower(name);
+    const auto it = std::find_if(instances_.begin(), instances_.end(),
+                                 [&needle](const ModuleInstance& instance) {
+                                     return lower(instance.name) == needle;
+                                 });
+    if (it == instances_.end()) {
+        return false;
+    }
+    it->host_process = host_process;
     save_state();
     return true;
 }

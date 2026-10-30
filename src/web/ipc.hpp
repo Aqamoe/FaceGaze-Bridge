@@ -49,6 +49,7 @@ struct RunningModule {
     std::string display_name; // "vrcft[1]"，与 --eye-source 里用的名字一致
     std::string module_id;    // 注册表 id（GUID）
     std::string module_name;  // 展示名（VRCFTPicoModule）
+    bool host_process = false; // 是否由 fgb-host-native.exe 承载
     const ISource* source = nullptr;
 };
 

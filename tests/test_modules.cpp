@@ -498,7 +498,7 @@ FGB_TEST(module_instances_and_roles_persist) {
         FGB_CHECK(registry.install_path(root.path / "face", error));
         FGB_CHECK(registry.install_path(root.path / "gaze", error));
 
-        FGB_CHECK(registry.add_instance("face", "face-id"));
+        FGB_CHECK(registry.add_instance("face", "face-id", true));
         FGB_CHECK(registry.add_instance("gaze", "gaze-id"));
         FGB_CHECK(!registry.add_instance("face", "gaze-id")); // 名字重复
         FGB_CHECK(!registry.add_instance("bad", "missing-id"));
@@ -517,8 +517,18 @@ FGB_TEST(module_instances_and_roles_persist) {
     if (reopened.instances().size() == 2) {
         FGB_CHECK(reopened.instances()[0].name == "face");
         FGB_CHECK(reopened.instances()[0].module_id == "face-id");
+        FGB_CHECK(reopened.instances()[0].host_process);
         FGB_CHECK(reopened.instances()[1].name == "gaze");
         FGB_CHECK(reopened.instances()[1].module_id == "gaze-id");
+        FGB_CHECK(!reopened.instances()[1].host_process);
+    }
+    FGB_CHECK(reopened.set_instance_host("gaze", true));
+    {
+        ModuleRegistry host_reopened{state, store};
+        host_reopened.rescan();
+        FGB_CHECK(host_reopened.instances().size() == 2);
+        FGB_CHECK(host_reopened.instances()[0].host_process);
+        FGB_CHECK(host_reopened.instances()[1].host_process);
     }
     FGB_CHECK(reopened.roles().expression == "face-id");
     FGB_CHECK(reopened.roles().eyes == "face-id");

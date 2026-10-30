@@ -1661,6 +1661,19 @@ function render_instance_section(data) {
       const row = el("div", "instance-row");
       row.append(el("b", "instance-name", instance.name));
       row.append(el("span", "instance-module", instance.module_name || instance.module_id));
+      const host = el("label", "switch instance-host");
+      const host_checkbox = document.createElement("input");
+      host_checkbox.type = "checkbox";
+      host_checkbox.checked = !!instance.host_process;
+      host_checkbox.addEventListener("change", () => {
+        send({
+          type: "set_instance_host",
+          name: instance.name,
+          host_process: host_checkbox.checked,
+        });
+      });
+      host.append(host_checkbox, el("span", "", t("modules.instance.host")));
+      row.append(host);
       if (!instance.enabled) {
         row.append(el("span", "chip err", t("modules.instance.unavailable")));
       }
@@ -1789,7 +1802,11 @@ function render_running_modules(modules) {
     ui.chip.className = `chip ${chip_state.cls}`.trim();
     ui.chip.textContent = chip_state.text;
 
-    const parts = [t("modules.restarts", { count: item.restarts || 0 })];
+    const parts = [];
+    if (item.host_process) {
+      parts.push(t("modules.running.host"));
+    }
+    parts.push(t("modules.restarts", { count: item.restarts || 0 }));
     if (item.error) {
       // 模块抛出来的经常是整段 .NET 栈：只放前几行，全文挂 title
       parts.push(item.error.slice(0, 160));

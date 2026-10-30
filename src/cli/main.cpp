@@ -751,11 +751,12 @@ int cmd_run(int argc, char** argv) {
         std::string module_name;
         std::string instance_name;
         bool native = false;
+        bool host_process = false;
     };
 
     auto launch_module = [&](const ModuleLaunch& launch, const std::string& display) -> bool {
         // 原生模块可以走独立宿主进程（崩溃隔离），否则走进程内 C ABI。
-        if (launch.native && native_host) {
+        if (launch.native && (launch.host_process || native_host)) {
             const std::filesystem::path host_exe =
                 native_host_exe.empty() ? (executable_dir() / L"fgb-host-native.exe")
                                         : native_host_exe;
@@ -787,6 +788,7 @@ int cmd_run(int argc, char** argv) {
                 running.display_name = display;
                 running.module_id    = launch.module_id;
                 running.module_name  = launch.module_name;
+                running.host_process = true;
                 running.source       = host_source.get();
                 running_modules.push_back(std::move(running));
 
@@ -904,7 +906,7 @@ int cmd_run(int argc, char** argv) {
                         module_registry->mark_active(active_module_id);
                     }
                     const ModuleLaunch launch{module->dll, module->id, module->name, instance.name,
-                                              native};
+                                              native, instance.host_process};
                     if (launch_module(launch, display)) {
                         any_started = true;
                     } else if (panel_port == 0) {
@@ -989,7 +991,7 @@ int cmd_run(int argc, char** argv) {
                           : (vrcft_total > 1 ? "vrcft[" + std::to_string(index + 1) + "]"
                                              : "vrcft");
             const ModuleLaunch launch{instance_dll, instance_module_id, instance_module_name,
-                                      std::string{}, is_native};
+                                      std::string{}, is_native, native_host};
             if (!launch_module(launch, display) && panel_port == 0) {
                 return 2;
             }

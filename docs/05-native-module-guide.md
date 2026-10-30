@@ -278,6 +278,10 @@ fgb-cli run `
 face = com.example.pico-face
 gaze = com.example.pico-gaze
 
+# 可选：只让这个实例走跨进程宿主（原生模块）
+[instance_host]
+gaze = 1
+
 [roles]
 expression = com.example.pico-face
 eyes       = com.example.pico-face

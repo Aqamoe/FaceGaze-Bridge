@@ -75,7 +75,8 @@ FgbNativeHostBlockV1
 
 - 跨进程默认 **关闭**，保持单模块开箱即用的低延迟与兼容性。
 - CLI 增加 `--native-host`（所有原生模块走宿主）与 `--native-host-exe <路径>`。
-  界面在阶段 C MVP 不暴露该开关，避免用户在不了解代价时切换。
+- 界面「模块 → 启动实例」每个实例有「独立进程」开关，写入 `modules.ini` 的
+  `[instance_host]`（实例名 = 1/0），重启引擎后生效；只有原生模块受它影响。
 - 发布包把 `fgb-host-native.exe` 放在产品 exe 旁边；找不到宿主时原生模块回退
   in-proc 并写警告，不因宿主缺失让输入整体起不来。
 
@@ -114,8 +115,9 @@ FgbNativeHostBlockV1
 
 - 新增 `sdk/fgb_native_host_shm.h`、`src/native_host/host_main.cpp`、
   `src/sources/native_host_source.*`；`fgb-host-native.exe` 随 CMake/安装包产出。
-- CLI：`--native-host`（所有原生模块走宿主）与 `--native-host-exe`；找不到宿主时
-  回退进程内并写警告。
+- CLI：`--native-host`（所有原生模块走宿主）与 `--native-host-exe`；模块页启动
+  实例行提供「独立进程」开关（`[instance_host]`），重启后按实例选择宿主；
+  找不到宿主时回退进程内并写警告。
 - 宿主复用 `NativeModuleSource`，v1/v2 模块都走同一套转换；共享内存传递通道位、
   逐眼/逐通道时间戳、属性级眼睛与渲染注视。
 - 验证：194 个单测全绿（宿主真实起进程读帧、v2 openness 模块、外部杀进程后

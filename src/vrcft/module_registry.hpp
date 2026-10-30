@@ -65,6 +65,7 @@ struct ModuleInfo {
 struct ModuleInstance {
     std::string name;
     std::string module_id;
+    bool host_process = false; // 原生模块走 fgb-host-native.exe（V2 阶段 C）
 };
 
 struct ModuleRoles {
@@ -134,8 +135,10 @@ public:
     const ModuleRoles& roles() const noexcept { return roles_; }
 
     // 实例/角色都按 module_id 持久化；名字只用于展示。
-    bool add_instance(std::string_view name, std::string_view module_id);
+    bool add_instance(std::string_view name, std::string_view module_id,
+                      bool host_process = false);
     bool remove_instance(std::string_view name);
+    bool set_instance_host(std::string_view name, bool host_process);
     bool set_roles(const ModuleRoles& roles);
 
     const ModuleInfo* find(std::string_view id) const;

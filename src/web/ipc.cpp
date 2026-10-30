@@ -494,6 +494,7 @@ void IpcServer::build_metrics(std::string& out) {
         writer.key("restarts").integer(static_cast<long long>(status.restarts));
         writer.key("alive").boolean(status.alive);
         writer.key("capabilities").integer(static_cast<long long>(status.capabilities));
+        writer.key("host_process").boolean(module.host_process);
         writer.obj_end();
     }
     writer.arr_end();
@@ -1042,7 +1043,8 @@ void IpcServer::build_modules(std::string& out) {
         for (const vrcft::ModuleInstance& instance : registry->instances()) {
             bool found = false;
             for (const RunningModule& running : ctx_.running_modules) {
-                if (running.module_id != instance.module_id) {
+                if (running.module_id != instance.module_id ||
+                    running.host_process != instance.host_process) {
                     continue;
                 }
                 const std::string suffix = ":" + instance.name;
@@ -1073,6 +1075,7 @@ void IpcServer::build_modules(std::string& out) {
             writer.key("module_id").str(instance.module_id);
             writer.key("module_name").str(module != nullptr ? module->name : instance.module_id);
             writer.key("enabled").boolean(module != nullptr && module->enabled && !module->broken);
+            writer.key("host_process").boolean(instance.host_process);
             writer.obj_end();
         }
     }
@@ -1614,13 +1617,15 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     } else if (has_type && type == "add_instance") {
         std::string id;
         std::string name;
+        bool host_process = false;
         json::field_string(text, "id", id);
         json::field_string(text, "name", name);
+        json::field_bool(text, "host_process", host_process);
         if (ctx_.modules == nullptr) {
             error = "module registry not available";
         } else if (id.empty() || name.empty()) {
             error = "missing module id or instance name";
-        } else if (ctx_.modules->add_instance(name, id)) {
+        } else if (ctx_.modules->add_instance(name, id, host_process)) {
             modules_touched = true;
             modules_message = "启动实例已添加（重启引擎后生效）";
             ack_message     = "实例 " + name + " 已添加";
@@ -1637,6 +1642,22 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             modules_touched = true;
             modules_message = "启动实例已移除（重启引擎后生效）";
             ack_message     = "实例 " + name + " 已移除";
+            ok              = true;
+        } else {
+            error = "unknown instance";
+        }
+    } else if (has_type && type == "set_instance_host") {
+        std::string name;
+        bool host_process = false;
+        json::field_string(text, "name", name);
+        json::field_bool(text, "host_process", host_process);
+        if (ctx_.modules == nullptr) {
+            error = "module registry not available";
+        } else if (ctx_.modules->set_instance_host(name, host_process)) {
+            modules_touched = true;
+            modules_message = host_process ? "实例已改为独立进程（重启引擎后生效）"
+                                           : "实例已改为进程内加载（重启引擎后生效）";
+            ack_message     = "实例 " + name + " 的加载方式已更新";
             ok              = true;
         } else {
             error = "unknown instance";
