@@ -147,6 +147,8 @@ def main():
     gaze_http = json.loads(body)
     print(f"HTTP /api/gaze -> {status}：valid={gaze_http.get('valid')} "
           f"pitch={gaze_http.get('pitch_deg')} yaw={gaze_http.get('yaw_deg')} "
+          f"L={gaze_http.get('left_pitch_deg')}/{gaze_http.get('left_yaw_deg')} "
+          f"R={gaze_http.get('right_pitch_deg')}/{gaze_http.get('right_yaw_deg')} "
           f"vergence={gaze_http.get('vergence_distance')}")
 
     status, _, page = http_get("/")
@@ -318,6 +320,13 @@ def main():
         ok = False
     elif "fixation" not in last_gaze or "saccade_vel_deg_s" not in last_gaze:
         print("FAIL gaze 消息缺少 fixation / saccade_vel_deg_s")
+        ok = False
+    elif any(key not in last_gaze
+             for key in ("left_pitch_deg", "left_yaw_deg", "right_pitch_deg", "right_yaw_deg")):
+        print("FAIL gaze 消息缺少逐眼角度（left/right_pitch_deg、left/right_yaw_deg）")
+        ok = False
+    elif last_gaze.get("point_space") not in ("viewport", "source"):
+        print(f"FAIL gaze 消息的 point_space 非法：{last_gaze.get('point_space')}")
         ok = False
     else:
         print(f"  gaze WS：{gaze_msgs} 条，最后 valid={last_gaze.get('valid')} "

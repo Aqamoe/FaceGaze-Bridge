@@ -38,6 +38,8 @@
 #define FGB_UDP_GAZE_RIGHT_VALID 0x02u
 #define FGB_UDP_GAZE_COMBINED_VALID 0x04u
 #define FGB_UDP_GAZE_POINT_2D_VALID 0x08u
+/* 点在视口归一化空间（ADR-0033）；不设 = 来源原始坐标，不能当屏幕位置用 */
+#define FGB_UDP_GAZE_POINT_VIEWPORT 0x10u
 
 #ifdef _MSC_VER
 #pragma pack(push, 1)
@@ -99,6 +101,7 @@ typedef struct FGB_UDP_PACKED FgbUdpFrameV1 {
     uint64_t gaze_capture_ts_ns;
     float gaze_left_dir[3];
     float gaze_right_dir[3];
+    /* 该眼视口归一化坐标：[0,1]，左上原点，畸变前（ADR-0033） */
     float gaze_left_point_2d[2];
     float gaze_right_point_2d[2];
 } FgbUdpFrameV1;

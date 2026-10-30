@@ -699,6 +699,123 @@ FGB_TEST(engine_uses_gaze_channel_for_render_gaze) {
     FGB_CHECK(render.point2d_valid);
     FGB_CHECK(render.capture_ts_ns == 5000);
     FGB_CHECK(render.source == 2); // 第二个注册的源
+    // 逐眼角度由引擎反算：与合并方向同一套 sign 约定（pitch 正 = 上，yaw 正 = 右）
+    FGB_CHECK_NEAR(render.left_yaw_deg, 18.0, 1e-3);
+    FGB_CHECK_NEAR(render.right_yaw_deg, 18.0, 1e-3);
+    FGB_CHECK_NEAR(render.left_pitch_deg, 0.0, 1e-3);
+}
+
+FGB_TEST(engine_reports_per_eye_angles_separately) {
+    Engine engine;
+    auto source = std::make_unique<FakeSource>("gaze");
+    FakeSource* raw = source.get();
+    engine.add_source(std::move(source));
+
+    FaceFrame frame = FaceFrame::neutral();
+    frame.add_channel(channel::kGaze);
+    frame.gaze.left.valid       = true;
+    frame.gaze.left.dirLocal    = pitch_yaw_deg_to_dir(5.0f, 10.0f);  // 向外偏 10°
+    frame.gaze.right.valid      = true;
+    frame.gaze.right.dirLocal   = pitch_yaw_deg_to_dir(5.0f, -10.0f); // 另一侧 10°
+    frame.gaze.combinedValid    = true;
+    frame.gaze.combinedDirLocal = pitch_yaw_deg_to_dir(5.0f, 0.0f);
+    raw->push(frame);
+    engine.tick_once(1'000'000ULL);
+
+    GazeState gaze = engine.current_gaze();
+    FGB_CHECK(gaze.valid);
+    FGB_CHECK(gaze.left_valid && gaze.right_valid);
+    FGB_CHECK_NEAR(gaze.left_pitch_deg, 5.0, 1e-3);
+    FGB_CHECK_NEAR(gaze.right_pitch_deg, 5.0, 1e-3);
+    FGB_CHECK_NEAR(gaze.left_yaw_deg, 10.0, 1e-3);
+    FGB_CHECK_NEAR(gaze.right_yaw_deg, -10.0, 1e-3);
+    // 两眼对称外展时合并方向在正中：只看合并值会以为"没有聚散"
+    FGB_CHECK_NEAR(gaze.yaw_deg, 0.0, 1e-3);
+
+    // 单眼掉线：左眼失效必须如实标记，不能让界面拿旧方向继续画
+    FaceFrame lossy = FaceFrame::neutral();
+    lossy.add_channel(channel::kGaze);
+    lossy.gaze.right.valid      = true;
+    lossy.gaze.right.dirLocal   = pitch_yaw_deg_to_dir(0.0f, 4.0f);
+    lossy.gaze.combinedValid    = true;
+    lossy.gaze.combinedDirLocal = lossy.gaze.right.dirLocal;
+    raw->push(lossy);
+    engine.tick_once(2'000'000ULL);
+
+    gaze = engine.current_gaze();
+    FGB_CHECK(gaze.valid);
+    FGB_CHECK(!gaze.left_valid);
+    FGB_CHECK(gaze.right_valid);
+    FGB_CHECK_NEAR(gaze.right_yaw_deg, 4.0, 1e-3);
+    FGB_CHECK_NEAR(gaze.left_yaw_deg, 0.0, 1e-6); // 无效眼的残值不参与显示
+}
+
+FGB_TEST(engine_per_eye_angles_follow_eyes_fallback) {
+    Engine engine;
+    auto source = std::make_unique<FakeSource>("eyes");
+    FakeSource* raw = source.get();
+    engine.add_source(std::move(source));
+
+    FaceFrame frame = FaceFrame::neutral();
+    frame.eyes.left.valid           = true;
+    frame.eyes.left.gazePitchYawDeg = Vec2{6.0f, 3.0f};
+    frame.eyes.left.gazeDirLocal    = pitch_yaw_deg_to_dir(6.0f, 3.0f);
+    frame.eyes.right.valid           = true;
+    frame.eyes.right.gazePitchYawDeg = Vec2{-2.0f, -7.0f};
+    frame.eyes.right.gazeDirLocal    = pitch_yaw_deg_to_dir(-2.0f, -7.0f);
+    frame.add_channel(channel::kEyes);
+    raw->push(frame);
+    engine.tick_once(1'000'000ULL);
+
+    const GazeState gaze = engine.current_gaze();
+    FGB_CHECK(gaze.valid);
+    // 回退到 eyes 时读来源缓存的角度，和合并角度同源
+    FGB_CHECK_NEAR(gaze.left_pitch_deg, 6.0, 1e-4);
+    FGB_CHECK_NEAR(gaze.left_yaw_deg, 3.0, 1e-4);
+    FGB_CHECK_NEAR(gaze.right_pitch_deg, -2.0, 1e-4);
+    FGB_CHECK_NEAR(gaze.right_yaw_deg, -7.0, 1e-4);
+    FGB_CHECK_NEAR(gaze.pitch_deg, 2.0, 1e-4);
+    FGB_CHECK_NEAR(gaze.yaw_deg, -2.0, 1e-4);
+}
+
+// 只给 2D 点的源（PICO Connect 私有通道）：点必须透传，但方向不能拿默认 -Z 冒充。
+// 以前这种帧会被整帧丢弃，模块只能伪造方向，副作用是永远"注视中"。
+FGB_TEST(engine_points_only_source_does_not_fake_direction) {
+    Engine engine;
+    auto source = std::make_unique<FakeSource>("gaze");
+    FakeSource* raw = source.get();
+    engine.add_source(std::move(source));
+
+    FaceFrame frame = FaceFrame::neutral();
+    frame.add_channel(channel::kGaze);
+    frame.gaze.left.pointValid  = true;
+    frame.gaze.right.pointValid = true;
+    frame.gaze.pointsValid      = true;
+    frame.gaze.left.point2d     = Vec2{0.82f, 0.90f};
+    frame.gaze.right.point2d    = Vec2{0.91f, 0.90f};
+    frame.gaze.left.confidence  = 0.9f;
+    frame.gaze.right.confidence = 0.9f;
+    frame.gaze.confidence       = 0.9f;
+    frame.gaze.captureTsNs      = 5000;
+
+    for (int i = 0; i <= 24; ++i) {
+        raw->push(frame);
+        engine.tick_once(1'000'000ULL + static_cast<std::uint64_t>(i) * 8'333'333ULL);
+    }
+
+    const GazeState gaze = engine.current_gaze();
+    FGB_CHECK(!gaze.valid); // valid 只表示"有合并方向"
+    FGB_CHECK(!gaze.left_valid && !gaze.right_valid);
+    FGB_CHECK(gaze.point2d_valid);
+    FGB_CHECK(gaze.left_point_valid && gaze.right_point_valid);
+    FGB_CHECK_NEAR(gaze.left_point_2d.x, 0.82, 1e-6);
+    FGB_CHECK_NEAR(gaze.right_point_2d.x, 0.91, 1e-6);
+    FGB_CHECK_NEAR(gaze.confidence, 0.9, 1e-6);
+    // 恒定的 -Z 不能再被算成"一直在注视"
+    FGB_CHECK(!gaze.fixation);
+    FGB_CHECK_NEAR(gaze.fixation_ms, 0.0, 1e-3);
+    // 通道本身仍在：有点也算这一路在出数据
+    FGB_CHECK(engine.latest().has_channel(channel::kGaze));
 }
 
 FGB_TEST(engine_single_source_is_passthrough) {

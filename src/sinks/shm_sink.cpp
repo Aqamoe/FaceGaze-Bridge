@@ -159,6 +159,9 @@ void ShmSink::write_frame(const FaceFrame& frame, const GazeState& gaze,
     if (gaze.point2d_valid) {
         out.gaze_valid |= FGB_SHM_GAZE_POINT_2D_VALID;
     }
+    if (gaze.point_viewport) {
+        out.gaze_valid |= FGB_SHM_GAZE_POINT_VIEWPORT;
+    }
     out.gaze_source           = gaze.source;
     out.gaze_source_mask      = gaze.source_mask;
     out.gaze_reserved         = 0;

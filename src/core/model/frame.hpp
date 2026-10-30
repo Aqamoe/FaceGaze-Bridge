@@ -79,10 +79,18 @@ struct GazePair {
     Vec3 combinedDirLocal{0.0f, 0.0f, -1.0f};
 
     bool pointsValid = false; // left/right 的 point2d 同时有效（兼容字段）
+    // 点是否在规范空间（该眼显示视口归一化，ADR-0033）。false = 来源自己的原始坐标，
+    // 只能展示/看趋势，不能当屏幕位置用。
+    bool pointViewport = false;
     float confidence = 0.0f;
     std::uint64_t captureTsNs = 0; // 0 = 用帧的 captureTsNs
 
-    bool any_valid() const noexcept { return left.valid || right.valid || combinedValid; }
+    // 方向与 2D 点都能让这一路"有注视数据"。只看方向位会把 2D-only 源
+    // （PICO Connect 私有通道）的整帧丢掉，见 sources/native_gaze_parse.hpp。
+    bool any_valid() const noexcept {
+        return left.valid || right.valid || combinedValid || left.pointValid ||
+               right.pointValid;
+    }
 };
 
 // 一帧实际携带了哪些通道。

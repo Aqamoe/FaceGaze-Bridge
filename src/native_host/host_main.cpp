@@ -154,7 +154,8 @@ void write_frame(FgbNativeHostBlockV1* block, const fgb::FaceFrame& frame, std::
     copy_gaze(frame.gaze.left, out.gaze_left);
     copy_gaze(frame.gaze.right, out.gaze_right);
     out.combined_gaze_valid = frame.gaze.combinedValid ? 1u : 0u;
-    out.points_valid        = frame.gaze.pointsValid ? 1u : 0u;
+    out.points_valid        = (frame.gaze.pointsValid ? FGB_HOST_POINTS_VALID : 0u) |
+                              (frame.gaze.pointViewport ? FGB_HOST_POINTS_VIEWPORT : 0u);
     out.combined_gaze_dir[0] = frame.gaze.combinedDirLocal.x;
     out.combined_gaze_dir[1] = frame.gaze.combinedDirLocal.y;
     out.combined_gaze_dir[2] = frame.gaze.combinedDirLocal.z;

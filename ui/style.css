@@ -817,18 +817,44 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--acc);
-  box-shadow: 0 0 12px var(--acc);
+  box-shadow: 0 0 10px var(--acc);
   transform: translate(-50%, -50%);
 }
+/* 左右眼各自一个点：聚散/单眼失效只有分开画才看得出来 */
+.gaze-dot-left { background: #38bdf8; box-shadow: 0 0 10px #38bdf8; }
+.gaze-dot-right { background: var(--warn); box-shadow: 0 0 10px rgb(251 191 36 / .75); }
+.gaze-pad-wrap { display: flex; flex-direction: column; gap: 8px; }
+.gaze-legend {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--dim);
+  letter-spacing: .06em;
+}
+.gaze-key {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+.gaze-key-left { background: #38bdf8; }
+.gaze-key-right { background: var(--warn); }
 .gaze-kv {
   display: grid;
   grid-template-columns: repeat(2, minmax(180px, 1fr));
   gap: 4px 18px;
 }
+/* 左右眼来自不同源 / 时间差 > 50 ms：合并方向会悄悄偏一边，标黄提示 */
+.gaze-kv b.warn { color: var(--warn); }
+/* 逐眼行是"方向 + 角度"，极端角度下比合并行宽：允许折行，别让省略号吃掉偏航 */
+.gaze-kv #g-eye-left,
+.gaze-kv #g-eye-right { white-space: normal; line-height: 1.4; }
 @media (max-width: 900px) {
   .gaze-layout { grid-template-columns: 1fr; }
   .gaze-pad { width: 100%; }

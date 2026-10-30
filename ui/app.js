@@ -486,47 +486,141 @@ function handle(message) {
 
 // ---------- 渲染：状态 ----------
 
+function fmt_vec(v, digits) {
+  return `(${v.map((x) => Number(x).toFixed(digits)).join(",")})`;
+}
+
+// 逐眼一行：来源给的是 2D 点就显示点，否则显示方向 + 该眼自己的俯仰/偏航。
+// 为什么优先点：只做 2D 眼追的模块（如 PICO Connect 私有通道）没有方向模型，
+// 方向字段是模块填的占位 -Z，照着显示会让两眼看起来完全一样，把真正的差别藏起来。
+function fmt_eye(valid, dir, pitch, yaw, point, viewport) {
+  if (!valid) {
+    return "—";
+  }
+  if (point) {
+    // viewport = 该眼视口归一化（ADR-0033）；否则是来源自己的原始坐标，带 ~ 区分
+    const mark = viewport ? "2D" : "2D~";
+    return `${mark} (${Number(point[0]).toFixed(2)},${Number(point[1]).toFixed(2)})`;
+  }
+  if (!dir) {
+    return "—";
+  }
+  const text = fmt_vec(dir, 2);
+  if (pitch === undefined || pitch === null || yaw === undefined || yaw === null) {
+    return text; // 旧引擎只有方向，角度缺字段时不要显示假的 0.0°
+  }
+  return `${text} ${Number(pitch).toFixed(1)}°/${Number(yaw).toFixed(1)}°`;
+}
+
+// 逐眼来源：不同源或时间差 > 50 ms 时标黄，这类情况合并方向会悄悄偏一边
+function eye_source_text(gaze) {
+  const id = (v) => (Number(v) > 0 ? `#${Number(v)}` : "—");
+  const age = (ts) => {
+    const delta = Number(gaze.ts_ns) - Number(ts || 0);
+    return gaze.ts_ns && ts && delta > 0 ? Math.round(delta / 1e6) : 0;
+  };
+  return (
+    `L ${id(gaze.left_source)} ${age(gaze.left_capture_ts_ns)} ms / ` +
+    `R ${id(gaze.right_source)} ${age(gaze.right_capture_ts_ns)} ms`
+  );
+}
+
+// 有 2D 点就按来源的屏幕坐标画（[0,1]，原点左上），否则按俯仰/偏航映射。
+// 两种坐标不能混着比：点没有角度，角度也反推不出点（缺 FOV/内参）。
+function place_gaze_dot(el, valid, pitch, yaw, point) {
+  if (!valid) {
+    el.hidden = true;
+    return;
+  }
+  let x;
+  let y;
+  if (point) {
+    x = Number(point[0]) * 100;
+    y = Number(point[1]) * 100;
+  } else if (pitch !== undefined && pitch !== null && yaw !== undefined && yaw !== null) {
+    x = 50 + (Number(yaw) / 30) * 50;
+    y = 50 - (Number(pitch) / 20) * 50;
+  } else {
+    el.hidden = true;
+    return;
+  }
+  el.style.left = `${Math.max(0, Math.min(100, x))}%`;
+  el.style.top = `${Math.max(0, Math.min(100, y))}%`;
+  el.hidden = false;
+}
+
 function render_gaze(gaze) {
-  const valid = !!(gaze && gaze.valid);
-  $("g-dir").textContent = valid
+  // valid = 有可用的合并方向；2D 点是否有效是另一件事（2D-only 源 valid 为假）
+  const has_dir = !!(gaze && gaze.valid);
+  const eye_point = (side) => {
+    if (!gaze) {
+      return false;
+    }
+    const per_eye = gaze[`${side}_point_valid`];
+    return per_eye === undefined ? !!gaze.point2d_valid : !!per_eye; // 旧引擎只有全局位
+  };
+  const left_point = eye_point("left");
+  const right_point = eye_point("right");
+  const has_point = left_point || right_point;
+  // 旧引擎没有 point_space 字段：当时约定就是"由来源定义"，按原始坐标处理更安全
+  const point_viewport = !!(gaze && gaze.point_space === "viewport");
+  const has_data = has_dir || has_point;
+  const left_dir = has_dir && !!gaze.left_valid;
+  const right_dir = has_dir && !!gaze.right_valid;
+  const left_valid = left_dir || left_point;
+  const right_valid = right_dir || right_point;
+
+  $("g-dir").textContent = has_dir
     ? `(${gaze.dir_local.map((v) => Number(v).toFixed(2)).join(", ")})`
     : "—";
-  $("g-pitch-yaw").textContent = valid
+  $("g-eye-left").textContent = fmt_eye(
+    left_valid, left_dir ? gaze.left_dir_local : null,
+    gaze && gaze.left_pitch_deg, gaze && gaze.left_yaw_deg,
+    left_point ? gaze.left_point_2d : null, point_viewport);
+  $("g-eye-right").textContent = fmt_eye(
+    right_valid, right_dir ? gaze.right_dir_local : null,
+    gaze && gaze.right_pitch_deg, gaze && gaze.right_yaw_deg,
+    right_point ? gaze.right_point_2d : null, point_viewport);
+  $("g-pitch-yaw").textContent = has_dir
     ? `${Number(gaze.pitch_deg).toFixed(1)}° / ${Number(gaze.yaw_deg).toFixed(1)}°`
     : "—";
-  $("g-vergence").textContent = valid && gaze.vergence_distance > 0
+  $("g-vergence").textContent = has_dir && gaze.vergence_distance > 0
     ? `${Number(gaze.vergence_distance).toFixed(2)} m`
     : "—";
-  $("g-fixation").textContent = valid
+  // 没有方向就没有扫视/注视可算：只有 2D 点时显示 —，而不是"无眼追"或"注视中"
+  $("g-fixation").textContent = has_dir
     ? (gaze.fixation
         ? t("status.gaze.fixating", { ms: Math.round(gaze.fixation_ms || 0) })
         : t("status.gaze.saccade_state"))
-    : t("status.gaze.none");
-  $("g-saccade").textContent = valid
+    : (has_point ? "—" : t("status.gaze.none"));
+  $("g-saccade").textContent = has_dir
     ? `${Number(gaze.saccade_vel_deg_s || 0).toFixed(0)} °/s`
     : "—";
-  $("g-confidence").textContent = valid ? `${Math.round((gaze.confidence || 0) * 100)}%` : "—";
-  $("g-source").textContent = valid
+  $("g-confidence").textContent = has_data
+    ? `${Math.round((gaze.confidence || 0) * 100)}%`
+    : "—";
+  $("g-source").textContent = has_data
     ? `${gaze.source || t("status.gaze.eye_fallback")} · ${Math.round(gaze.source_age_ms || 0)} ms`
     : "—";
-  $("g-points").textContent = valid && gaze.point2d_valid
-    ? `L (${Number(gaze.left_point_2d[0]).toFixed(2)}, ${Number(gaze.left_point_2d[1]).toFixed(2)}) ` +
-      `R (${Number(gaze.right_point_2d[0]).toFixed(2)}, ${Number(gaze.right_point_2d[1]).toFixed(2)})`
-    : "—";
+  const eye_source = $("g-eye-source");
+  eye_source.textContent = has_data ? eye_source_text(gaze) : "—";
+  eye_source.classList.toggle(
+    "warn",
+    has_data &&
+      (Number(gaze.left_source || 0) !== Number(gaze.right_source || 0) ||
+        Math.abs(
+          Number(gaze.left_capture_ts_ns || 0) - Number(gaze.right_capture_ts_ns || 0)) >
+          50 * 1e6));
   $("g-head").textContent = gaze && gaze.head_pose
     ? `p (${gaze.head_pose.p.map((v) => Number(v).toFixed(2)).join(", ")})`
     : "—";
 
-  const dot = $("g-dot");
-  if (valid) {
-    const x = 50 + (Number(gaze.yaw_deg) / 30) * 50;
-    const y = 50 - (Number(gaze.pitch_deg) / 20) * 50;
-    dot.style.left = `${Math.max(0, Math.min(100, x))}%`;
-    dot.style.top = `${Math.max(0, Math.min(100, y))}%`;
-    dot.hidden = false;
-  } else {
-    dot.hidden = true;
-  }
+  place_gaze_dot($("g-dot-left"), left_valid,
+    gaze && gaze.left_pitch_deg, gaze && gaze.left_yaw_deg,
+    left_point ? gaze.left_point_2d : null);
+  place_gaze_dot($("g-dot-right"), right_valid,
+    gaze && gaze.right_pitch_deg, gaze && gaze.right_yaw_deg,
+    right_point ? gaze.right_point_2d : null);
 }
 
 function sync_output_form() {

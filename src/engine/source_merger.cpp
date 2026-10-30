@@ -540,7 +540,8 @@ bool SourceMerger::poll(std::uint64_t now_ns, FaceFrame& out) {
 
     merged.gaze = GazePair{};
     const auto stamp_gaze = [this](GazeSample& sample, int index) {
-        if (index < 0 || !sample.valid) {
+        // 只给 2D 点的样本 valid 为假，但它照样有数据、也照样需要来源溯源
+        if (index < 0 || (!sample.valid && !sample.pointValid)) {
             return;
         }
         const FaceFrame& frame = slots_[static_cast<std::size_t>(index)].last;
@@ -584,6 +585,20 @@ bool SourceMerger::poll(std::uint64_t now_ns, FaceFrame& out) {
         }
     }
     merged.gaze.pointsValid = merged.gaze.left.pointValid && merged.gaze.right.pointValid;
+    // 坐标空间取"两边都承认"的那一个：左右眼来自不同源时，只要有一边是原始坐标，
+    // 合并结果就不能声称是视口坐标（ADR-0033）。
+    {
+        const auto viewport_of = [this](int index) {
+            return index >= 0 && slots_[static_cast<std::size_t>(index)].last.gaze.pointViewport;
+        };
+        if (gaze_left >= 0 && gaze_right >= 0) {
+            merged.gaze.pointViewport = viewport_of(gaze_left) && viewport_of(gaze_right);
+        } else if (gaze_left >= 0) {
+            merged.gaze.pointViewport = viewport_of(gaze_left);
+        } else if (gaze_right >= 0) {
+            merged.gaze.pointViewport = viewport_of(gaze_right);
+        }
+    }
     if (merged.gaze.left.valid && merged.gaze.right.valid) {
         merged.gaze.confidence = 0.5f * (merged.gaze.left.confidence + merged.gaze.right.confidence);
     } else if (merged.gaze.left.valid) {

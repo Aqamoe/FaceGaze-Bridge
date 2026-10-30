@@ -104,6 +104,9 @@ UdpBinarySink::Datagram UdpBinarySink::serialize(const FaceFrame& frame, const G
     if (gaze.valid) {
         wire.gaze_valid |= FGB_UDP_GAZE_COMBINED_VALID;
     }
+    if (gaze.point_viewport) {
+        wire.gaze_valid |= FGB_UDP_GAZE_POINT_VIEWPORT;
+    }
     if (gaze.point2d_valid) {
         wire.gaze_valid |= FGB_UDP_GAZE_POINT_2D_VALID;
     }

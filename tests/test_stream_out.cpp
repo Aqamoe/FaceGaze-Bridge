@@ -160,6 +160,7 @@ FGB_TEST(ws_json_builds_active_shapes_only) {
     FGB_CHECK(text.find("\"head\"") != std::string::npos);
     FGB_CHECK(text.find("\"gaze\"") != std::string::npos);
     FGB_CHECK(text.find("\"point_ok\":1") != std::string::npos);
+    FGB_CHECK(text.find("\"point_space\":\"source\"") != std::string::npos);
     FGB_CHECK(text.find("\"ts_ns\":999") != std::string::npos);
     FGB_CHECK(text.find("\"q\":[0.000,0.030,0.000,0.999]") != std::string::npos);
 }

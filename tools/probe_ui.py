@@ -210,11 +210,21 @@ def main():
         "  const g = state.gaze || null;"
         "  return JSON.stringify({"
         "    valid: g ? !!g.valid : null,"
+        "    left_valid: g ? !!g.left_valid : null,"
+        "    right_valid: g ? !!g.right_valid : null,"
         "    fixation: g ? !!g.fixation : null,"
+        "    point2d_valid: g ? !!g.point2d_valid : null,"
+        "    point_space: g ? (g.point_space || null) : null,"
+        "    left_point_valid: g ? !!g.left_point_valid : null,"
+        "    right_point_valid: g ? !!g.right_point_valid : null,"
         "    saccade: g ? g.saccade_vel_deg_s : null,"
         "    dir: document.getElementById('g-dir').textContent,"
+        "    left_text: document.getElementById('g-eye-left').textContent,"
+        "    right_text: document.getElementById('g-eye-right').textContent,"
+        "    eye_source_text: document.getElementById('g-eye-source').textContent,"
         "    fixation_text: document.getElementById('g-fixation').textContent,"
-        "    dot_visible: !document.getElementById('g-dot').hidden"
+        "    dot_left: !document.getElementById('g-dot-left').hidden,"
+        "    dot_right: !document.getElementById('g-dot-right').hidden"
         "  });"
         "})()"))
     print(f"注视卡片：{gaze}")
@@ -783,15 +793,44 @@ def main():
     if profile_ui.get("ran") and not profile_ui.get("deleted"):
         print("FAIL 输出预设删除后仍留在列表里")
         ok = False
-    if not gaze.get("valid"):
-        print("FAIL 注视卡片没有收到有效眼追（回放数据应带眼追）")
+    # 有方向或有 2D 点都算有数据：只给点的模块（PICO Connect 私有通道）valid 为假
+    if not (gaze.get("valid") or gaze.get("point2d_valid")):
+        print("FAIL 注视卡片没有收到眼追数据（回放应带方向或 2D 点）")
         ok = False
-    elif (gaze.get("dir") or "").strip() in ("", "—"):
+    elif gaze.get("valid") and (gaze.get("dir") or "").strip() in ("", "—"):
         print("FAIL 注视方向没有渲染")
         ok = False
-    elif not gaze.get("dot_visible"):
-        print("FAIL 注视圆点没有显示")
+    # 左右眼必须分开渲染：有数据的那只眼要有自己的文本和圆点
+    elif not (gaze.get("left_valid") or gaze.get("right_valid")
+              or gaze.get("left_point_valid") or gaze.get("right_point_valid")):
+        print("FAIL 注视数据里左右眼都无效，逐眼显示无法验证")
         ok = False
+    else:
+        for side in ("left", "right"):
+            has_eye = gaze.get(f"{side}_valid") or gaze.get(f"{side}_point_valid")
+            if not has_eye:
+                continue
+            text = (gaze.get(f"{side}_text") or "").strip()
+            if text in ("", "—"):
+                print(f"FAIL {side} 眼没有单独渲染")
+                ok = False
+            # 有 2D 点就必须显示点，而不是模块填的占位方向；
+            # 视口坐标写 "2D ("，来源原始坐标写 "2D~ ("（ADR-0033）
+            elif gaze.get(f"{side}_point_valid"):
+                expect = "2D (" if gaze.get("point_space") == "viewport" else "2D~ ("
+                if not text.startswith(expect):
+                    print(f"FAIL {side} 眼 2D 点显示与坐标空间不符"
+                          f"（point_space={gaze.get('point_space')}）：{text}")
+                    ok = False
+            if not gaze.get(f"dot_{side}"):
+                print(f"FAIL {side} 眼圆点没有显示")
+                ok = False
+        # 没数据的眼必须显示 —，不能留着上一帧的残值
+        for side in ("left", "right"):
+            has_eye = gaze.get(f"{side}_valid") or gaze.get(f"{side}_point_valid")
+            if not has_eye and (gaze.get(f"{side}_text") or "").strip() != "—":
+                print(f"FAIL {side} 眼无效时仍显示了数据：{gaze.get(f'{side}_text')}")
+                ok = False
     if sources.get("rows") != sources.get("expected"):
         print("FAIL 输入源卡片行数与 status.sources 不一致")
         ok = False

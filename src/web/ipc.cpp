@@ -679,7 +679,18 @@ void IpcServer::build_gaze(std::string& out) {
     writer.num(gaze.right_dir_local.y, 3);
     writer.num(gaze.right_dir_local.z, 3);
     writer.arr_end();
+    // 逐眼角度由引擎算好（与 dir_local 同一约定），客户端不要自己反算
+    writer.key("left_pitch_deg").num(gaze.left_pitch_deg, 3);
+    writer.key("left_yaw_deg").num(gaze.left_yaw_deg, 3);
+    writer.key("right_pitch_deg").num(gaze.right_pitch_deg, 3);
+    writer.key("right_yaw_deg").num(gaze.right_yaw_deg, 3);
     writer.key("point2d_valid").boolean(gaze.point2d_valid);
+    // 逐眼点有效性：只给 2D 点的源 left/right_valid 为假，这几个字段才是真信号
+    writer.key("left_point_valid").boolean(gaze.left_point_valid);
+    writer.key("right_point_valid").boolean(gaze.right_point_valid);
+    // 点的坐标系：viewport = 该眼视口归一化（ADR-0033，可直接用于 foveation）；
+    // source = 来源自己的原始坐标，只能展示/看趋势
+    writer.key("point_space").str(gaze.point_viewport ? "viewport" : "source");
     writer.key("left_point_2d").arr_begin();
     writer.num(gaze.left_point_2d.x, 4);
     writer.num(gaze.left_point_2d.y, 4);

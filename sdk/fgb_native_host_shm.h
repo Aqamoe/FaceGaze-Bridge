@@ -43,6 +43,11 @@
 #define FGB_HOST_CHANNEL_HEAD 0x4u
 #define FGB_HOST_CHANNEL_GAZE 0x8u
 
+/* FgbNativeHostFrameV1::points_valid 的位（ADR-0033）。
+ * 低两位编码，旧读者按 `!= 0` 判断"有点"仍然正确。 */
+#define FGB_HOST_POINTS_VALID 0x1u    /* 左右眼都有 2D 点 */
+#define FGB_HOST_POINTS_VIEWPORT 0x2u /* 点在视口归一化空间，否则是来源原始坐标 */
+
 #ifdef __cplusplus
 extern "C" {
 #endif

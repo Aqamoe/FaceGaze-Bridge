@@ -102,7 +102,8 @@ FaceFrame to_face(const FgbNativeHostFrameV1& in) {
         Vec3{in.combined_gaze_dir[0], in.combined_gaze_dir[1], in.combined_gaze_dir[2]};
     frame.gaze.confidence  = in.combined_gaze_confidence;
     frame.gaze.captureTsNs = in.combined_gaze_ts_ns;
-    frame.gaze.pointsValid = in.points_valid != 0;
+    frame.gaze.pointsValid   = (in.points_valid & FGB_HOST_POINTS_VALID) != 0;
+    frame.gaze.pointViewport = (in.points_valid & FGB_HOST_POINTS_VIEWPORT) != 0;
 
     frame.hasHeadPose  = in.has_head_pose != 0;
     frame.headRotLocal = Quat{in.head_rotation[0], in.head_rotation[1], in.head_rotation[2],

@@ -116,6 +116,8 @@ std::string WsJsonSink::build_json(const FaceFrame& frame, const GazeState& gaze
     writer.key("ts_ns").integer(static_cast<long long>(gaze.capture_ts_ns));
     writer.key("src").integer(static_cast<long long>(gaze.source));
     writer.key("mask").integer(static_cast<long long>(gaze.source_mask));
+    // 点坐标空间（ADR-0033）：不设这个字段的旧消费端按 source 处理
+    writer.key("point_space").str(gaze.point_viewport ? "viewport" : "source");
     writer.obj_end();
 
     if (frame.hasHeadPose) {

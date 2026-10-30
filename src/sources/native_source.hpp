@@ -67,6 +67,11 @@ private:
     bool has_frame_   = false;
     bool initialized_ = false;
     std::string last_error_;
+    // 逐帧诊断的连续帧计数与一次性告警（见 native_gaze_parse.hpp）
+    int placeholder_frames_  = 0; // 伪造 -Z 方向的指纹
+    bool placeholder_warned_ = false;
+    int range_frames_        = 0; // 2D 点持续越界（ADR-0033）
+    bool range_warned_       = false;
 
     std::atomic<std::uint64_t> frames_{0};
     std::atomic<bool> alive_{false};

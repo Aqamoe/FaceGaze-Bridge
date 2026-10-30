@@ -2,12 +2,17 @@
 //
 // 不声明 EYE，也不写 FgbEyeV1，所以它永远不会接管头像的 openness/pupil。
 // 它用于验证 gaze 通道、100 ms 独立过期，以及“头像用 A、渲染用 B”。
+//
+// 环境变量 FGB_SAMPLE_GAZE_POINTS_ONLY=1 时只声明 FGB_GAZE_POINT_2D：
+// 这是“2D-only 模块”的参考写法（PICO Connect 私有通道就是这一类），
+// 单测用它验证方向与点位不互相连坐。
 #include "fgb_module_api.h"
 
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 
 namespace {
 
@@ -16,17 +21,28 @@ using Clock = std::chrono::steady_clock;
 struct Instance {
     const FgbHostServicesV1* host = nullptr;
     Clock::time_point start{};
+    bool points_only = false;
 };
+
+bool read_points_only() {
+    char buffer[8]{};
+    std::size_t length = 0;
+    if (getenv_s(&length, buffer, sizeof(buffer), "FGB_SAMPLE_GAZE_POINTS_ONLY") != 0) {
+        return false;
+    }
+    return length > 1 && buffer[0] != '\0' && buffer[0] != '0';
+}
 
 int initialize(void** out, const FgbHostServicesV1* host, const FgbInitParamsV1* params) {
     (void)params;
     if (out == nullptr || host == nullptr || host->ctx == nullptr) {
         return 0;
     }
-    auto* self  = new Instance();
-    self->host  = host;
-    self->start = Clock::now();
-    *out        = self;
+    auto* self       = new Instance();
+    self->host       = host;
+    self->start      = Clock::now();
+    self->points_only = read_points_only();
+    *out             = self;
     host->report_status(host->ctx, FGB_STATUS_ACTIVE, "");
     return 1;
 }
@@ -58,11 +74,18 @@ void update(void* opaque) {
                             static_cast<float>(-std::cos(yaw) * cp)};
 
     FgbGazeV1& gaze = slot->gaze;
-    gaze.valid      = FGB_GAZE_LEFT | FGB_GAZE_RIGHT | FGB_GAZE_COMBINED | FGB_GAZE_POINT_2D;
-    for (int i = 0; i < 3; ++i) {
-        gaze.left_dir[i]     = dir[i];
-        gaze.right_dir[i]    = dir[i];
-        gaze.combined_dir[i] = dir[i];
+    if (self->points_only) {
+        // 没有方向模型时只声明点位：伪造一个 -Z 会让注视/扫视判定永远"注视中"。
+        // 同时声明 POINT_VIEWPORT：这里的合成点就是按视口归一化产生的。
+        gaze.valid = FGB_GAZE_POINT_2D | FGB_GAZE_POINT_VIEWPORT;
+    } else {
+        gaze.valid = FGB_GAZE_LEFT | FGB_GAZE_RIGHT | FGB_GAZE_COMBINED | FGB_GAZE_POINT_2D |
+                     FGB_GAZE_POINT_VIEWPORT;
+        for (int i = 0; i < 3; ++i) {
+            gaze.left_dir[i]     = dir[i];
+            gaze.right_dir[i]    = dir[i];
+            gaze.combined_dir[i] = dir[i];
+        }
     }
     // 暂定 [0,1] 左上原点；这里只产生一个可读的合成点。
     gaze.left_point_2d[0]  = static_cast<float>(0.5 + 0.05 * std::sin(t * 0.7));

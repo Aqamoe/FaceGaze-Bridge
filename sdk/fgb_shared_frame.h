@@ -42,6 +42,8 @@
 #define FGB_SHM_GAZE_RIGHT_VALID 0x2u
 #define FGB_SHM_GAZE_COMBINED_VALID 0x4u
 #define FGB_SHM_GAZE_POINT_2D_VALID 0x8u
+/* 点在视口归一化空间（ADR-0033）；不设 = 来源原始坐标，不能当屏幕位置用 */
+#define FGB_SHM_GAZE_POINT_VIEWPORT 0x10u
 
 #ifdef __cplusplus
 extern "C" {
@@ -90,7 +92,8 @@ typedef struct FgbSharedFrameV1 {
     uint64_t gaze_capture_ts_ns; /* 注视数据捕获时刻 */
     float gaze_left_dir[3];    /* HMD 局部单位向量 */
     float gaze_right_dir[3];
-    float gaze_left_point_2d[2];  /* 归一化屏幕点；约定由来源定义 */
+    /* 该眼视口归一化坐标：[0,1]，左上原点，畸变前（ADR-0033） */
+    float gaze_left_point_2d[2];
     float gaze_right_point_2d[2];
 } FgbSharedFrameV1;
 

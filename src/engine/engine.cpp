@@ -130,18 +130,21 @@ GazeState Engine::compute_gaze(const FaceFrame& frame) const noexcept {
     // 渲染注视优先用独立 gaze 通道；没有时才回退到眼睛反算。
     // 头像输出不走这里（VrchatSink 只读 eyes），所以 B 的注视不会接管 A 的眼睛。
     if (frame.has_channel(channel::kGaze) && frame.gaze.any_valid()) {
-        const GazePair& g             = frame.gaze;
-        const ChannelStamp& stamp     = frame.channelStamps[channel::index(channel::kGaze)];
-        gaze.valid                    = true;
-        gaze.left_valid               = g.left.valid;
-        gaze.right_valid              = g.right.valid;
-        gaze.left_dir_local           = g.left.dirLocal;
-        gaze.right_dir_local          = g.right.dirLocal;
-        gaze.point2d_valid            = g.pointsValid && (g.left.valid || g.right.valid);
-        gaze.left_point_2d            = g.left.point2d;
-        gaze.right_point_2d           = g.right.point2d;
-        gaze.confidence               = g.confidence;
-        gaze.capture_ts_ns            = g.captureTsNs != 0 ? g.captureTsNs : stamp.captureTsNs;
+        const GazePair& g         = frame.gaze;
+        const ChannelStamp& stamp = frame.channelStamps[channel::index(channel::kGaze)];
+        gaze.left_valid        = g.left.valid;
+        gaze.right_valid       = g.right.valid;
+        gaze.left_dir_local    = g.left.dirLocal;
+        gaze.right_dir_local   = g.right.dirLocal;
+        // 点的有效性与方向无关：只给 2D 点的源也算"有数据"，但 valid 只表示有方向
+        gaze.left_point_valid  = g.left.pointValid;
+        gaze.right_point_valid = g.right.pointValid;
+        gaze.point2d_valid     = g.pointsValid;
+        gaze.point_viewport    = g.pointViewport;
+        gaze.left_point_2d     = g.left.point2d;
+        gaze.right_point_2d    = g.right.point2d;
+        gaze.confidence        = g.confidence;
+        gaze.capture_ts_ns     = g.captureTsNs != 0 ? g.captureTsNs : stamp.captureTsNs;
         if (gaze.capture_ts_ns == 0) {
             gaze.capture_ts_ns = frame.captureTsNs;
         }
@@ -153,6 +156,14 @@ GazeState Engine::compute_gaze(const FaceFrame& frame) const noexcept {
             g.left.captureTsNs != 0 ? g.left.captureTsNs : gaze.capture_ts_ns;
         gaze.right_capture_ts_ns =
             g.right.captureTsNs != 0 ? g.right.captureTsNs : gaze.capture_ts_ns;
+
+        // 只有 2D 点、没有方向：不拿默认的 -Z 冒充视线。
+        // valid 在文档里就是"有可用的合并方向"，这里必须为假，否则
+        // GazeEstimator 会把恒定的 -Z 当成"一直在注视"，第三方也会拿到假方向。
+        if (!g.left.valid && !g.right.valid && !g.combinedValid) {
+            return gaze;
+        }
+        gaze.valid = true;
 
         if (g.combinedValid) {
             gaze.dir_local = g.combinedDirLocal;
@@ -171,6 +182,14 @@ GazeState Engine::compute_gaze(const FaceFrame& frame) const noexcept {
         const Vec2 pitch_yaw = dir_to_pitch_yaw_deg(gaze.dir_local);
         gaze.pitch_deg       = pitch_yaw.x;
         gaze.yaw_deg         = pitch_yaw.y;
+        // 逐眼角度从各自方向反算：gaze 通道没有缓存角度，合并角度也是同一个函数出来的，
+        // 放在这里算，界面和脚本就不必各自实现一遍（符号约定只守一处）。
+        const Vec2 left_py   = dir_to_pitch_yaw_deg(gaze.left_dir_local);
+        const Vec2 right_py  = dir_to_pitch_yaw_deg(gaze.right_dir_local);
+        gaze.left_pitch_deg  = left_py.x;
+        gaze.left_yaw_deg    = left_py.y;
+        gaze.right_pitch_deg = right_py.x;
+        gaze.right_yaw_deg   = right_py.y;
 
         if (frame.eyes.hasVergence) {
             gaze.vergence_m = frame.eyes.vergenceDistanceM;
@@ -200,6 +219,17 @@ GazeState Engine::compute_gaze(const FaceFrame& frame) const noexcept {
     gaze.right_source         = r.gazeSource;
     gaze.left_capture_ts_ns   = l.gazeTsNs != 0 ? l.gazeTsNs : gaze.capture_ts_ns;
     gaze.right_capture_ts_ns  = r.gazeTsNs != 0 ? r.gazeTsNs : gaze.capture_ts_ns;
+
+    // 逐眼角度读来源缓存的 gazePitchYawDeg：下面的合并角度也是平均它，
+    // 显示与合并同源，不会出现"两眼都是 10°、合并却是 0°"这种自相矛盾。
+    if (l_gaze) {
+        gaze.left_pitch_deg = l.gazePitchYawDeg.x;
+        gaze.left_yaw_deg   = l.gazePitchYawDeg.y;
+    }
+    if (r_gaze) {
+        gaze.right_pitch_deg = r.gazePitchYawDeg.x;
+        gaze.right_yaw_deg   = r.gazePitchYawDeg.y;
+    }
 
     if (l_gaze && r_gaze) {
         gaze.pitch_deg = 0.5f * (l.gazePitchYawDeg.x + r.gazePitchYawDeg.x);

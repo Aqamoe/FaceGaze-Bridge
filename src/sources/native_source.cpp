@@ -2,6 +2,7 @@
 
 #include "base/clock.hpp"
 #include "base/log.hpp"
+#include "sources/native_gaze_parse.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -199,14 +200,14 @@ void NativeModuleSource::apply_slot_v2(const FgbFrameSlotV2& slot,
     }
 
     bool eyes_valid = false; // 头像可用的眼睛（至少给 openness/pupil）
+    // 只填 EyeState（头像眼睛）；注视样本由 native::apply_eye_gaze_v2 单独取，
+    // 因为方向位与 2D 点位是两条独立的属性，不能用"眼睛有效"来门控。
     const auto apply_eye = [&](const FgbEyeAttributesV2& in, std::uint64_t openness_bit,
                                std::uint64_t pupil_bit, std::uint64_t gaze_bit,
-                               std::uint64_t point_bit, EyeState& out,
-                               GazeSample& sample) {
+                               EyeState& out) {
         const bool has_openness = (attrs & openness_bit) != 0;
         const bool has_pupil    = (attrs & pupil_bit) != 0;
         const bool has_gaze     = (attrs & gaze_bit) != 0;
-        const bool has_point    = (attrs & point_bit) != 0;
         if (!has_openness && !has_pupil && !has_gaze) {
             return;
         }
@@ -230,15 +231,6 @@ void NativeModuleSource::apply_slot_v2(const FgbFrameSlotV2& slot,
             out.gazePitchYawDeg = dir_to_pitch_yaw_deg(out.gazeDirLocal);
             out.gazeConf        = clamp01(in.gaze_confidence);
             out.gazeTsNs        = ts_of(in.gaze_ts_ns);
-
-            sample.valid       = true;
-            sample.dirLocal    = out.gazeDirLocal;
-            sample.confidence  = out.gazeConf;
-            sample.captureTsNs = out.gazeTsNs;
-            if (has_point) {
-                sample.pointValid = true;
-                sample.point2d    = Vec2{in.gaze_point_2d[0], in.gaze_point_2d[1]};
-            }
         }
         if (out.valid) {
             eyes_valid = true;
@@ -246,9 +238,14 @@ void NativeModuleSource::apply_slot_v2(const FgbFrameSlotV2& slot,
     };
 
     apply_eye(slot.left_eye, FGB_ATTR_LEFT_OPENNESS, FGB_ATTR_LEFT_PUPIL, FGB_ATTR_LEFT_GAZE,
-              FGB_ATTR_LEFT_POINT, frame.eyes.left, frame.gaze.left);
+              frame.eyes.left);
     apply_eye(slot.right_eye, FGB_ATTR_RIGHT_OPENNESS, FGB_ATTR_RIGHT_PUPIL,
-              FGB_ATTR_RIGHT_GAZE, FGB_ATTR_RIGHT_POINT, frame.eyes.right, frame.gaze.right);
+              FGB_ATTR_RIGHT_GAZE, frame.eyes.right);
+
+    native::apply_eye_gaze_v2(slot.left_eye, attrs, FGB_ATTR_LEFT_GAZE, FGB_ATTR_LEFT_POINT,
+                              frame.captureTsNs, frame.gaze.left);
+    native::apply_eye_gaze_v2(slot.right_eye, attrs, FGB_ATTR_RIGHT_GAZE, FGB_ATTR_RIGHT_POINT,
+                              frame.captureTsNs, frame.gaze.right);
 
     if (eyes_valid) {
         frame.add_channel(channel::kEyes);
@@ -279,7 +276,8 @@ void NativeModuleSource::apply_slot_v2(const FgbFrameSlotV2& slot,
             frame.gaze.combinedValid    = true;
         }
     }
-    frame.gaze.pointsValid = frame.gaze.left.pointValid && frame.gaze.right.pointValid;
+    frame.gaze.pointsValid   = frame.gaze.left.pointValid && frame.gaze.right.pointValid;
+    frame.gaze.pointViewport = (attrs & FGB_ATTR_POINT_VIEWPORT) != 0;
     frame.gaze.captureTsNs =
         std::max({frame.gaze.captureTsNs, frame.gaze.left.captureTsNs,
                   frame.gaze.right.captureTsNs});
@@ -363,41 +361,38 @@ void NativeModuleSource::apply_slot(const FgbFrameSlotV1& slot,
     // gaze 是 v1.1 追加字段：旧模块的 struct_size 不含它，不能读。
     const std::size_t gaze_need = offsetof(FgbFrameSlotV1, gaze) + sizeof(FgbGazeV1);
     if ((capabilities & FGB_CAP_GAZE) != 0 && slot.struct_size >= gaze_need) {
-        const FgbGazeV1& in = slot.gaze;
-        if ((in.valid & (FGB_GAZE_LEFT | FGB_GAZE_RIGHT | FGB_GAZE_COMBINED)) != 0) {
-            frame.gaze.left.valid  = (in.valid & FGB_GAZE_LEFT) != 0;
-            frame.gaze.right.valid = (in.valid & FGB_GAZE_RIGHT) != 0;
-            if (frame.gaze.left.valid) {
-                frame.gaze.left.dirLocal =
-                    normalize(Vec3{in.left_dir[0], in.left_dir[1], in.left_dir[2]});
-            }
-            if (frame.gaze.right.valid) {
-                frame.gaze.right.dirLocal =
-                    normalize(Vec3{in.right_dir[0], in.right_dir[1], in.right_dir[2]});
-            }
-            frame.gaze.combinedValid = (in.valid & FGB_GAZE_COMBINED) != 0;
-            if (frame.gaze.combinedValid) {
-                frame.gaze.combinedDirLocal =
-                    normalize(Vec3{in.combined_dir[0], in.combined_dir[1], in.combined_dir[2]});
-            }
-            const bool points = (in.valid & FGB_GAZE_POINT_2D) != 0;
-            frame.gaze.left.pointValid =
-                points && frame.gaze.left.valid;
-            frame.gaze.right.pointValid =
-                points && frame.gaze.right.valid;
-            frame.gaze.pointsValid = frame.gaze.left.pointValid && frame.gaze.right.pointValid;
-            frame.gaze.left.point2d  = Vec2{in.left_point_2d[0], in.left_point_2d[1]};
-            frame.gaze.right.point2d = Vec2{in.right_point_2d[0], in.right_point_2d[1]};
-            frame.gaze.confidence    = clamp01(in.confidence);
-            frame.gaze.captureTsNs   = in.capture_ts_ns;
-            frame.gaze.left.confidence  = frame.gaze.confidence;
-            frame.gaze.right.confidence = frame.gaze.confidence;
-            frame.gaze.left.captureTsNs  = in.capture_ts_ns;
-            frame.gaze.right.captureTsNs = in.capture_ts_ns;
-            if (frame.gaze.any_valid()) {
-                frame.add_channel(channel::kGaze);
-            }
+        native::apply_gaze_v1(slot.gaze, frame.gaze);
+        if (frame.gaze.any_valid()) {
+            frame.add_channel(channel::kGaze);
         }
+        // 两条"模块数据看着不对"的一次性提示。连续 30 帧才报（100 Hz 下约 0.3 s），
+        // 避免真的盯正前方/视线刚好扫到边缘时误报；只记日志，不改数据。
+        const auto warn_once = [this](bool suspicious, int& frames, bool& warned,
+                                      const std::string& text) {
+            if (warned) {
+                return;
+            }
+            frames = suspicious ? frames + 1 : 0;
+            if (frames < 30) {
+                return;
+            }
+            warned = true;
+            FGB_WARN(kTag, "%s", text.c_str());
+            // 跨进程宿主把这条也转进引擎日志，不然只有 native-host-*.log 里能看到
+            if (config_.log_sink) {
+                config_.log_sink(FGB_LOG_WARN, text.c_str());
+            }
+        };
+        warn_once(native::gaze_direction_looks_placeholder(frame.gaze), placeholder_frames_,
+                  placeholder_warned_,
+                  config_.display_name +
+                      ": 注视方向恒为 (0,0,-1) 却声明了方向位，同时带 2D 点；"
+                      "没有方向模型的模块应只声明 FGB_GAZE_POINT_2D，"
+                      "否则 valid/fixation 会一直为真（见 docs/05-native-module-guide.md §11.2）");
+        warn_once(native::gaze_point_out_of_viewport(frame.gaze), range_frames_, range_warned_,
+                  config_.display_name +
+                      ": 2D 注视点持续越界（远在 [0,1] 之外），坐标空间可能不是视口归一化；"
+                      "约定见 docs/adr/0033-gaze-point-2d-space.md");
     }
 
     if ((capabilities & FGB_CAP_HEAD) != 0 && slot.has_head_pose != 0) {

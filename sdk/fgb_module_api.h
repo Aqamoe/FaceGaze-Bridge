@@ -76,11 +76,28 @@ typedef struct FgbEyeV1 {
     float gaze_confidence; /* 0..1 */
 } FgbEyeV1;
 
-/* FgbGazeV1::valid 的位。逐眼/合并方向与 2D 点分别有效，互不连坐。 */
+/* FgbGazeV1::valid 的位。逐眼/合并方向与 2D 点分别有效，互不连坐。
+ *
+ * 只给 2D 点的模块只声明 FGB_GAZE_POINT_2D 即可：宿主照常收下这一帧，
+ * 但 GazeState 的 valid / left_valid / right_valid 为假（没有方向就不编方向），
+ * 消费端看 point2d_valid / left_point_valid / right_point_valid，
+ * 注视/扫视判定对这类来源不成立（直接复位，不会永远"注视中"）。
+ *
+ * 不要为了"让帧被收下"而伪造 FGB_GAZE_LEFT/RIGHT：假方向会进 /api/gaze、
+ * 共享内存和 UDP，第三方会拿一个恒定的 (0,0,-1) 当真数据用。
+ */
 #define FGB_GAZE_LEFT 0x1u
 #define FGB_GAZE_RIGHT 0x2u
 #define FGB_GAZE_COMBINED 0x4u
 #define FGB_GAZE_POINT_2D 0x8u
+/* 0x10：2D 点已经映射到"该眼显示视口"的归一化坐标（ADR-0033 的规范空间）。
+ *
+ * 不写这一位 = 点在**来源自己的空间**里（原始相机/协议坐标，映射未知）：
+ * 可以展示、可以做相对趋势分析，但**不要**用于 foveation 或任何需要
+ * "屏幕上的位置"的地方。
+ *
+ * 只有当模块真的把像素/NDC/相机坐标标定到视口后，才同时写 POINT_2D|POINT_VIEWPORT。 */
+#define FGB_GAZE_POINT_VIEWPORT 0x10u
 
 /* ---- v2 属性位（FgbFrameSlotV2::attributes）----
  * 属性级数据不再要求 EYE 整块原子：模块只声明/填写自己真正拥有的属性。
@@ -98,13 +115,23 @@ typedef struct FgbEyeV1 {
 #define FGB_ATTR_RIGHT_POINT 0x200ull
 #define FGB_ATTR_VERGENCE 0x400ull
 #define FGB_ATTR_HEAD 0x800ull
+/* 与 FGB_GAZE_POINT_VIEWPORT 同义（帧级）：v2 的 2D 点属性是否在视口坐标里 */
+#define FGB_ATTR_POINT_VIEWPORT 0x1000ull
 
 /*
  * 独立注视通道。只声明 FGB_CAP_GAZE 的模块写这里，不要伪造 FgbEyeV1。
  *
- * 2D 点暂定：归一化屏幕坐标，x/y ∈ [0,1]，原点左上。这个约定尚未和
- * 串流/OpenXR 消费端对齐（ADR-0030 开放问题），消费端应把它当作“来源自己的
- * 屏幕坐标”，不要直接当成 HMD 视口坐标使用。
+ * 2D 点（FGB_GAZE_POINT_2D）的坐标约定见 ADR-0033。规范空间是：
+ *   该眼"最终看到的那块画面"（串流/合成单眼视图）的归一化坐标，
+ *   x/y ∈ [0,1]，原点左上，+x 向右，+y 向下，
+ *   畸变前的采样空间（合成器再套镜头畸变），逐眼独立。
+ *
+ *   - 标定到规范空间后再加声明 FGB_GAZE_POINT_VIEWPORT；
+ *     只写 FGB_GAZE_POINT_2D = 来源自己的原始坐标（消费端不能当屏幕位置用）。
+ *   - 映射由模块负责：只有你知道原始坐标系（内参、镜像、换眼、分辨率），
+ *     宿主不做像素/NDC/反投影换算。
+ *   - 越界不是错误（看向画外、标定误差），宿主保留原值不裁剪。
+ *   - NaN/Inf 会把该眼的点标为无效。
  */
 typedef struct FgbGazeV1 {
     uint32_t valid; /* FGB_GAZE_* 位或；0 = 本帧没有注视数据 */
@@ -114,7 +141,8 @@ typedef struct FgbGazeV1 {
     float right_dir[3];
     float combined_dir[3];
 
-    float left_point_2d[2]; /* 可选，FGB_GAZE_POINT_2D 有效时读取 */
+    /* 该眼视口归一化坐标（ADR-0033），FGB_GAZE_POINT_2D 有效时读取 */
+    float left_point_2d[2];
     float right_point_2d[2];
 
     float confidence;      /* 0..1 */
