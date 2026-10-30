@@ -17,15 +17,18 @@
 
 1. **不提交 `.workbuddy/`**。那里是本项目的内部工作数据（记忆、临时抓包、截图、探针脚本草稿），
    `.gitignore` 已排除；不要在仓库其它位置散落临时文件。
-2. **提交前三件套**：本地构建成功 → 单测全绿 → 改动涉及 IPC/UI 时探针通过（见 §4）。
+2. **每次代码改完必须构建出"用户能直接跑测试"的程序**：用 VS2022 preset 出 Debug 产物
+   （`build/windows-vs2022/bin/Debug/fgb-tests.exe`），自己先跑一遍 216 个用例，并在答复里
+   给出可执行文件路径。不要求用户自己先编译，也不要用"CI 会验证"顶替本地跑过。
+3. **提交前三件套**：本地构建成功 → 单测全绿 → 改动涉及 IPC/UI 时探针通过（见 §3.4）。
    **不要**"先推上去让 CI 告诉我哪错"。
-3. **每次推送后必须盯 CI 到绿**：`gh run watch <id> --exit-status`。CI 带 `/WX`（警告即错误），
-   本地没开 werror 时容易漏。
-4. **每完成一个计划点，出一份可双击运行的发布包**（§3.3）。用户要实测，不要只给源码。
-5. **一个计划点一次提交**，提交信息说清"为什么"，不要堆一大坨混合改动。
-6. **不做没要求的重构**。大文件不要整份重写，用精确替换。
-7. **注释只写"为什么"**，中文；不写"这行在干什么"。
-8. **不引第三方库**（JSON、WS、测试框架、格式化都自己写了几十行）。真要引，先写 ADR 并说明体积/许可证代价。
+4. **每次推送后必须盯 CI 到绿**：`gh run watch <id> --exit-status`。CI 带 `/WX`（警告即错误），
+   本机 preset 也开了 werror，两边必须一致，否则漏错。
+5. **每完成一个计划点，出一份可双击运行的发布包**（§3.3）。用户要实测，不要只给源码。
+6. **一个计划点一次提交**，提交信息说清"为什么"，不要堆一大坨混合改动。
+7. **不做没要求的重构**。大文件不要整份重写，用精确替换。
+8. **注释只写"为什么"**，中文；不写"这行在干什么"。
+9. **不引第三方库**（JSON、WS、测试框架、格式化都自己写了几十行）。真要引，先写 ADR 并说明体积/许可证代价。
 
 ## 2. 代码规矩
 
@@ -73,21 +76,23 @@
 
 ### 3.1 本机工具链
 
-- `build/test`：VS2019 生成器的 Debug 目录（日常编译与单测）。
-- `build/release`：VS2019 生成器的 Release 目录（出发布包用）。
-- CI 用 VS2022（`-G "Visual Studio 17 2022"`），Debug + Release 各跑一遍，两边都要过。
+- **本机与 CI 统一 VS2022**（`Visual Studio 17 2022`，x64）：构建目录 `build/windows-vs2022`，
+  preset `windows-vs2022`（Debug/Release 共用，`FGB_WARNINGS_AS_ERRORS=ON` 对齐 CI 的 `/WX`）。
+- `build/test`、`build/release`、`build/werror` 是早期 VS2019 目录，只作历史产物，可随时删。
+- CI 用同一套 VS2022，Debug + Release 各跑一遍 ctest，两边都要过。
 
 ### 3.2 日常命令（PowerShell）
 
 ```powershell
-# 配置 + 增量构建
-cmake -S . -B build/test -G "Visual Studio 16 2019" -A x64
-cmake --build build/test --config Debug --parallel
+# 配置（一次）
+cmake --preset windows-vs2022
 
-# 单测（当前 170 个用例）
-./build/test/bin/Debug/fgb-tests.exe
-# 或
-ctest --test-dir build/test -C Debug --output-on-failure
+# 每次改完代码就增量构建 Debug：产物是"用户能直接跑"的测试程序
+cmake --build --preset windows-vs2022 --parallel
+
+# 单测（当前 216 个用例）：直接跑 exe，或走 ctest
+./build/windows-vs2022/bin/Debug/fgb-tests.exe
+ctest --test-dir build/windows-vs2022 -C Debug --output-on-failure
 ```
 
 原生模块示例（`samples/native-sine`）由 `-DFGB_BUILD_SAMPLE_MODULE=ON` 构建（默认开），
@@ -97,7 +102,7 @@ ctest --test-dir build/test -C Debug --output-on-failure
 WebView2 SDK 不在 vcpkg：configure 时从 NuGet 抓一次到 `build/_deps`。
 离线/内网用 `-DFGB_WEBVIEW2_DIR=<已解压目录>`；完全不要界面用 `-DFGB_BUILD_UI=OFF`。
 `ui/` 里的资源由 CMake 在 `fgb-cli` 链接后复制到 exe 旁——**只改页面也要重新构建 fgb-cli**
-（或手动 `cmake -E copy_directory ui build/test/bin/Debug/ui`），否则跑的还是旧页面。
+（或手动 `cmake -E copy_directory ui build/windows-vs2022/bin/Debug/ui`），否则跑的还是旧页面。
 
 模块仓与运行时（[ADR-0017](docs/adr/0017-module-store-library-runtime.md)）：
 
@@ -120,9 +125,9 @@ fgb-cli modules remove <id>
 ### 3.3 发布包（用户双击就能跑）
 
 ```powershell
-cmake -S . -B build/release -G "Visual Studio 16 2019" -A x64
-cmake --build build/release --config Release --parallel
-cmake --install build/release --config Release --prefix dist
+cmake --preset windows-vs2022
+cmake --build build/windows-vs2022 --config Release --parallel
+cmake --install build/windows-vs2022 --config Release --prefix dist
 ```
 
 产物在 `dist/`：
@@ -210,7 +215,7 @@ powershell -ExecutionPolicy Bypass -File packaginguild_installer.ps1
 没有真机数据时用回放跑通链路：
 
 ```powershell
-./build/test/bin/Debug/fgb-cli.exe run --source replay --replay .workbuddy/tmp/golden.fgbrec --replay-loop --panel 8787
+./build/windows-vs2022/bin/Debug/fgb-cli.exe run --source replay --replay .workbuddy/tmp/golden.fgbrec --replay-loop --panel 8787
 ```
 
 `.workbuddy/tmp/golden.fgbrec` 是 25 秒真实 PICO 抓包（不进仓库），金样测试与回放都靠它。
@@ -218,7 +223,7 @@ powershell -ExecutionPolicy Bypass -File packaginguild_installer.ps1
 多源合并的本地验证（**不需要硬件**）：
 
 ```powershell
-./build/test/bin/Debug/fgb-cli.exe run --source vmc --source replay `
+./build/windows-vs2022/bin/Debug/fgb-cli.exe run --source vmc --source replay `
     --replay .workbuddy/tmp/golden.fgbrec --replay-loop --panel 8787
 python tools/send_vmc.py            # 30 Hz 灌 jawOpen，造第二路输入
 # then: GET /api/status 的 sources 里，vmc 应只喂表情、replay 只喂眼追；

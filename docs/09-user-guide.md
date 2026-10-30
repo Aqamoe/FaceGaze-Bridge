@@ -224,7 +224,7 @@ fgb-cli run --source replay --replay golden.fgbrec --replay-loop --panel 8787
 # 纯 VMC 输入，脚本自己灌数据
 python tools/soak.py --duration 600
 # 两路新输入的端到端探针（自己拉起引擎、自己发包）
-python tools/probe_inputs.py --cli build/test/bin/Debug/fgb-cli.exe
+python tools/probe_inputs.py --cli build/windows-vs2022/bin/Debug/fgb-cli.exe
 ```
 
 ## 9. 隐私与安全

@@ -35,10 +35,13 @@
     },
     {
       "name": "windows-vs2022",
-      "displayName": "Windows x64 Visual Studio 2022",
+      "displayName": "Windows x64 Visual Studio 2022（本机日常/CI 同构）",
       "inherits": "base",
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
+      "cacheVariables": {
+        "FGB_WARNINGS_AS_ERRORS": "ON"
+      },
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
     },
     {
