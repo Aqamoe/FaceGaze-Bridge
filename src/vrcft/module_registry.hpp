@@ -93,6 +93,16 @@ struct ImportCandidate {
     std::string origin; // 候选来源，如 "VRCFT" / "FGB"
 };
 
+// 安装结果。界面/CLI 靠它区分"新装"与"覆盖升级"，并说出人话的版本变化。
+// 就地升级是模块管理的基本操作：同一个 ModuleId 的新包不是冲突，就是这个模块的新版本。
+struct InstallOutcome {
+    std::string id;
+    std::string name;
+    std::string version;
+    std::string previous_version; // 覆盖前的版本；空 = 之前没装或旧包没写版本
+    bool upgraded = false;        // 覆盖了同 ID 的旧目录
+};
+
 struct VrcftRuntime {
     std::filesystem::path dir;
     std::filesystem::path exe;
@@ -158,11 +168,14 @@ public:
     bool import_module(std::string_view id, std::string& error);
 
     // 从 .zip / .dll / 目录安装。source 只用于界面展示（默认按扩展名推断）。
-    // replace=true 时允许覆盖同 ID 的旧版本（模块库更新用）。
+    // replace=true 时覆盖同 ID 的旧版本——这就是"升级"：模块库更新、界面手动装包、
+    // CLI `modules install` 都走这条路，只有程序化导入（候选列表）保持 false。
     // metadata 非空且包内没有 module.json 时，用它补齐 ID/名字/版本。
+    // outcome 非空时回填本次是"新装"还是"升级"，以及升级前后的版本。
     bool install_path(const std::filesystem::path& path, std::string& error,
                       const std::string& source = {}, bool replace = false,
-                      const ModuleMetadataOverride* metadata = nullptr);
+                      const ModuleMetadataOverride* metadata = nullptr,
+                      InstallOutcome* outcome = nullptr);
 
     // 删除仓里的模块。文件被占用（正在运行）时返回 false 并给出原因。
     bool remove_module(std::string_view id, std::string& error);
@@ -192,10 +205,10 @@ private:
 
     bool install_directory(const std::filesystem::path& source_dir, std::string& error,
                            const std::string& source, bool replace,
-                           const ModuleMetadataOverride* metadata);
+                           const ModuleMetadataOverride* metadata, InstallOutcome* outcome);
     bool install_loose_dll(const std::filesystem::path& dll, std::string& error,
                            const std::string& source, bool replace,
-                           const ModuleMetadataOverride* metadata);
+                           const ModuleMetadataOverride* metadata, InstallOutcome* outcome);
     bool extract_zip(const std::filesystem::path& archive, const std::filesystem::path& dest,
                      std::string& error) const;
 

@@ -1849,11 +1849,20 @@ int cmd_modules(int argc, char** argv) {
                 return 2;
             }
             std::string error;
-            if (!registry.install_path(argv[3], error, "cli")) {
+            fgb::vrcft::InstallOutcome outcome;
+            // replace=true：同 ID 的新包按升级处理，和界面的"安装压缩包"一致
+            if (!registry.install_path(argv[3], error, "cli", true, nullptr, &outcome)) {
                 std::fprintf(stderr, "%s\n", error.c_str());
                 return 1;
             }
-            std::printf("已安装：%s\n", argv[3]);
+            if (outcome.upgraded) {
+                std::printf("已升级：%s %s → %s\n",
+                            outcome.name.empty() ? outcome.id.c_str() : outcome.name.c_str(),
+                            outcome.previous_version.empty() ? "?" : outcome.previous_version.c_str(),
+                            outcome.version.empty() ? "?" : outcome.version.c_str());
+            } else {
+                std::printf("已安装：%s\n", argv[3]);
+            }
             return 0;
         }
         std::fprintf(stderr, "未知子命令：%.*s\n", static_cast<int>(action.size()), action.data());

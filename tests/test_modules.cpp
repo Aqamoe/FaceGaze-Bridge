@@ -65,6 +65,21 @@ void make_module_dir(const fs::path& dir, std::string_view id, std::string_view 
     write_file(dir / "config.ini", "[cfg]\nx=1\n");
 }
 
+// 原生模块的清单叫 fgb-native.json，字段与 module.json 相同（ADR-0030 §8）
+std::string native_metadata_for(std::string_view id, std::string_view name, std::string_view dll,
+                                std::string_view version) {
+    std::string json = R"({"ModuleId":")";
+    json.append(id);
+    json.append(R"(","ModuleName":")");
+    json.append(name);
+    json.append(R"(","AuthorName":"Tester","Version":")");
+    json.append(version);
+    json.append(R"(","DllFileName":")");
+    json.append(dll);
+    json.append(R"(","AbiVersion":2,"Capabilities":["expression"]})");
+    return json;
+}
+
 std::uint32_t crc32(std::string_view data) {
     std::uint32_t crc = 0xFFFFFFFFu;
     for (const char ch : data) {
@@ -540,4 +555,119 @@ FGB_TEST(module_instances_and_roles_persist) {
     ModuleRegistry after_remove{state, store};
     after_remove.rescan();
     FGB_CHECK(after_remove.instances().size() == 1);
+}
+
+// 原生模块没有在线注册表，升级只能靠"再装一次新包"。同 ID 的新包必须覆盖旧版本，
+// 而不是报"已安装相同 ID 的模块"；同时模块自己写的 config.ini 不能丢。
+FGB_TEST(native_module_upgrade_replaces_in_place) {
+    TempDir root;
+    const fs::path store = root.path / "store";
+    const fs::path state = root.path / "modules.ini";
+
+    const fs::path first = root.path / "native-1.0.0.zip";
+    write_zip(first, {{"Mod.dll", "v1 dll"},
+                      {"fgb-native.json",
+                       native_metadata_for("com.test.native", "Native", "Mod.dll", "1.0.0")}});
+
+    ModuleRegistry registry{state, store};
+    std::string error;
+    InstallOutcome outcome;
+    FGB_CHECK(registry.install_path(first, error, "zip", true, nullptr, &outcome));
+    FGB_CHECK(!outcome.upgraded);
+    FGB_CHECK(outcome.version == "1.0.0");
+    FGB_CHECK(outcome.previous_version.empty());
+
+    const ModuleInfo* module = registry.find("com.test.native");
+    FGB_CHECK(module != nullptr);
+    if (module == nullptr) {
+        return;
+    }
+    FGB_CHECK(module->kind == ModuleKind::native);
+    const fs::path dir = module->directory;
+    // 模块运行时会自己写配置；升级不能把它清掉
+    write_file(dir / "config.ini", "[cfg]\nthreshold=7\n");
+
+    // 新版本换成带版本号的外层目录，install 仍然要认成同一个模块
+    const fs::path second = root.path / "native-1.1.0.zip";
+    write_zip(second, {{"native-1.1.0/Mod.dll", "v2 dll"},
+                       {"native-1.1.0/fgb-native.json",
+                        native_metadata_for("com.test.native", "Native", "Mod.dll", "1.1.0")}});
+
+    outcome = InstallOutcome{};
+    FGB_CHECK(registry.install_path(second, error, "zip", true, nullptr, &outcome));
+    FGB_CHECK(error.empty());
+    FGB_CHECK(outcome.upgraded);
+    FGB_CHECK(outcome.id == "com.test.native");
+    FGB_CHECK(outcome.previous_version == "1.0.0");
+    FGB_CHECK(outcome.version == "1.1.0");
+
+    FGB_CHECK(registry.modules().size() == 1);
+    const ModuleInfo* upgraded = registry.find("com.test.native");
+    FGB_CHECK(upgraded != nullptr);
+    if (upgraded != nullptr) {
+        FGB_CHECK(upgraded->version == "1.1.0");
+        FGB_CHECK(upgraded->directory == dir); // 目录不换名，状态/实例绑定不受影响
+        FGB_CHECK(upgraded->kind == ModuleKind::native);
+        FGB_CHECK(read_text(upgraded->dll) == "v2 dll");
+        FGB_CHECK(fs::exists(upgraded->directory / "config.ini"));
+        FGB_CHECK(read_text(upgraded->directory / "config.ini").find("threshold=7") !=
+                  std::string::npos);
+    }
+    FGB_CHECK(registry.active_id() == "com.test.native");
+
+    // 升级过程中用的临时目录不能留在仓里
+    std::size_t dirs = 0;
+    for (const auto& entry : fs::directory_iterator(store)) {
+        if (entry.is_directory()) {
+            ++dirs;
+        }
+    }
+    FGB_CHECK(dirs == 1);
+
+    // 不带 replace 的程序化安装仍然拒绝覆盖，并把已装版本写进错误
+    FGB_CHECK(!registry.install_path(second, error, "zip"));
+    FGB_CHECK(error.find("已安装") != std::string::npos);
+    FGB_CHECK(error.find("1.1.0") != std::string::npos);
+
+    // 重新打开也要读到升级后的版本与配置（状态文件没有被升级流程破坏）
+    ModuleRegistry reopened{state, store};
+    reopened.rescan();
+    const ModuleInfo* persisted = reopened.find("com.test.native");
+    FGB_CHECK(persisted != nullptr);
+    if (persisted != nullptr) {
+        FGB_CHECK(persisted->version == "1.1.0");
+        FGB_CHECK(fs::exists(persisted->directory / "config.ini"));
+    }
+}
+
+// VRCFT 模块同样按 ID 升级：模块库"更新"、CLI install 都依赖这条路径
+FGB_TEST(vrcft_module_upgrade_replaces_dll_and_metadata) {
+    TempDir root;
+    const fs::path store = root.path / "store";
+    ModuleRegistry registry{root.path / "modules.ini", store};
+    std::string error;
+
+    const fs::path v1 = root.path / "pico-0.1.11";
+    write_file(v1 / "module.json", metadata_for("pico-id", "Pico", "Pico.dll", "0.1.11"));
+    write_file(v1 / "Pico.dll", "v1 dll");
+    FGB_CHECK(registry.install_path(v1, error, "test"));
+
+    const fs::path v2 = root.path / "pico-0.1.12";
+    write_file(v2 / "module.json", metadata_for("pico-id", "Pico", "Pico.dll", "0.1.12"));
+    write_file(v2 / "Pico.dll", "v2 dll");
+
+    InstallOutcome outcome;
+    FGB_CHECK(registry.install_path(v2, error, "test", true, nullptr, &outcome));
+    FGB_CHECK(outcome.upgraded);
+    FGB_CHECK(outcome.previous_version == "0.1.11");
+    const ModuleInfo* module = registry.find("pico-id");
+    FGB_CHECK(module != nullptr);
+    if (module != nullptr) {
+        FGB_CHECK(module->version == "0.1.12");
+        FGB_CHECK(module->kind == ModuleKind::vrcft);
+        FGB_CHECK(read_text(module->dll) == "v2 dll");
+        FGB_CHECK(read_text(module->directory / "module.json").find("0.1.12") !=
+                  std::string::npos);
+    }
+    FGB_CHECK(registry.modules().size() == 1);
 }

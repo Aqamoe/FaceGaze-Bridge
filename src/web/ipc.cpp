@@ -2276,8 +2276,30 @@ void IpcServer::poll_picker() {
             path = state->path;
         }
         std::string error;
-        const bool ok = ctx_.modules->install_path(path, error, "zip");
-        after_module_change(ok, ok ? "模块已安装" : error);
+        vrcft::InstallOutcome outcome;
+        // replace=true：同一个 ModuleId 的新包就是这个模块的升级包。
+        // 手动安装（尤其是原生模块，没有在线注册表）必须能覆盖旧版本，
+        // 否则作者改了 Version 重新打包后永远装不进去。
+        const bool ok =
+            ctx_.modules->install_path(path, error, "zip", true, nullptr, &outcome);
+        std::string message = "模块已安装";
+        if (ok) {
+            const std::string name = outcome.name.empty() ? outcome.id : outcome.name;
+            if (outcome.upgraded) {
+                message = name + " 已升级";
+                if (!outcome.previous_version.empty()) {
+                    message += " v" + outcome.previous_version;
+                }
+                if (!outcome.version.empty()) {
+                    message += (outcome.previous_version.empty() ? " v" : " → v") + outcome.version;
+                }
+            } else if (!outcome.version.empty()) {
+                message = name + " 已安装 v" + outcome.version;
+            } else {
+                message = name + " 已安装";
+            }
+        }
+        after_module_change(ok, ok ? message : error);
     } else {
         std::string message;
         build_modules(message);

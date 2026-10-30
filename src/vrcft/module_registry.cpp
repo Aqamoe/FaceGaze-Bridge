@@ -799,9 +799,9 @@ bool ModuleRegistry::import_module(std::string_view id, std::string& error) {
     bool ok = false;
     const std::string import_name = candidate->info.name;
     if (candidate->info.loose) {
-        ok = install_loose_dll(candidate->info.dll, error, "import", false, nullptr);
+        ok = install_loose_dll(candidate->info.dll, error, "import", false, nullptr, nullptr);
     } else {
-        ok = install_directory(candidate->info.directory, error, "import", false, nullptr);
+        ok = install_directory(candidate->info.directory, error, "import", false, nullptr, nullptr);
     }
     if (ok) {
         FGB_INFO(kTag, "已导入模块：%s", import_name.c_str());
@@ -899,7 +899,8 @@ bool ModuleRegistry::extract_zip(const std::filesystem::path& archive,
 
 bool ModuleRegistry::install_loose_dll(const std::filesystem::path& dll, std::string& error,
                                        const std::string& source, bool replace,
-                                       const ModuleMetadataOverride* metadata) {
+                                       const ModuleMetadataOverride* metadata,
+                                       InstallOutcome* outcome) {
     error.clear();
     std::error_code ec;
     const std::filesystem::path temp = store_dir_ / (".tmp-dll-" + std::to_string(
@@ -913,15 +914,19 @@ bool ModuleRegistry::install_loose_dll(const std::filesystem::path& dll, std::st
         std::filesystem::remove_all(temp, ec);
         return false;
     }
-    const bool ok = install_directory(temp, error, source, replace, metadata);
+    const bool ok = install_directory(temp, error, source, replace, metadata, outcome);
     std::filesystem::remove_all(temp, ec);
     return ok;
 }
 
 bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
                                        std::string& error, const std::string& source,
-                                       bool replace, const ModuleMetadataOverride* metadata) {
+                                       bool replace, const ModuleMetadataOverride* metadata,
+                                       InstallOutcome* outcome) {
     error.clear();
+    if (outcome != nullptr) {
+        *outcome = InstallOutcome{};
+    }
     std::error_code ec;
 
     ModuleInfo info = scan_directory(source_dir, "install");
@@ -963,16 +968,25 @@ bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
     const std::string folder = folder_name_for(id);
     const std::filesystem::path dest = store_dir_ / folder;
     const bool exists = std::filesystem::exists(dest, ec);
+
+    // 同 ID 已经在仓里：先读旧版本，升级成功后回报"1.0.0 → 1.1.0"，
+    // 失败时也能把"当前装的是哪个版本"写进错误里。
+    ModuleInfo previous;
+    if (exists) {
+        previous = scan_directory(dest, "store");
+    }
     if (exists && !replace) {
-        error = "已安装相同 ID 的模块（" + id + "）";
+        const std::string installed =
+            previous.version.empty() ? std::string{} : "，已安装 v" + previous.version;
+        error = "已安装相同 ID 的模块（" + id + installed + "）";
         return false;
     }
 
     // 先复制到临时目录，完整成功后再替换：更新失败不能把旧版本弄丢
     std::filesystem::create_directories(store_dir_, ec);
-    const std::filesystem::path staging =
-        store_dir_ / (".tmp-copy-" + folder + "-" +
-                      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const std::string stamp =
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const std::filesystem::path staging = store_dir_ / (".tmp-copy-" + folder + "-" + stamp);
     std::filesystem::copy(source_dir, staging,
                           std::filesystem::copy_options::recursive |
                               std::filesystem::copy_options::overwrite_existing,
@@ -1004,10 +1018,34 @@ bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
         out.write(json.data(), static_cast<std::streamsize>(json.size()));
     }
 
+    // 升级时保留模块自己的配置：包内没带 config.ini 就沿用旧目录里那份，
+    // 否则每升一次版本用户调好的参数就被清空（ADR-0011：config.ini 归模块所有）。
     if (exists) {
-        std::filesystem::remove_all(dest, ec);
+        std::error_code config_ec;
+        if (!std::filesystem::exists(staging / "config.ini", config_ec) &&
+            std::filesystem::exists(dest / "config.ini", config_ec)) {
+            std::filesystem::copy_file(dest / "config.ini", staging / "config.ini",
+                                       std::filesystem::copy_options::overwrite_existing,
+                                       config_ec);
+            if (config_ec) {
+                FGB_WARN(kTag, "升级 %s 时未能保留 config.ini：%s", id.c_str(),
+                         config_ec.message().c_str());
+            }
+        }
+    }
+
+    // 替换旧版本用"先改名再落位"而不是 remove_all：DLL 被正在运行的模块占用时
+    // rename 会立刻失败，旧目录原样保留；直接删有可能删掉一半文件再失败，
+    // 模块就变成"坏"的，用户只能手动清目录。
+    std::filesystem::path backup;
+    if (exists) {
+        backup = store_dir_ / (".tmp-old-" + folder + "-" + stamp);
+        std::filesystem::rename(dest, backup, ec);
         if (ec) {
-            error = "旧版本正在被占用，无法更新：" + ec.message();
+            // 用错误码而不是 ec.message()：后者是 ANSI 文本，混进 UTF-8 日志会乱码
+            error = "无法替换旧版本（模块可能正在运行）：请先在「模块」页停止该模块实例"
+                    "或重启引擎后重试（错误码 " +
+                    std::to_string(ec.value()) + "）";
             std::filesystem::remove_all(staging, ec);
             return false;
         }
@@ -1016,7 +1054,19 @@ bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
     if (ec) {
         error = "安装目录落位失败：" + ec.message();
         std::filesystem::remove_all(staging, ec);
+        if (!backup.empty()) {
+            // 落位失败要回滚，不能让用户既丢了旧版本又没装上新版本
+            std::error_code rollback_ec;
+            std::filesystem::rename(backup, dest, rollback_ec);
+        }
         return false;
+    }
+    if (!backup.empty()) {
+        std::error_code cleanup_ec;
+        std::filesystem::remove_all(backup, cleanup_ec);
+        if (cleanup_ec) {
+            FGB_WARN(kTag, "旧版本目录未能删除：%s", backup.string().c_str());
+        }
     }
 
     // 更新时保留原来的启用状态；新装默认启用
@@ -1035,26 +1085,45 @@ bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
         apply_state();
     }
     save_state();
-    FGB_INFO(kTag, "安装模块：%s（%s，%s）", info.name.c_str(), id.c_str(), state.source.c_str());
+    if (outcome != nullptr) {
+        outcome->id               = id;
+        outcome->name             = info.name;
+        outcome->version          = info.version;
+        outcome->previous_version = previous.version;
+        outcome->upgraded         = exists;
+    }
+    if (exists) {
+        FGB_INFO(kTag, "升级模块：%s（%s，%s → %s）", info.name.c_str(), id.c_str(),
+                 previous.version.empty() ? "?" : previous.version.c_str(),
+                 info.version.empty() ? "?" : info.version.c_str());
+    } else {
+        FGB_INFO(kTag, "安装模块：%s（%s，%s）", info.name.c_str(), id.c_str(), state.source.c_str());
+    }
     return true;
 }
 
 bool ModuleRegistry::install_path(const std::filesystem::path& path, std::string& error,
                                   const std::string& source, bool replace,
-                                  const ModuleMetadataOverride* metadata) {
+                                  const ModuleMetadataOverride* metadata,
+                                  InstallOutcome* outcome) {
     error.clear();
+    if (outcome != nullptr) {
+        *outcome = InstallOutcome{};
+    }
     std::error_code ec;
     if (path.empty() || !std::filesystem::exists(path, ec)) {
         error = "文件不存在";
         return false;
     }
     if (std::filesystem::is_directory(path, ec)) {
-        return install_directory(path, error, source.empty() ? "dir" : source, replace, metadata);
+        return install_directory(path, error, source.empty() ? "dir" : source, replace, metadata,
+                                 outcome);
     }
 
     const std::string extension = lower(path.extension().string());
     if (extension == ".dll") {
-        return install_loose_dll(path, error, source.empty() ? "dll" : source, replace, metadata);
+        return install_loose_dll(path, error, source.empty() ? "dll" : source, replace, metadata,
+                                 outcome);
     }
     if (extension != ".zip") {
         error = "只支持 .zip 安装包或 .dll";
@@ -1068,7 +1137,8 @@ bool ModuleRegistry::install_path(const std::filesystem::path& path, std::string
     bool ok = extract_zip(path, temp, error);
     if (ok) {
         const std::filesystem::path root = find_module_root(temp);
-        ok = install_directory(root, error, source.empty() ? "zip" : source, replace, metadata);
+        ok = install_directory(root, error, source.empty() ? "zip" : source, replace, metadata,
+                               outcome);
     }
     std::filesystem::remove_all(temp, ec);
     return ok;
