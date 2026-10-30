@@ -889,6 +889,8 @@ function render_status(status) {
 
   if (state.view === "modules") {
     render_running_modules(status.modules);
+    // 实例行的「停止/启动」要跟着实时状态翻转，不能只在 modules 消息时更新
+    update_instance_controls();
   }
   render_sources(status.sources || []);
   render_role_hint();
@@ -1314,7 +1316,14 @@ function installed_card(item) {
   const add_instance = el("button", "btn ghost small", t("modules.add_instance"));
   add_instance.addEventListener("click", () => {
     const instances = (state.modules && state.modules.instances) || [];
-    send({ type: "add_instance", id: item.id, name: default_instance_name(item, instances) });
+    // 原生模块默认进独立进程（崩溃隔离 + 可热替换 DLL）；VRCFT 模块本来就跑在
+    // ModuleProcess.exe 里，这个字段对它没有意义，带 false 只是为了显式。
+    send({
+      type: "add_instance",
+      id: item.id,
+      name: default_instance_name(item, instances),
+      host_process: item.kind === "native",
+    });
   });
   buttons.append(add_instance);
 
@@ -1745,6 +1754,48 @@ function role_options(role) {
   return options;
 }
 
+// 实例行里「停止/启动」按钮的字面值必须跟着实时状态走，
+// 否则点完停止按钮还是"停止"，看起来像没生效（modules 消息只在配置变化时推）。
+function instance_running_entry(instance) {
+  const running = (state.status && state.status.modules) || [];
+  return running.find((entry) =>
+    entry.module_id === instance.module_id &&
+    (entry.name === instance.name || entry.name.endsWith(`:${instance.name}`)));
+}
+
+function instance_is_live(instance) {
+  const entry = instance_running_entry(instance);
+  return !!entry && entry.state !== "stopped";
+}
+
+function update_instance_controls() {
+  for (const controls of Object.values(state.instance_controls || {})) {
+    const live = instance_is_live(controls.instance);
+    controls.toggle.textContent = live ? t("modules.instance.stop") : t("modules.instance.start");
+    controls.toggle.dataset.role = live ? "stop" : "start";
+    controls.toggle.disabled = !!controls.busy;
+    controls.restart.disabled = !!controls.busy;
+  }
+}
+
+// 停止/重启要等宿主退出+重新就绪，几百毫秒内再点一次只会重复排队；
+// 先禁用一小会儿，状态消息回来后仍会按真实状态刷新文字。
+function lock_instance_controls(name) {
+  const controls = (state.instance_controls || {})[name];
+  if (!controls) {
+    return;
+  }
+  controls.busy = true;
+  update_instance_controls();
+  setTimeout(() => {
+    const latest = (state.instance_controls || {})[name];
+    if (latest) {
+      latest.busy = false;
+      update_instance_controls();
+    }
+  }, 2500);
+}
+
 function render_instance_section(data) {
   const list = $("instance-list");
   const grid = $("role-grid");
@@ -1752,6 +1803,7 @@ function render_instance_section(data) {
     return;
   }
   const instances = data.instances || [];
+  state.instance_controls = {};
   list.textContent = "";
   if (!instances.length) {
     list.append(el("div", "muted", t("modules.instances.empty")));
@@ -1760,40 +1812,46 @@ function render_instance_section(data) {
       const row = el("div", "instance-row");
       row.append(el("b", "instance-name", instance.name));
       row.append(el("span", "instance-module", instance.module_name || instance.module_id));
-      const host = el("label", "switch instance-host");
-      const host_checkbox = document.createElement("input");
-      host_checkbox.type = "checkbox";
-      host_checkbox.checked = !!instance.host_process;
-      host_checkbox.addEventListener("change", () => {
-        send({
-          type: "set_instance_host",
-          name: instance.name,
-          host_process: host_checkbox.checked,
+      // 「独立进程」只对原生模块有意义；VRCFT 模块永远跑在 ModuleProcess.exe 里，
+      // 给它一个开关只会让人以为能切回进程内。
+      if (instance.kind === "native") {
+        const host = el("label", "switch instance-host");
+        host.title = t("modules.instance.host_hint");
+        const host_checkbox = document.createElement("input");
+        host_checkbox.type = "checkbox";
+        host_checkbox.checked = !!instance.host_process;
+        host_checkbox.addEventListener("change", () => {
+          send({
+            type: "set_instance_host",
+            name: instance.name,
+            host_process: host_checkbox.checked,
+          });
         });
-      });
-      host.append(host_checkbox, el("span", "", t("modules.instance.host")));
-      row.append(host);
+        host.append(host_checkbox, el("span", "", t("modules.instance.host")));
+        row.append(host);
+      } else {
+        row.append(el("span", "muted instance-host-fixed", t("modules.instance.vrcft_host")));
+      }
       if (!instance.enabled) {
         row.append(el("span", "chip err", t("modules.instance.unavailable")));
       }
-      if (instance.host_process) {
-        const running = ((state.status && state.status.modules) || []).find((entry) =>
-          entry.module_id === instance.module_id &&
-          (entry.name === instance.name || entry.name.endsWith(`:${instance.name}`)));
-        const live = !!running && running.state !== "stopped";
-        const toggle = el("button", "btn ghost small",
-          live ? t("modules.instance.stop") : t("modules.instance.start"));
-        toggle.dataset.role = live ? "stop" : "start";
-        toggle.addEventListener("click", () => {
-          send({ type: live ? "stop_instance" : "start_instance", name: instance.name });
-        });
-        const restart = el("button", "btn ghost small", t("modules.instance.restart"));
-        restart.dataset.role = "restart";
-        restart.addEventListener("click", () => {
-          send({ type: "restart_instance", name: instance.name });
-        });
-        row.append(toggle, restart);
-      }
+
+      const toggle = el("button", "btn ghost small", t("modules.instance.start"));
+      toggle.dataset.role = "start";
+      // 点击时再算 live：渲染到点击之间模块可能已经崩溃/自愈了
+      toggle.addEventListener("click", () => {
+        const live = instance_is_live(instance);
+        send({ type: live ? "stop_instance" : "start_instance", name: instance.name });
+        lock_instance_controls(instance.name);
+      });
+      const restart = el("button", "btn ghost small", t("modules.instance.restart"));
+      restart.dataset.role = "restart";
+      restart.addEventListener("click", () => {
+        send({ type: "restart_instance", name: instance.name });
+        lock_instance_controls(instance.name);
+      });
+      row.append(toggle, restart);
+      state.instance_controls[instance.name] = { instance, toggle, restart, busy: false };
       const remove = el("button", "btn danger small", t("modules.instance.remove"));
       remove.addEventListener("click", async () => {
         const text = t("modules.instance.remove_confirm", { name: instance.name });
@@ -1808,6 +1866,7 @@ function render_instance_section(data) {
       row.append(remove);
       list.append(row);
     }
+    update_instance_controls();
   }
 
   const roles = data.roles || {};

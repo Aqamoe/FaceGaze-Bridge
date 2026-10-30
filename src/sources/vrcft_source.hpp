@@ -55,6 +55,9 @@ public:
     const char* name() const noexcept override { return config_.display_name.c_str(); }
     bool start() override;
     void stop() noexcept override;
+    // 停掉当前 ModuleProcess 会话再重新拉起：VRCFT 模块本来就在外部进程里，
+    // 「重启实例」不需要重启引擎。
+    bool restart() override;
     bool poll(FaceFrame& out) override;
     SourceStats stats() const noexcept override;
     std::optional<ModuleRuntimeStatus> module_status() const override;
@@ -63,7 +66,7 @@ public:
     const std::string& last_error() const noexcept { return last_error_; }
     // 模块自己报的最后一条 error（已压平成一行的截断版），没有则为空
     const std::string& module_error() const noexcept { return module_error_; }
-    int restart_count() const noexcept { return restarts_; }
+    int restart_count() const noexcept { return restarts_.load(std::memory_order_relaxed); }
     bool module_alive() const noexcept { return host_.alive(); }
     std::size_t recorded_frames() const noexcept { return recorder_.frames(); }
 
@@ -95,7 +98,8 @@ private:
 
     std::string last_error_;
     std::string module_error_;
-    int restarts_ = 0;
+    // 会话失败重启由 run_loop 线程写，界面在引擎线程读，必须原子
+    std::atomic<int> restarts_{0};
 };
 
 } // namespace fgb::vrcft

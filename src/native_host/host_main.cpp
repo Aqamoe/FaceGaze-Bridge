@@ -268,14 +268,15 @@ int run(const Options& options) {
 
         const auto status = source.module_status();
         if (status.has_value()) {
-            if (!status->error.empty()) {
-                set_error(block, status->error);
-            }
             if (!status->alive) {
                 set_error(block, "模块已停止");
                 set_state(block, FGB_HOST_STATE_STOPPED);
                 break;
             }
+            // 每拍镜像模块的当前状态，而不是"只在有错时写"：模块报 ERROR 后恢复
+            // （report_status(ACTIVE)）必须能把共享内存里的旧错误清掉，否则界面
+            // 会一直显示故障，重启实例也救不回来。空串在这里是有意义的。
+            set_error(block, status->error);
         }
         heartbeat(block, now);
 

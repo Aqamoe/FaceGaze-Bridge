@@ -497,6 +497,17 @@ void NativeModuleSource::stop() noexcept {
 #endif
 }
 
+bool NativeModuleSource::restart() {
+    // 进程内没有独立进程可杀：先 teardown + FreeLibrary 把 DLL 真正卸掉，
+    // 再重新加载，否则替换过的文件不会生效（Windows 会继续用已映射的旧映像）。
+    stop();
+    const bool ok = start();
+    if (ok) {
+        restarts_.fetch_add(1, std::memory_order_release);
+    }
+    return ok;
+}
+
 bool NativeModuleSource::poll(FaceFrame& out) {
     if (!initialized_) {
         return false;
@@ -524,7 +535,7 @@ std::optional<ModuleRuntimeStatus> NativeModuleSource::module_status() const {
     ModuleRuntimeStatus status;
     status.alive        = alive_.load(std::memory_order_acquire);
     status.frames       = stats().frames;
-    status.restarts     = 0;
+    status.restarts     = restarts_.load(std::memory_order_acquire);
     status.capabilities = api_ != nullptr ? api_->capabilities : 0;
     status.error        = last_error_;
     return status;

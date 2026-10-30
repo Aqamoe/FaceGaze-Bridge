@@ -34,6 +34,8 @@ public:
     const char* name() const noexcept override { return config_.display_name.c_str(); }
     bool start() override;
     void stop() noexcept override;
+    // 进程内重载：卸载 DLL 再重新加载（模块页「重启实例」），不重启引擎。
+    bool restart() override;
     bool poll(FaceFrame& out) override;
     SourceStats stats() const noexcept override;
     std::optional<ModuleRuntimeStatus> module_status() const override;
@@ -76,6 +78,7 @@ private:
 
     std::atomic<std::uint64_t> frames_{0};
     std::atomic<bool> alive_{false};
+    std::atomic<int> restarts_{0}; // 界面的「重启 N 次」；进程内只有手动重启会加
 };
 
 } // namespace fgb

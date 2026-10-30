@@ -1086,6 +1086,11 @@ void IpcServer::build_modules(std::string& out) {
             writer.key("module_id").str(instance.module_id);
             writer.key("module_name").str(module != nullptr ? module->name : instance.module_id);
             writer.key("enabled").boolean(module != nullptr && module->enabled && !module->broken);
+            // kind 决定界面要不要给「独立进程」开关：只有原生模块有两种加载方式，
+            // VRCFT 模块固定跑在 ModuleProcess.exe 里。
+            writer.key("kind").str(module != nullptr && module->kind == vrcft::ModuleKind::native
+                                       ? "native"
+                                       : "vrcft");
             writer.key("host_process").boolean(instance.host_process);
             writer.obj_end();
         }
@@ -1632,18 +1637,28 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         bool host_process = false;
         json::field_string(text, "id", id);
         json::field_string(text, "name", name);
-        json::field_bool(text, "host_process", host_process);
+        const bool host_given = json::field_bool(text, "host_process", host_process);
         if (ctx_.modules == nullptr) {
             error = "module registry not available";
         } else if (id.empty() || name.empty()) {
             error = "missing module id or instance name";
-        } else if (ctx_.modules->add_instance(name, id, host_process)) {
-            modules_touched = true;
-            modules_message = "启动实例已添加（重启引擎后生效）";
-            ack_message     = "实例 " + name + " 已添加";
-            ok              = true;
         } else {
-            error = "无法添加实例（名字重复或模块不可用）";
+            if (!host_given) {
+                // 没显式指定时看模块类型：原生模块默认独立进程（崩溃不带走引擎，
+                // 也才能在不重启引擎的情况下换 DLL）；VRCFT 模块本来就跑在
+                // ModuleProcess.exe 里，这个开关对它没有意义。
+                const vrcft::ModuleInfo* module = ctx_.modules->find(id);
+                host_process =
+                    module != nullptr && module->kind == vrcft::ModuleKind::native;
+            }
+            if (ctx_.modules->add_instance(name, id, host_process)) {
+                modules_touched = true;
+                modules_message = "启动实例已添加（重启引擎后生效）";
+                ack_message     = "实例 " + name + " 已添加";
+                ok              = true;
+            } else {
+                error = "无法添加实例（名字重复或模块不可用）";
+            }
         }
     } else if (has_type && type == "remove_instance") {
         std::string name;

@@ -139,6 +139,48 @@ FGB_TEST(native_module_is_recognized_from_store_manifest) {
     }
 }
 
+// 进程内模块的「重启实例」：必须真的卸载再加载（DLL 被替换过才生效），
+// 并且重启后还能继续出帧——之前的实现没覆盖 restart()，界面点了只得到一个错误。
+FGB_TEST(native_module_in_process_restart_reloads_dll) {
+    if (!fs::exists(sample_dll())) {
+        return;
+    }
+    NativeSourceConfig config;
+    config.dll          = sample_dll();
+    config.module_id    = "com.fgbbridge.sample.sine";
+    config.module_name  = "Sine Sample Module";
+    config.display_name = "sine";
+    config.tick_hz      = 120;
+
+    NativeModuleSource source{config};
+    FGB_CHECK(source.start());
+    FaceFrame frame;
+    bool got = false;
+    for (int i = 0; i < 200 && !got; ++i) {
+        got = source.poll(frame);
+    }
+    FGB_CHECK(got);
+
+    FGB_CHECK(source.restart());
+    const auto status = source.module_status();
+    FGB_CHECK(status.has_value());
+    if (status.has_value()) {
+        FGB_CHECK(status->alive);
+        FGB_CHECK(status->restarts == 1);
+        FGB_CHECK(status->error.empty());
+    }
+
+    got = false;
+    for (int i = 0; i < 200 && !got; ++i) {
+        got = source.poll(frame);
+    }
+    FGB_CHECK(got);
+    if (got) {
+        FGB_CHECK(frame.has_channel(channel::kExpression));
+    }
+    source.stop();
+}
+
 FGB_TEST(native_gaze_only_module_emits_gaze_channel) {
     if (!fs::exists(sample_gaze_dll())) {
         return;

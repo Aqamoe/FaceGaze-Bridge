@@ -48,6 +48,17 @@ set_target_properties(fgb-test-legacy-v1 PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 add_dependencies(fgb-tests fgb-test-legacy-v1)
 
+# 状态上报夹具：ACTIVE → ERROR → ACTIVE，验证宿主能把"自愈"镜像回引擎。
+add_library(fgb-test-status-cycle MODULE fixtures/status_cycle_module.cpp)
+target_include_directories(fgb-test-status-cycle PRIVATE "${CMAKE_SOURCE_DIR}/sdk")
+target_link_libraries(fgb-test-status-cycle PRIVATE fgb_options)
+set_target_properties(fgb-test-status-cycle PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "fgb-test-status-cycle"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+add_dependencies(fgb-tests fgb-test-status-cycle)
+
 # C4127: 测试里比较编译期常量（如 kShapeCount == 86）是有意为之——
 #        这些断言的作用就是在编译期常量被误改时炸掉。
 if(MSVC)

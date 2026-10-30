@@ -24,6 +24,7 @@ fs::path exe_dir() {
 fs::path host_exe() { return exe_dir() / "fgb-host-native.exe"; }
 fs::path sine_dll() { return exe_dir() / "fgb-sample-native.dll"; }
 fs::path openness_dll() { return exe_dir() / "fgb-sample-openness.dll"; }
+fs::path status_cycle_dll() { return exe_dir() / "fgb-test-status-cycle.dll"; }
 
 std::string unique_name(const char* tag) {
     static int counter = 0;
@@ -187,6 +188,8 @@ FGB_TEST(native_host_manual_restart_reloads_process) {
     FGB_CHECK(source.restart());
     FGB_CHECK(source.host_pid() != 0);
     FGB_CHECK(source.host_pid() != first_pid);
+    // 手动重启也要计数：界面上的「重启 N 次」是用户确认重启生效的唯一反馈
+    FGB_CHECK(source.module_status()->restarts == 1);
     FaceFrame frame;
     bool got = false;
     for (int i = 0; i < 200 && !got; ++i) {
@@ -197,6 +200,46 @@ FGB_TEST(native_host_manual_restart_reloads_process) {
     }
     FGB_CHECK(got);
     source.stop();
+}
+
+// 模块报 ERROR 后自愈（再报 ACTIVE）时，宿主必须把共享内存里的旧错误清掉：
+// 否则模块明明在正常出数据，模块页却一直显示"故障"，重启实例也像是在走过场。
+FGB_TEST(native_host_clears_error_after_module_recovers) {
+    if (!fs::exists(host_exe()) || !fs::exists(status_cycle_dll())) {
+        return;
+    }
+    NativeHostSource source{base_config("host-status-cycle", status_cycle_dll(),
+                                        "com.fgbbridge.test.statuscycle",
+                                        "Status Cycle Test Module")};
+    FGB_CHECK(source.start());
+
+    bool saw_error = false;
+    bool cleared   = false;
+    for (int i = 0; i < 800; ++i) {
+        FaceFrame frame;
+        source.poll(frame);
+        const auto status = source.module_status();
+        if (status.has_value()) {
+            if (status->error.find("gaze sample stale") != std::string::npos) {
+                saw_error = true;
+            } else if (saw_error && status->error.empty()) {
+                cleared = true;
+                break;
+            }
+        }
+        clock::sleep_for_ns(5'000'000);
+    }
+    FGB_CHECK(saw_error);
+    FGB_CHECK(cleared);
+
+    source.stop();
+    // 主动停止之后状态是"已停止"，不该继续挂着故障原因
+    const auto stopped = source.module_status();
+    FGB_CHECK(stopped.has_value());
+    if (stopped.has_value()) {
+        FGB_CHECK(!stopped->alive);
+        FGB_CHECK(stopped->error.empty());
+    }
 }
 
 FGB_TEST(native_host_can_stop_and_start_for_hot_replace) {

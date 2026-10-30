@@ -67,11 +67,15 @@ sdk\                   集成文档与示例
 - `--gaze-left-source` / `--gaze-right-source`：左右渲染注视分别选源；
 - `--avatar-eye-from-gaze`：头像眼睛保留 `EYE` 源的 openness/pupil，方向改用
   `Gaze` 通道（默认关闭，头像仍只看 `Eyes`）。
-- `--native-host`：原生模块走独立 `fgb-host-native.exe` 进程，模块崩溃不带走引擎；
-  默认关闭。`--native-host-exe <路径>` 可覆盖宿主位置；`--no-host-restart` 关闭
-  崩溃后的自动重启。界面「模块 → 启动实例」的「独立进程」开关按实例配置，
-  写入 `modules.ini` 的 `[instance_host]`；宿主实例行还有「停止 / 启动 / 重启实例」，
-  可在不重启引擎的情况下替换 DLL（停止 → 替换文件 → 启动）。
+- `--native-host`：所有原生模块强制走独立 `fgb-host-native.exe` 进程。
+  `--native-host-exe <路径>` 可覆盖宿主位置；`--no-host-restart` 关闭崩溃后的自动重启。
+  界面「模块 → 启动实例」的「独立进程」开关按实例配置，写入 `modules.ini` 的
+  `[instance_host]`；**原生模块新增实例时默认开**（崩溃不带走引擎，也能不重启引擎换 DLL），
+  关掉则进程内加载（延迟略低）。VRCFT 模块没有这个选项——它们始终运行在
+  `VRCFaceTracking.ModuleProcess.exe` 里。
+- 「停止 / 启动 / 重启实例」对两类模块都可用，不需要重启引擎：停止后 DLL 解锁，
+  可以替换文件再启动；重启 = 停止 + 启动（原生模块会重新 `LoadLibrary`，VRCFT 模块会
+  换一个干净的 ModuleProcess 会话）。
 - `--attr-source <属性=源[,源]>`：逐属性有序源列表，属性包括
   `left/right-openness`、`left/right-pupil`、`left/right-gaze`、`vergence`；
   `--attr-fuse` 让多个新鲜源按置信度加权平均。
@@ -81,8 +85,9 @@ sdk\                   集成文档与示例
 再运行 `"FaceGaze Bridge.exe" --source livelink`。
 
 多模块组合在界面「模块」页配置：把模块添加为启动实例，再给表情 / 眼睛 / 注视 /
-头姿四个角色选来源；配置写入 `%LOCALAPPDATA%\FaceGazeBridge\modules.ini`，
-实例列表变化后需要重启引擎。界面里暂时不能切换输入源或编辑 OSC 映射表。
+头姿四个角色选来源；配置写入 `%LOCALAPPDATA%\FaceGazeBridge\modules.ini`。
+新增/移除实例、切换「独立进程」要重启引擎；实例行的停止 / 启动 / 重启立即生效。
+界面里暂时不能切换输入源或编辑 OSC 映射表。
 
 ### 3.1 ARKit LiveLink
 

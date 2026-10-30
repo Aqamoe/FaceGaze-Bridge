@@ -275,6 +275,7 @@ def main():
     roles = json.loads(cdp.evaluate(
         "(() => {"
         "  const selects = [...document.querySelectorAll('.role-select')];"
+        "  const instances = (state.modules && state.modules.instances) || [];"
         "  return JSON.stringify({"
         "    selects: selects.length,"
         "    roles: selects.map(node => node.dataset.role),"
@@ -282,10 +283,9 @@ def main():
         "    options: selects.map(node => node.options.length),"
         "    hosts: document.querySelectorAll('.instance-host input').length,"
         "    host_values: [...document.querySelectorAll('.instance-host input')].map(n => n.checked),"
-        "    host_expected: state.modules && state.modules.instances ? state.modules.instances.length : 0,"
-        "    restart_buttons: document.querySelectorAll('.instance-row [data-role=restart]').length,"
-        "    host_count: state.modules && state.modules.instances"
-        "      ? state.modules.instances.filter(i => i.host_process).length : 0"
+        "    rows: document.querySelectorAll('.instance-row').length,"
+        "    native_instances: instances.filter(i => i.kind === 'native').length,"
+        "    restart_buttons: document.querySelectorAll('.instance-row [data-role=restart]').length"
         "  });"
         "})()"))
     print(f"角色来源：{roles}")
@@ -742,11 +742,13 @@ def main():
     if any(count < 1 for count in roles.get("options", [])):
         print(f"FAIL 角色下拉没有选项（至少要有“自动”）：{roles}")
         ok = False
-    if roles.get("hosts") != roles.get("host_expected"):
-        print(f"FAIL 实例的独立进程开关数量与 modules.instances 不一致：{roles}")
+    # 「独立进程」只对原生模块有意义；VRCFT 模块永远跑在 ModuleProcess.exe 里
+    if roles.get("hosts") != roles.get("native_instances"):
+        print(f"FAIL 独立进程开关应只出现在原生实例上：{roles}")
         ok = False
-    if roles.get("restart_buttons") != roles.get("host_count"):
-        print(f"FAIL 宿主实例的重启按钮数量不一致：{roles}")
+    # 停止/启动/重启对所有实例都应该可用（进程内原生模块与 VRCFT 也支持重载）
+    if roles.get("restart_buttons") != roles.get("rows"):
+        print(f"FAIL 每个实例行都应有重启按钮：{roles}")
         ok = False
     if output.get("active") != "output" or not output.get("text"):
         print("FAIL 输出页的 VMC 行没有渲染")

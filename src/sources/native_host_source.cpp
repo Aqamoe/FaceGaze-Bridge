@@ -444,6 +444,9 @@ bool NativeHostSource::poll(FaceFrame& out) {
 }
 
 bool NativeHostSource::restart() {
+    // start() 会把 restarts_ 归零（新会话），手动重启则要接着数：
+    // 界面上的「重启 N 次」是用户点过一次还是模块崩过的唯一迹象。
+    const int previous_restarts = restarts_.load(std::memory_order_acquire);
     stopping_.store(true, std::memory_order_release);
     if (restart_thread_.joinable()) {
         restart_thread_.join();
@@ -457,7 +460,11 @@ bool NativeHostSource::restart() {
     last_error_.clear();
     last_sequence_     = 0;
     last_log_sequence_ = 0;
-    return start();
+    const bool ok = start();
+    if (ok) {
+        restarts_.store(previous_restarts + 1, std::memory_order_release);
+    }
+    return ok;
 }
 
 void NativeHostSource::schedule_restart() {
@@ -601,6 +608,9 @@ void NativeHostSource::stop_host() noexcept {
 }
 
 void NativeHostSource::stop() noexcept {
+    // 启动失败（open_block/wait_ready 里）也会走到这里，那种情况必须保留原因；
+    // 只有"本来跑着、用户主动停"才把旧错误清掉，界面才显示已停止而不是故障。
+    const bool was_started = started_;
     stopping_.store(true, std::memory_order_release);
     if (restart_thread_.joinable() &&
         restart_thread_.get_id() != std::this_thread::get_id()) {
@@ -609,6 +619,9 @@ void NativeHostSource::stop() noexcept {
     stop_host();
     restarting_.store(false, std::memory_order_release);
     started_ = false;
+    if (was_started) {
+        last_error_.clear();
+    }
 }
 
 } // namespace fgb

@@ -62,6 +62,16 @@ bool VrcftSource::start() {
     return true;
 }
 
+bool VrcftSource::restart() {
+    // stop() 会把会话线程 join 掉，之后改 restarts_ / 清错误都不与 run_loop 抢。
+    // VRCFT 模块本来就跑在 ModuleProcess.exe 里，"重启实例"只是换一个干净会话。
+    stop();
+    last_error_.clear();
+    module_error_.clear();
+    restarts_.fetch_add(1, std::memory_order_relaxed);
+    return start();
+}
+
 std::optional<ModuleRuntimeStatus> VrcftSource::module_status() const {
     ModuleRuntimeStatus status;
     status.alive    = module_alive();
@@ -321,6 +331,11 @@ bool VrcftSource::run_session() noexcept {
         last_error_ = "状态同步发送失败";
         return false;
     }
+
+    // 新会话已经跑起来了：上一轮会话的失败原因和模块当时报的错都不再描述现状。
+    // 不清掉的话，模块自愈/自动重启之后界面仍然一直显示"故障"。
+    last_error_.clear();
+    module_error_.clear();
 
     // ---- 5. 拉取循环 ----
     const clock::Ns period = 1'000'000'000ULL / static_cast<clock::Ns>(config_.tick_hz > 0
