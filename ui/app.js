@@ -125,6 +125,12 @@ function apply_l10n() {
   document.querySelectorAll("[data-i18n-placeholder]").forEach((node) => {
     node.placeholder = t(node.dataset.i18nPlaceholder);
   });
+  document.querySelectorAll("[data-i18n-title]").forEach((node) => {
+    node.title = t(node.dataset.i18nTitle);
+  });
+  document.querySelectorAll("[data-i18n-aria-label]").forEach((node) => {
+    node.setAttribute("aria-label", t(node.dataset.i18nAriaLabel));
+  });
   $("brand-version").textContent = state.version ? `v${state.version}` : t("app.subtitle");
   $("about-version").textContent = state.version ? `v${state.version}` : "—";
 
@@ -133,6 +139,12 @@ function apply_l10n() {
   if (state.status) {
     render_status(state.status);
   }
+  // 预设下拉的「自定义」是构建时写进去的，切语言要重建一次
+  if (state.output_profiles) {
+    render_output_profiles();
+  }
+  // 开关状态上挂着翻译文案（默认开启/已关闭），切语言时即使没连引擎也要刷新
+  sync_output_form();
   if (state.view === "modules" && state.modules) {
     render_modules();
   }
@@ -431,14 +443,14 @@ function handle(message) {
         }
         state.profile_pending = null;
       } else if (message.command === "set_outputs") {
-        state.outputs_dirty = false;
+        set_outputs_dirty(false);
         show_toast(t("output.saved"));
         if (state.pending_outputs_restart) {
           state.pending_outputs_restart = false;
           send({ type: "restart_engine" });
         }
       } else if (message.command === "apply_output_profile") {
-        state.outputs_dirty = false;
+        set_outputs_dirty(false);
         const pending = state.profile_pending;
         state.profile_pending = null;
         show_toast(t("output.profile.applied", { name: pending ? pending.name : "" }));
@@ -511,10 +523,14 @@ function render_gaze(gaze) {
 }
 
 function sync_output_form() {
+  const vrchat = $("o-vrchat-on").checked;
   const vmc = $("o-vmc-on").checked;
   const shm = $("o-shm-on").checked;
   const ws = $("o-ws-on").checked;
   const udp = $("o-udp-on").checked;
+  $("o-vrchat").disabled = !vrchat;
+  $("o-params-mode").disabled = !vrchat;
+  $("o-eye-mode").disabled = !vrchat;
   $("o-vmc-target").disabled = !vmc;
   $("o-shm-name").disabled = !shm;
   $("o-ws-port").disabled = !ws;
@@ -522,6 +538,29 @@ function sync_output_form() {
   $("o-ws-all").disabled = !ws;
   $("o-udp-target").disabled = !udp;
   $("o-udp-rate").disabled = !udp;
+  // 关闭的通道整卡变暗，配置项虽然仍可见，但一眼能看出这路没开
+  $("oc-osc").classList.toggle("off", !vrchat);
+  $("oc-vmc").classList.toggle("off", !vmc);
+  $("oc-shm").classList.toggle("off", !shm);
+  $("oc-ws").classList.toggle("off", !ws);
+  $("oc-udp").classList.toggle("off", !udp);
+
+  const osc_state = $("o-vrchat-state");
+  osc_state.textContent = vrchat ? t("output.osc.on") : t("output.osc.off");
+  osc_state.classList.toggle("on", vrchat);
+
+  // 步进按钮跟随输入框：输入被通道开关禁用时也不能点
+  document.querySelectorAll(".num-field").forEach((field) => {
+    const input = field.querySelector("input");
+    field.querySelectorAll(".num-step").forEach((button) => {
+      button.disabled = input.disabled;
+    });
+  });
+}
+
+function set_outputs_dirty(dirty) {
+  state.outputs_dirty = dirty;
+  $("o-dirty").hidden = !dirty;
 }
 
 function apply_outputs(outputs) {
@@ -531,6 +570,8 @@ function apply_outputs(outputs) {
   // 用户正在改表单时不要拿 10 Hz 的状态推送覆盖输入
   if (!state.outputs_dirty) {
     $("o-vrchat").value = outputs.vrchat || "";
+    // 旧引擎没有这个字段：缺省按开启处理，和引擎默认值一致
+    $("o-vrchat-on").checked = outputs.vrchat_enabled !== false;
     $("o-eye-mode").value = outputs.eye_mode || "parameters";
     $("o-params-mode").value = outputs.params_mode || "v2";
     $("o-vmc-on").checked = !!outputs.vmc_enabled;
@@ -552,6 +593,7 @@ function collect_outputs() {
   return {
     type: "set_outputs",
     vrchat: $("o-vrchat").value.trim(),
+    vrchat_enabled: $("o-vrchat-on").checked,
     eye_mode: $("o-eye-mode").value,
     params_mode: $("o-params-mode").value,
     vmc_enabled: $("o-vmc-on").checked,
@@ -570,7 +612,7 @@ function collect_outputs() {
 
 function save_outputs(restart) {
   state.pending_outputs_restart = !!restart;
-  state.outputs_dirty = true;
+  set_outputs_dirty(true);
   send(collect_outputs());
 }
 
@@ -641,7 +683,7 @@ async function apply_output_profile() {
   }
   state.profile_pending = { action: "apply", name };
   state.pending_outputs_restart = true;
-  state.outputs_dirty = true;
+  set_outputs_dirty(true);
   send({ type: "apply_output_profile", name });
 }
 
@@ -711,23 +753,33 @@ function render_status(status) {
   $("o-matched").textContent = `${status.matched || 0}${t("output.matched.suffix")}`;
   $("o-binary").textContent = status.binary_count || 0;
   const vmc_out = status.vmc_out || {};
-  $("o-vmc").textContent = vmc_out.enabled
+  const vmc_state = $("o-vmc");
+  vmc_state.textContent = vmc_out.enabled
     ? `${vmc_out.target} · ${fmt_int(vmc_out.messages)}`
     : t("output.vmc.off");
+  vmc_state.classList.toggle("on", !!vmc_out.enabled);
   const shm_out = status.shm_out || {};
-  $("o-shm").textContent = shm_out.enabled
+  const shm_state = $("o-shm");
+  shm_state.textContent = shm_out.enabled
     ? `${shm_out.name} · ${fmt_int(shm_out.messages)}`
     : t("output.shm.off");
+  shm_state.classList.toggle("on", !!shm_out.enabled);
   const ws_out = status.ws_out || {};
-  $("o-ws").textContent = ws_out.enabled
-    ? (ws_out.listening === false
+  const ws_broken = !!ws_out.enabled && ws_out.listening === false;
+  const ws_state = $("o-ws");
+  ws_state.textContent = ws_out.enabled
+    ? (ws_broken
         ? `${ws_out.target} · ${t("output.ws.failed")}`
         : `${ws_out.target} · ${fmt_int(ws_out.messages)} · ${ws_out.clients || 0} ${t("output.clients")}`)
     : t("output.ws.off");
+  ws_state.classList.toggle("on", !!ws_out.enabled && !ws_broken);
+  ws_state.classList.toggle("err", ws_broken);
   const udp_out = status.udp_out || {};
-  $("o-udp").textContent = udp_out.enabled
+  const udp_state = $("o-udp");
+  udp_state.textContent = udp_out.enabled
     ? `${udp_out.target} · ${fmt_int(udp_out.messages)}`
     : t("output.udp.off");
+  udp_state.classList.toggle("on", !!udp_out.enabled);
   $("c-source").textContent = `${status.source || "—"} · ${(status.fps || 0).toFixed(1)} fps`;
   $("s-clients").textContent = status.clients || 0;
   if (state.gaze) {
@@ -761,6 +813,8 @@ function render_status(status) {
     }
     $("f-cutoff-v").textContent = Number(cutoff.value).toFixed(1);
     $("f-beta-v").textContent = Number(beta.value).toFixed(2);
+    paint_range(cutoff);
+    paint_range(beta);
   } else {
     $("f-cutoff-v").textContent = "—";
     $("f-beta-v").textContent = "—";
@@ -1042,21 +1096,25 @@ function installed_card(item) {
     card.classList.add("expanded");
   }
 
-  const head = el("div", "module-head");
-  head.append(el("strong", "", item.name || item.id));
+  const head = el("div", "module-head module-head-card");
+  const title = el("div", "module-title");
+  title.append(el("strong", "", item.name || item.id));
   if (item.version) {
-    head.append(el("span", "module-ver", `v${item.version}`));
+    title.append(el("span", "module-ver", `v${item.version}`));
   }
   if (item.author) {
-    head.append(el("span", "module-author", item.author));
+    title.append(el("span", "module-author", item.author));
   }
-  head.append(el("span", "chip", item.kind === "native"
+  const badges = el("div", "module-badges");
+  badges.append(el("span", "chip", item.kind === "native"
     ? t("modules.kind.native") : t("modules.kind.vrcft")));
   const chip_state = module_chip(item);
   const chip = el("span", `chip ${chip_state.cls}`.trim(), chip_state.text);
   chip.dataset.role = "chip";
-  head.append(chip);
-  head.append(el("span", "chevron", "▾"));
+  badges.append(chip);
+  const chevron = el("span", "chevron");
+  chevron.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>';
+  head.append(title, badges, chevron);
   card.append(head);
 
   if (item.description) {
@@ -1088,7 +1146,7 @@ function installed_card(item) {
 
   const actions = el("div", "module-actions");
 
-  const toggle = el("label", "mod-toggle");
+  const toggle = el("label", "switch mod-toggle");
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.checked = !!item.enabled;
@@ -1098,12 +1156,13 @@ function installed_card(item) {
   toggle.append(checkbox, el("span", "", t("modules.enabled")));
   actions.append(toggle);
 
+  const buttons = el("div", "module-buttons");
   if (!item.active) {
     const set_button = el("button", "btn ghost small", t("modules.set_active"));
     set_button.addEventListener("click", () => send({ type: "set_module", id: item.id }));
-    actions.append(set_button);
+    buttons.append(set_button);
   } else {
-    actions.append(el("span", "muted", t("modules.current")));
+    buttons.append(el("span", "module-current", t("modules.current")));
   }
 
   const remove = el("button", "btn danger small", t("modules.delete"));
@@ -1116,7 +1175,8 @@ function installed_card(item) {
       send({ type: "delete_module", id: item.id });
     }
   });
-  actions.append(remove);
+  buttons.append(remove);
+  actions.append(buttons);
   card.append(actions);
 
   const toggle_card = (event) => {
@@ -1734,6 +1794,7 @@ function build_cal_rows(shapes) {
       slider.max = "1";
       slider.step = "0.005";
       slider.value = String(shape[which]);
+      paint_range(slider);
       const readout = el("b", "", Number(shape[which]).toFixed(3));
       const capture = el("button", "btn tiny", t("calibration.capture"));
       capture.addEventListener("click", () => {
@@ -1741,6 +1802,7 @@ function build_cal_rows(shapes) {
         send({ type: "capture_calibration", shape: shape.name, which });
       });
       slider.addEventListener("input", () => {
+        paint_range(slider);
         readout.textContent = Number(slider.value).toFixed(3);
         queue_cal_shape(row_ui);
       });
@@ -1799,6 +1861,14 @@ function push_cal_shape(row) {
   });
 }
 
+function paint_range(node) {
+  const min = Number(node.min || 0);
+  const max = Number(node.max || 100);
+  const value = Number(node.value || 0);
+  const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
+  node.style.setProperty("--fill", `${Math.max(0, Math.min(100, pct))}%`);
+}
+
 function sync_slider(id, value, digits) {
   const node = $(id);
   if (!node || value === undefined || value === null) {
@@ -1808,6 +1878,7 @@ function sync_slider(id, value, digits) {
   if (document.activeElement !== node) {
     node.value = value;
   }
+  paint_range(node);
   const label = $(`${id}-v`);
   if (label) {
     label.textContent = Number(node.value).toFixed(digits);
@@ -1850,6 +1921,8 @@ function render_calibration() {
     if (document.activeElement !== row.hi) {
       row.hi.value = String(shape.hi);
     }
+    paint_range(row.lo);
+    paint_range(row.hi);
     row.lo_v.textContent = Number(row.lo.value).toFixed(3);
     row.hi_v.textContent = Number(row.hi.value).toFixed(3);
     if (document.activeElement !== row.check) {
@@ -2178,6 +2251,32 @@ function wire() {
     item.addEventListener("click", () => switch_page(item.dataset.page));
   });
 
+  // 静态滑杆先画一次进度；校准页的行是动态建的，在 make_range 里画
+  document.querySelectorAll('input[type="range"]').forEach((node) => {
+    paint_range(node);
+    node.addEventListener("input", () => paint_range(node));
+  });
+
+  // 数字输入的步进按钮：原生 spinner 在暗底上太突兀，换成右侧自绘的上下箭头
+  document.querySelectorAll(".num-step").forEach((button) => {
+    button.addEventListener("click", () => {
+      const field = button.closest(".num-field");
+      const input = field ? field.querySelector("input") : null;
+      if (!input || input.disabled) {
+        return;
+      }
+      const step = Number(input.step) || 1;
+      const min = input.min === "" ? -Infinity : Number(input.min);
+      const max = input.max === "" ? Infinity : Number(input.max);
+      const current = input.value === "" ? 0 : Number(input.value);
+      const next = Math.min(max, Math.max(min, current + step * Number(button.dataset.step || 1)));
+      input.value = String(next);
+      // 走一遍与手动输入相同的通知，outputs_dirty 与联动禁用才会跟上
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  });
+
   $("param-search").addEventListener("input", apply_param_filter);
   $("param-only-sent").addEventListener("change", apply_param_filter);
 
@@ -2268,16 +2367,16 @@ function wire() {
     send({ type: "reload_avatar" });
   });
   for (const id of [
-    "o-vrchat", "o-eye-mode", "o-params-mode", "o-vmc-on", "o-vmc-target",
+    "o-vrchat", "o-vrchat-on", "o-eye-mode", "o-params-mode", "o-vmc-on", "o-vmc-target",
     "o-shm-on", "o-shm-name", "o-ws-on", "o-ws-port", "o-ws-rate", "o-ws-all",
     "o-udp-on", "o-udp-target", "o-udp-rate",
   ]) {
     const element = $(id);
     element.addEventListener("input", () => {
-      state.outputs_dirty = true;
+      set_outputs_dirty(true);
     });
     element.addEventListener("change", () => {
-      state.outputs_dirty = true;
+      set_outputs_dirty(true);
       sync_output_form();
     });
   }
@@ -2444,4 +2543,5 @@ function fmt_int(value) {
 
 apply_l10n();
 wire();
+sync_output_form();
 connect();
