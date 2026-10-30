@@ -3,7 +3,7 @@
  * ====================================
  *
  * 用途：把同一帧以固定小端布局发给串流软件 / 自研客户端。一个数据报就是完整一帧，
- * 不做分片；88 个形状时总长 592 字节，远低于 1200 字节的避免分片上限。
+ * 不做分片；88 个形状时总长 656 字节（v2），远低于 1200 字节的避免分片上限。
  *
  * 约定：
  *   - 本机回环 / 局域网 UDP，无握手、无重传；丢一帧就丢一帧，下一帧是全量
@@ -23,15 +23,21 @@
 #include <stdint.h>
 
 #define FGB_UDP_MAGIC 0x55424746u /* "FGBU" little-endian */
-#define FGB_UDP_VERSION 1u
+#define FGB_UDP_VERSION 2u
 #define FGB_UDP_MAX_SHAPES 88u
-#define FGB_UDP_FRAME_SIZE 592u
+#define FGB_UDP_FRAME_SIZE 656u
 
 #define FGB_UDP_ATTR_LEFT_VALID 0x01u
 #define FGB_UDP_ATTR_RIGHT_VALID 0x02u
 #define FGB_UDP_ATTR_HAS_HEAD 0x04u
 #define FGB_UDP_ATTR_FIXATION 0x08u
 #define FGB_UDP_ATTR_GAZE_VALID 0x10u
+
+/* FgbUdpFrameV1::gaze_valid 的位（ADR-0030 v1.1 追加） */
+#define FGB_UDP_GAZE_LEFT_VALID 0x01u
+#define FGB_UDP_GAZE_RIGHT_VALID 0x02u
+#define FGB_UDP_GAZE_COMBINED_VALID 0x04u
+#define FGB_UDP_GAZE_POINT_2D_VALID 0x08u
 
 #ifdef _MSC_VER
 #pragma pack(push, 1)
@@ -53,7 +59,7 @@ typedef struct FGB_UDP_PACKED FgbUdpFrameV1 {
     uint64_t capture_ts_ns;  /* 数据在物理世界发生的时刻 */
     uint64_t publish_ts_ns;  /* 引擎发布时刻 */
 
-    uint32_t channels;     /* channel::kExpression / kEyes / kHead */
+    uint32_t channels;     /* channel::kExpression / kEyes / kHead / kGaze */
     uint32_t attributes;   /* FGB_UDP_ATTR_* */
     uint32_t shape_count;  /* <= FGB_UDP_MAX_SHAPES */
     uint32_t reserved;
@@ -84,6 +90,17 @@ typedef struct FGB_UDP_PACKED FgbUdpFrameV1 {
 
     float shapes[FGB_UDP_MAX_SHAPES];        /* 0..1 */
     uint8_t shape_valid[FGB_UDP_MAX_SHAPES]; /* 0/1 */
+
+    /* ---- v1.1 追加：独立注视通道（渲染/foveation 用）---- */
+    uint32_t gaze_valid;       /* FGB_UDP_GAZE_* 位 */
+    uint32_t gaze_source;      /* 源序号，0 = 未知/由眼睛反算 */
+    uint32_t gaze_source_mask; /* 本帧各通道贡献源位掩码 */
+    uint32_t gaze_reserved;
+    uint64_t gaze_capture_ts_ns;
+    float gaze_left_dir[3];
+    float gaze_right_dir[3];
+    float gaze_left_point_2d[2];
+    float gaze_right_point_2d[2];
 } FgbUdpFrameV1;
 
 #ifdef __cplusplus
@@ -92,6 +109,7 @@ typedef struct FGB_UDP_PACKED FgbUdpFrameV1 {
 static_assert(sizeof(FgbUdpFrameV1) == FGB_UDP_FRAME_SIZE, "UDP 帧布局变了，同步改文档与探针");
 static_assert(offsetof(FgbUdpFrameV1, shapes) == 152, "shapes 偏移变了");
 static_assert(offsetof(FgbUdpFrameV1, shape_valid) == 504, "shape_valid 偏移变了");
+static_assert(offsetof(FgbUdpFrameV1, gaze_valid) == 592, "v1.1 注视字段偏移变了");
 #endif
 
 #ifdef _MSC_VER

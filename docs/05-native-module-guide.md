@@ -4,11 +4,21 @@
 
 - 用 C/C++ 编译一个 DLL
 - 通过 `fgb_module_query` 暴露身份与回调
-- 在 `update()` 里提交表情 / 眼追 / 头姿
+- 在 `update()` 里提交表情 / 眼追 / 独立注视 / 头姿
 - 打包成 `.zip`，在 FGB 的「模块库 → 原生模块」或「模块」页安装并选中
 
-参考实现：[`samples/native-sine`](../samples/native-sine)（无硬件，正弦波输出）。
+参考实现：[`samples/native-sine`](../samples/native-sine)（完整通道）、
+[`samples/native-face`](../samples/native-face)（仅表情）、
+[`samples/native-gaze`](../samples/native-gaze)（仅独立注视）；都不需要硬件。
 头文件：[`sdk/fgb_module_api.h`](../sdk/fgb_module_api.h)。
+
+> **能力粒度（先读这一段）**
+> `FGB_CAP_EYE` 是**整块原子能力**：声明了它，就必须同时给出 gaze、openness 和 pupil。
+> 只提供注视点、不提供睁眼度的模块（例如 PICO 互联的独立眼动链路）**不要**声明
+> `EYE`，否则头像会因为 openness 缺失而闭眼；这类模块应声明 `FGB_CAP_GAZE` 并填
+> `FgbGazeV1`。`EYE` 与 `GAZE` 可以同时声明。v1.1 已经支持多模块按角色组合
+> （面捕 / 眼睛 / 注视 / 头姿），见 §11；属性级组合（A 的 openness + B 的 gaze、
+> 左右眼分源）仍是 v2 方向。
 
 ---
 
@@ -118,8 +128,12 @@ const FgbModuleV1* fgb_module_query(uint32_t host_abi_version) {
 
 关键点：
 
-- `capabilities` 声明你能提供哪些通道：`FGB_CAP_EXPRESSION / FGB_CAP_EYE / FGB_CAP_HEAD`。
-  只声明真正有数据的通道；合并层只认声明。
+- `capabilities` 声明你能提供哪些通道：`FGB_CAP_EXPRESSION / FGB_CAP_EYE /
+  FGB_CAP_GAZE / FGB_CAP_HEAD`。只声明真正有数据的通道；合并层只认声明。
+- `FGB_CAP_EYE` 是整眼能力（gaze + openness + pupil）。**只给注视点**的模块不能借用它，
+  应声明 `FGB_CAP_GAZE` 并写 `slot->gaze`（见 §11.2）。
+- 眼追填 `slot->left_eye/right_eye`；独立注视填 `slot->gaze`；头姿填
+  `has_head_pose/head_rotation/head_position`。
 - 形状用 `host->shape_index(ctx, "JawOpen")` 按名字查下标，**不要硬编码 88 项顺序**。
   未知名字返回 `-1`，跳过即可。
 - 每帧只填实际有效的形状，并把 `shape_valid[i]` 置 1；不填的保持 0。
@@ -204,7 +218,10 @@ Compress-Archive -Path fgb-native.json,MyModule.dll -DestinationPath MyModule.zi
 ## 9. 限制与版本演进
 
 - **v1 是进程内加载**：模块崩溃会带走引擎；需要隔离时后续会上跨进程 ABI v2
-- 引擎一次只加载一个模块（原生或 VRCFT 二选一）
+- 界面可以配置多个启动实例并按“表情 / 眼睛 / 注视 / 头姿”选来源；CLI 也支持
+  重复 `--source vrcft` + `--module-id`。当前仍是整通道组合，不能按左右眼/字段
+  拆来源，也不能把 A 的 openness 与 B 的 gaze 拼成一个眼睛通道。见
+  [ADR-0030](adr/0030-native-module-v2-composition.md)
 - `update` 不要阻塞（读设备建议自带线程 + 非阻塞队列，提交仍回到 `update`）
 - ABI 结构只允许在末尾追加字段；任何破坏性改动都会升 `abi_version`
 - 宿主对 `struct_size` 做兼容读取；请始终用当前 SDK 头编译
@@ -220,3 +237,98 @@ Compress-Archive -Path fgb-native.json,MyModule.dll -DestinationPath MyModule.zi
 | 卡片显示故障 | 看模块 `report_status(ERROR, ...)` / 日志里的具体原因；初始化返回 0 也会显示 |
 | 帧率 0 | `update` 没有 `commit`，或 `shape_valid` 全 0（表情通道不会启用） |
 | 位数错误 | DLL 不是 x64，`LoadLibrary` 会失败并给出错误码 |
+
+## 11. 多模块与注视通道（ADR-0030 v1.1，已实现）
+
+### 11.1 能表达的组合
+
+| 需求 | 能否做到 | 做法 |
+|---|---|---|
+| A 面捕 + B 整眼 | ✅ | A 供 Expression，B 供 Eyes |
+| A 完整 + B 注视点 | ✅ | 头像用 A，渲染注视用 B 的 `GAZE` |
+| A 面捕 + B 整眼 + C 注视 | ✅ | 三路各取所需 |
+| A 的 openness + B 的 gaze | ❌ | Eyes 是整通道原子能力（v2） |
+| 左眼 A、右眼 B | ❌ | Eyes 不拆左右（v2） |
+
+配置方式有两种：
+
+- 界面「模块」页：把模块「添加为实例」，再为四个角色选来源。角色按 `module_id`
+  写入 `modules.ini` 的 `[roles]`，实例写入 `[instances]`；改实例列表后重启引擎。
+- CLI：重复 `--source vrcft --module-id ...`，或用 `[instances]` 直接启动一批实例：
+
+```powershell
+fgb-cli run `
+  --source vrcft --module-id com.example.pico-face `
+  --source vrcft --module-id com.example.pico-gaze `
+  --expression-source "native[1]" --gaze-source "native[2]"
+```
+
+`modules.ini` 示例：
+
+```ini
+[instances]
+face = com.example.pico-face
+gaze = com.example.pico-gaze
+
+[roles]
+expression = com.example.pico-face
+eyes       = com.example.pico-face
+gaze       = com.example.pico-gaze
+head       = com.example.pico-face
+```
+
+### 11.2 写一个注视模块
+
+声明 `FGB_CAP_GAZE`，不要声明 `EYE`；在 `update()` 里填 `slot->gaze`。它位于
+`FgbFrameSlotV1` 末尾，旧宿主不会分配这段内存，所以写之前必须检查 `struct_size`：
+
+```c
+const size_t needed = offsetof(FgbFrameSlotV1, gaze) + sizeof(FgbGazeV1);
+if (slot->struct_size >= needed) {
+    slot->gaze.valid = FGB_GAZE_LEFT | FGB_GAZE_RIGHT |
+                       FGB_GAZE_COMBINED | FGB_GAZE_POINT_2D;
+    slot->gaze.left_dir[0] = dx;   /* HMD 局部单位向量，-Z 前 */
+    slot->gaze.left_dir[1] = dy;
+    slot->gaze.left_dir[2] = dz;
+    /* right_dir / combined_dir 同上 */
+    slot->gaze.left_point_2d[0]  = x; /* 暂定 [0,1]，左上原点 */
+    slot->gaze.left_point_2d[1]  = y;
+    slot->gaze.confidence = 0.9f;
+    slot->gaze.capture_ts_ns = device_ts_ns; /* 0 = 用帧时间戳 */
+}
+```
+
+- 方向会被宿主归一化；非法/NaN 会被丢弃。
+- `FGB_GAZE_POINT_2D` 只表示点字段可用，是否按眼由 `LEFT/RIGHT` 位决定。
+- 2D 点约定尚未与串流/OpenXR 消费端对齐，暂时只做透传。
+- 合并层每个通道独立选源、独立新鲜度：表情 500 ms、眼睛 250 ms、注视 100 ms
+  （CLI 可用 `--*-stale-ms` 覆盖）。状态页会显示每个通道的来源与年龄。
+- 头像输出默认只看 `Eyes`；渲染/foveation 用 `Gaze`，没有时回退到眼睛反算。
+  所以“面捕 A + 注视 B”不会让 B 接管头像眼睛。
+
+### 11.3 模块清单的可选字段
+
+```json
+{
+  "AbiVersion": 1,
+  "Capabilities": ["expression", "gaze"],
+  "RoleHint": "gaze",
+  "MinHostVersion": "1.0.2"
+}
+```
+
+宿主只在加载前用它们做列表/兼容性提示；加载后以 `fgb_module_query` 的
+`capabilities` 为准。旧清单不写这些字段也照常工作。`MinHostVersion` 高于当前
+宿主版本时，界面会标记为不兼容。
+
+### 11.4 PICO 类设备怎么拆
+
+| 模块 | 能力 | 数据来源 |
+|---|---|---|
+| `pico-connect-face` | `EXPRESSION` | PICO 互联面捕协议 |
+| `pico-connect-gaze` | `GAZE`（可选 openness/pupil） | PICO 互联内部 RPC / OpenXR 眼动 |
+| `pico-full`（可选） | `EXPRESSION \| EYE \| GAZE \| HEAD` | 头显 APK |
+
+这样面捕模块和注视模块可以独立更新、独立故障；PICO 互联接口变化时只换
+`pico-connect-gaze`，不影响面捕。详细设计与开放问题见
+[ADR-0030](adr/0030-native-module-v2-composition.md)。

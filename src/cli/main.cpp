@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -86,9 +87,14 @@ void print_usage() {
                  "run 选项:\n"
                  "  --source <类型>         vmc | livelink | osc | vrcft | replay，可重复；顺序即优先级 (默认 vmc)\n"
                  "  --eye-source <名>       指定眼追来自哪个源（默认自动）\n"
+                 "  --gaze-source <名>      指定渲染注视来自哪个源（默认自动）\n"
                  "  --expression-source <名> 指定表情来自哪个源（默认自动）\n"
                  "  --head-source <名>      指定头姿来自哪个源（默认自动）\n"
-                 "  --stale-ms <毫秒>       某源多久没更新就不再参与合并 (默认 500)\n"
+                 "  --stale-ms <毫秒>       同时设置所有通道的过期阈值\n"
+                 "  --expression-stale-ms <毫秒> 表情过期阈值 (默认 500)\n"
+                 "  --eye-stale-ms <毫秒>   眼追过期阈值 (默认 250)\n"
+                 "  --gaze-stale-ms <毫秒>  注视过期阈值 (默认 100)\n"
+                 "  --head-stale-ms <毫秒>  头姿过期阈值 (默认 500)\n"
                  "  --record <文件>         把收到的 ReplyUpdate 原样录制（仅 vrcft）\n"
                  "  --replay <文件>         回放抓包（配合 --source replay）\n"
                  "  --replay-speed <倍率>   回放速度，0 = 不限 (默认 1.0)\n"
@@ -307,8 +313,12 @@ int cmd_run(int argc, char** argv) {
     std::vector<std::string> module_ids;
     std::string merge_expression_source;
     std::string merge_eye_source;
+    std::string merge_gaze_source;
     std::string merge_head_source;
-    int stale_ms = 500;
+    int expression_stale_ms = 500;
+    int eye_stale_ms        = 250;
+    int gaze_stale_ms       = 100;
+    int head_stale_ms       = 500;
     std::filesystem::path module_exe;
     std::filesystem::path module_dll;
     std::string active_module_id;
@@ -398,16 +408,40 @@ int cmd_run(int argc, char** argv) {
             }
         } else if (arg == "--eye-source") {
             merge_eye_source = std::string{next_value(arg)};
+        } else if (arg == "--gaze-source") {
+            merge_gaze_source = std::string{next_value(arg)};
         } else if (arg == "--expression-source") {
             merge_expression_source = std::string{next_value(arg)};
         } else if (arg == "--head-source") {
             merge_head_source = std::string{next_value(arg)};
         } else if (arg == "--stale-ms") {
             const auto v = next_value(arg);
-            stale_ms       = std::atoi(std::string{v}.c_str());
-            if (stale_ms <= 0) {
+            const int value = std::atoi(std::string{v}.c_str());
+            if (value <= 0) {
                 std::fprintf(stderr, "--stale-ms 需要正数（毫秒）\n");
                 return 2;
+            }
+            expression_stale_ms = value;
+            eye_stale_ms        = value;
+            gaze_stale_ms       = value;
+            head_stale_ms       = value;
+        } else if (arg == "--expression-stale-ms" || arg == "--eye-stale-ms" ||
+                   arg == "--gaze-stale-ms" || arg == "--head-stale-ms") {
+            const auto v = next_value(arg);
+            const int value = std::atoi(std::string{v}.c_str());
+            if (value <= 0) {
+                std::fprintf(stderr, "%.*s 需要正数（毫秒）\n", static_cast<int>(arg.size()),
+                             arg.data());
+                return 2;
+            }
+            if (arg == "--expression-stale-ms") {
+                expression_stale_ms = value;
+            } else if (arg == "--eye-stale-ms") {
+                eye_stale_ms = value;
+            } else if (arg == "--gaze-stale-ms") {
+                gaze_stale_ms = value;
+            } else {
+                head_stale_ms = value;
             }
         } else if (arg == "--panel") {
             const auto v = next_value(arg);
@@ -674,15 +708,84 @@ int cmd_run(int argc, char** argv) {
     std::vector<std::string> source_names;
     source_names.reserve(source_kinds.size());
     std::size_t vrcft_seen = 0;
+    bool instances_consumed = false;
     const auto vrcft_total = static_cast<std::size_t>(
         std::count(source_kinds.begin(), source_kinds.end(), std::string{"vrcft"}));
+
+    struct ModuleLaunch {
+        std::filesystem::path dll;
+        std::string module_id;
+        std::string module_name;
+        std::string instance_name;
+        bool native = false;
+    };
+
+    auto launch_module = [&](const ModuleLaunch& launch, const std::string& display) -> bool {
+        // 原生模块走进程内 C ABI；VRCFT 模块需要一个 .NET 宿主运行时
+        if (launch.native) {
+            fgb::NativeSourceConfig cfg;
+            cfg.dll          = launch.dll;
+            cfg.module_id    = launch.module_id;
+            cfg.module_name  = launch.module_name;
+            cfg.display_name = display;
+            cfg.tick_hz      = tick_hz;
+            if (!record_path.empty()) {
+                FGB_WARN("native", "原生模块暂不支持 --record，已忽略");
+            }
+            auto native_source = std::make_unique<fgb::NativeModuleSource>(cfg);
+            FGB_INFO("native", "%s 加载原生模块：%s (%s)", display.c_str(),
+                     launch.module_name.c_str(), launch.module_id.c_str());
+
+            fgb::web::RunningModule running;
+            running.display_name = display;
+            running.module_id    = launch.module_id;
+            running.module_name  = launch.module_name;
+            running.source       = native_source.get();
+            running_modules.push_back(std::move(running));
+
+            engine.add_source(std::move(native_source));
+            source_names.push_back(display);
+            return true;
+        }
+
+        if (module_exe.empty()) {
+            module_exe = default_module_process_exe();
+            if (module_exe.empty()) {
+                std::fprintf(stderr,
+                             "没有找到 VRCFT 运行时（VRCFaceTracking.ModuleProcess.exe）。\n"
+                             "  发布包应带 runtime\\vrcft；开发环境可以安装一份 VRCFT，\n"
+                             "  或用 --module-exe 指定 ModuleProcess.exe 的路径。\n");
+                return false;
+            }
+        }
+
+        fgb::vrcft::VrcftSourceConfig cfg;
+        cfg.module_process_exe = module_exe;
+        cfg.module_dll         = launch.dll;
+        cfg.tick_hz            = tick_hz;
+        cfg.display_name       = display;
+        if (!record_path.empty()) {
+            cfg.record_path = record_path;
+        }
+        auto vrcft_source = std::make_unique<fgb::vrcft::VrcftSource>(cfg);
+        FGB_INFO("vrcft", "%s 加载模块：%s", display.c_str(), launch.module_name.c_str());
+
+        // 每个实例单独登记：界面按实例显示状态，而不是只显示第一个
+        fgb::web::RunningModule running;
+        running.display_name = display;
+        running.module_id    = launch.module_id;
+        running.module_name  = launch.module_name;
+        running.source       = vrcft_source.get();
+        running_modules.push_back(std::move(running));
+
+        engine.add_source(std::move(vrcft_source));
+        source_names.push_back(display);
+        return true;
+    };
 
     for (const std::string& kind : source_kinds) {
         if (kind == "vrcft") {
             const std::size_t index = vrcft_seen++;
-            // 多实例时给个能区分又不能有歧义的名字，--eye-source 就是拿它匹配的
-            const std::string display =
-                vrcft_total > 1 ? "vrcft[" + std::to_string(index + 1) + "]" : "vrcft";
 
             // 模块选择交给 registry：命令行 > 配置文件 > 只有一个是它
             if (!module_registry) {
@@ -691,8 +794,60 @@ int cmd_run(int argc, char** argv) {
                 module_registry->rescan();
             }
 
+            const bool explicit_id =
+                index < module_ids.size() && !module_ids[index].empty();
+
+            // 配置了 [instances] 且没有逐条 --module-id：一次把列表里的实例都拉起来。
+            // 只消费一次，避免重复 --source vrcft 时把同一批实例装两遍。
+            if (module_dll.empty() && !explicit_id && !instances_consumed &&
+                !module_registry->instances().empty()) {
+                instances_consumed = true;
+                bool any_started = false;
+                for (const fgb::vrcft::ModuleInstance& instance : module_registry->instances()) {
+                    const fgb::vrcft::ModuleInfo* module = module_registry->find(instance.module_id);
+                    if (module == nullptr) {
+                        FGB_WARN("modules", "实例 %s 指向未安装的模块 %s，已跳过",
+                                 instance.name.c_str(), instance.module_id.c_str());
+                        continue;
+                    }
+                    if (!module->enabled) {
+                        FGB_WARN("modules", "实例 %s 的模块 %s 已停用，已跳过", instance.name.c_str(),
+                                 module->name.c_str());
+                        continue;
+                    }
+                    if (module->broken) {
+                        FGB_WARN("modules", "实例 %s 的模块 %s 缺少 DLL，已跳过", instance.name.c_str(),
+                                 module->name.c_str());
+                        continue;
+                    }
+                    const bool native = module->kind == fgb::vrcft::ModuleKind::native;
+                    const std::string display =
+                        (native ? "native:" : "vrcft:") + instance.name;
+                    if (active_module_id.empty()) {
+                        active_module_id = module->id;
+                        module_registry->mark_active(active_module_id);
+                    }
+                    const ModuleLaunch launch{module->dll, module->id, module->name, instance.name,
+                                              native};
+                    if (launch_module(launch, display)) {
+                        any_started = true;
+                    } else if (panel_port == 0) {
+                        return 2;
+                    }
+                }
+                if (!any_started) {
+                    if (panel_port != 0) {
+                        FGB_WARN("modules", "配置的实例没有一个能启动；可在界面里检查模块状态");
+                        continue;
+                    }
+                    std::fprintf(stderr, "配置的实例没有一个能启动（见上面的原因）\n");
+                    return 2;
+                }
+                continue;
+            }
+
             std::filesystem::path instance_dll = module_dll;
-            std::string instance_module_id    = index < module_ids.size() ? module_ids[index] : std::string{};
+            std::string instance_module_id    = explicit_id ? module_ids[index] : std::string{};
             std::string instance_module_name;
             bool is_native = false;
 
@@ -751,71 +906,17 @@ int cmd_run(int argc, char** argv) {
                 module_registry->mark_active(active_module_id);
             }
 
-            // 原生模块走进程内 C ABI；VRCFT 模块需要一个 .NET 宿主运行时
-            if (is_native) {
-                const std::string source_display =
-                    vrcft_total > 1 ? "native[" + std::to_string(index + 1) + "]" : "native";
-                fgb::NativeSourceConfig cfg;
-                cfg.dll          = instance_dll;
-                cfg.module_id    = instance_module_id;
-                cfg.module_name  = instance_module_name;
-                cfg.display_name = source_display;
-                cfg.tick_hz      = tick_hz;
-                if (!record_path.empty()) {
-                    FGB_WARN("native", "原生模块暂不支持 --record，已忽略");
-                }
-                auto native_source = std::make_unique<fgb::NativeModuleSource>(cfg);
-                FGB_INFO("native", "%s 加载原生模块：%s (%s)", source_display.c_str(),
-                         instance_module_name.c_str(), instance_module_id.c_str());
-
-                fgb::web::RunningModule running;
-                running.display_name = source_display;
-                running.module_id    = instance_module_id;
-                running.module_name  = instance_module_name;
-                running.source       = native_source.get();
-                running_modules.push_back(std::move(running));
-
-                engine.add_source(std::move(native_source));
-                source_names.push_back(source_display);
-                continue;
+            // 多实例时给个能区分又不能有歧义的名字，--eye-source 就是拿它匹配的
+            const std::string display =
+                is_native ? (vrcft_total > 1 ? "native[" + std::to_string(index + 1) + "]"
+                                             : "native")
+                          : (vrcft_total > 1 ? "vrcft[" + std::to_string(index + 1) + "]"
+                                             : "vrcft");
+            const ModuleLaunch launch{instance_dll, instance_module_id, instance_module_name,
+                                      std::string{}, is_native};
+            if (!launch_module(launch, display) && panel_port == 0) {
+                return 2;
             }
-
-            if (module_exe.empty()) {
-                module_exe = default_module_process_exe();
-                if (module_exe.empty()) {
-                    std::fprintf(stderr,
-                                 "没有找到 VRCFT 运行时（VRCFaceTracking.ModuleProcess.exe）。\n"
-                                 "  发布包应带 runtime\\vrcft；开发环境可以安装一份 VRCFT，\n"
-                                 "  或用 --module-exe 指定 ModuleProcess.exe 的路径。\n");
-                    if (panel_port != 0) {
-                        FGB_WARN("vrcft", "跳过 vrcft 输入：没有运行时；可在界面里安装运行时或改用 VMC");
-                        continue;
-                    }
-                    return 2;
-                }
-            }
-
-            fgb::vrcft::VrcftSourceConfig cfg;
-            cfg.module_process_exe = module_exe;
-            cfg.module_dll         = instance_dll;
-            cfg.tick_hz            = tick_hz;
-            cfg.display_name       = display;
-            if (!record_path.empty()) {
-                cfg.record_path = record_path;
-            }
-            auto vrcft_source = std::make_unique<fgb::vrcft::VrcftSource>(cfg);
-            FGB_INFO("vrcft", "%s 加载模块：%s", display.c_str(), instance_module_name.c_str());
-
-            // 每个实例单独登记：界面按实例显示状态，而不是只显示第一个
-            fgb::web::RunningModule running;
-            running.display_name = display;
-            running.module_id    = instance_module_id;
-            running.module_name  = instance_module_name;
-            running.source       = vrcft_source.get();
-            running_modules.push_back(std::move(running));
-
-            engine.add_source(std::move(vrcft_source));
-            source_names.push_back(display);
         } else if (kind == "replay") {
             if (replay_cfg.path.empty()) {
                 std::fprintf(stderr, "--source replay 需要 --replay <文件>\n");
@@ -836,20 +937,69 @@ int cmd_run(int argc, char** argv) {
     }
 
     {
+        // modules.ini 的 [roles] 用 module_id 绑定；这里翻译成实际实例名。
+        // 命令行显式 --*-source 永远优先，配置只是默认值。
+        if (module_registry) {
+            const auto lower = [](std::string text) {
+                std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+                return text;
+            };
+            const auto resolve_role = [&](const std::string& value) -> std::string {
+                if (value.empty()) {
+                    return {};
+                }
+                const std::string needle = lower(value);
+                for (const fgb::web::RunningModule& module : running_modules) {
+                    if (lower(module.module_id) == needle) {
+                        return module.display_name;
+                    }
+                }
+                for (const std::string& name : source_names) {
+                    if (lower(name) == needle) {
+                        return name;
+                    }
+                }
+                FGB_WARN("modules",
+                         "角色配置指向 %s，但它没有在本次运行的实例中；该通道回退到自动选择",
+                         value.c_str());
+                return {};
+            };
+            if (merge_expression_source.empty()) {
+                merge_expression_source = resolve_role(module_registry->roles().expression);
+            }
+            if (merge_eye_source.empty()) {
+                merge_eye_source = resolve_role(module_registry->roles().eyes);
+            }
+            if (merge_gaze_source.empty()) {
+                merge_gaze_source = resolve_role(module_registry->roles().gaze);
+            }
+            if (merge_head_source.empty()) {
+                merge_head_source = resolve_role(module_registry->roles().head);
+            }
+        }
+
         fgb::MergePolicy merge_policy;
         merge_policy.expression_source = merge_expression_source;
         merge_policy.eye_source        = merge_eye_source;
+        merge_policy.gaze_source       = merge_gaze_source;
         merge_policy.head_source       = merge_head_source;
-        merge_policy.stale_ns = static_cast<std::uint64_t>(stale_ms) * 1'000'000ULL;
+        merge_policy.expression_stale_ns =
+            static_cast<std::uint64_t>(expression_stale_ms) * 1'000'000ULL;
+        merge_policy.eye_stale_ns = static_cast<std::uint64_t>(eye_stale_ms) * 1'000'000ULL;
+        merge_policy.gaze_stale_ns = static_cast<std::uint64_t>(gaze_stale_ms) * 1'000'000ULL;
+        merge_policy.head_stale_ns = static_cast<std::uint64_t>(head_stale_ms) * 1'000'000ULL;
         engine.set_merge_policy(merge_policy);
 
         auto name_or_auto = [](const std::string& name) {
             return name.empty() ? std::string{"auto"} : name;
         };
-        FGB_INFO("cli", "输入源：%s（表情=%s 眼追=%s 头姿=%s，过期 %d ms）",
+        FGB_INFO("cli", "输入源：%s（表情=%s 眼追=%s 注视=%s 头姿=%s，过期 %d/%d/%d/%d ms）",
                  join_names(source_names).c_str(), name_or_auto(merge_expression_source).c_str(),
-                 name_or_auto(merge_eye_source).c_str(), name_or_auto(merge_head_source).c_str(),
-                 stale_ms);
+                 name_or_auto(merge_eye_source).c_str(), name_or_auto(merge_gaze_source).c_str(),
+                 name_or_auto(merge_head_source).c_str(), expression_stale_ms, eye_stale_ms,
+                 gaze_stale_ms, head_stale_ms);
     }
     // 校准链路的顺序：取样（校准前的原始值）→ 校准 → 滤波。
     // 取样只服务于界面预览，默认关闭；校准与滤波才是真正改变输出的两步。
@@ -964,6 +1114,7 @@ int cmd_run(int argc, char** argv) {
         ctx.udp_out     = udp_out_raw;
         ctx.filter      = filter_raw;
         ctx.source_name  = join_names(source_names);
+        ctx.source_names = source_names;
         ctx.params_mode  = fgb::to_string(vrchat_cfg.params_mode);
         ctx.eye_mode     = fgb::to_string(vrchat_cfg.eye_mode);
         ctx.outputs      = saved_outputs;

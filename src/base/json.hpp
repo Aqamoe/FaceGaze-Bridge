@@ -13,6 +13,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace fgb::json {
 
@@ -44,5 +45,9 @@ private:
 bool field_string(std::string_view text, std::string_view key, std::string& out);
 bool field_number(std::string_view text, std::string_view key, double& out);
 bool field_bool(std::string_view text, std::string_view key, bool& out);
+// 字符串数组（例如模块清单的 "Capabilities": ["expression", "gaze"]）。
+// 只支持顶层的字符串元素；遇到非字符串元素就跳过，不影响其余元素。
+bool field_string_array(std::string_view text, std::string_view key,
+                        std::vector<std::string>& out);
 
 } // namespace fgb::json

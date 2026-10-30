@@ -261,6 +261,19 @@ def main():
         "})()"))
     print(f"运行实例：{running}")
 
+    # 角色来源：四个通道各一个下拉，值来自 modules.ini 的 module_id
+    roles = json.loads(cdp.evaluate(
+        "(() => {"
+        "  const selects = [...document.querySelectorAll('.role-select')];"
+        "  return JSON.stringify({"
+        "    selects: selects.length,"
+        "    roles: selects.map(node => node.dataset.role),"
+        "    values: selects.map(node => node.value),"
+        "    options: selects.map(node => node.options.length)"
+        "  });"
+        "})()"))
+    print(f"角色来源：{roles}")
+
     # 输入源卡片：多源合并后，"谁在喂哪一路"必须能在界面上看见
     sources = json.loads(cdp.evaluate(
         "(() => {"
@@ -706,6 +719,12 @@ def main():
         ok = False
     if running.get("rows") != running.get("expected"):
         print("FAIL 运行实例列表与 status.modules 不一致")
+        ok = False
+    if roles.get("selects") != 4 or roles.get("roles") != ["expression", "eyes", "gaze", "head"]:
+        print(f"FAIL 角色来源没有渲染完整的四个下拉：{roles}")
+        ok = False
+    if any(count < 1 for count in roles.get("options", [])):
+        print(f"FAIL 角色下拉没有选项（至少要有“自动”）：{roles}")
         ok = False
     if output.get("active") != "output" or not output.get("text"):
         print("FAIL 输出页的 VMC 行没有渲染")

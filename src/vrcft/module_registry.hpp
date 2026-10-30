@@ -51,6 +51,27 @@ struct ModuleInfo {
     std::string installed_at; // 展示用，本地时间
     std::uintmax_t bytes = 0;
     std::uint64_t install_order = 0; // 安装顺序：新模块排在列表下面
+
+    // fgb-native.json 的可选字段（ADR-0030 §8）。运行时能力以模块自报为准，
+    // 这里只用于加载前的列表/兼容性提示。
+    std::uint32_t declared_capabilities = 0; // FGB_CAP_* 位；0 = 清单没写
+    std::string role_hint;
+    std::string min_host_version;
+    bool host_compatible = true;
+};
+
+// 启动时加载的模块实例。名字用于展示与 --*-source 匹配；角色绑定用 module_id，
+// 不依赖 native[1] / vrcft[2] 这类按顺序生成的名字。
+struct ModuleInstance {
+    std::string name;
+    std::string module_id;
+};
+
+struct ModuleRoles {
+    std::string expression;
+    std::string eyes;
+    std::string gaze;
+    std::string head;
 };
 
 // 模块库条目的元数据。下载包里没有 module.json 时用它补齐（例如 ALVR 只发一个 DLL），
@@ -108,6 +129,14 @@ public:
     const std::filesystem::path& store_dir() const noexcept { return store_dir_; }
     const std::filesystem::path& state_path() const noexcept { return state_path_; }
     const std::string& active_id() const noexcept { return active_id_; }
+
+    const std::vector<ModuleInstance>& instances() const noexcept { return instances_; }
+    const ModuleRoles& roles() const noexcept { return roles_; }
+
+    // 实例/角色都按 module_id 持久化；名字只用于展示。
+    bool add_instance(std::string_view name, std::string_view module_id);
+    bool remove_instance(std::string_view name);
+    bool set_roles(const ModuleRoles& roles);
 
     const ModuleInfo* find(std::string_view id) const;
     const ImportCandidate* find_importable(std::string_view id) const;
@@ -171,6 +200,8 @@ private:
     std::vector<std::pair<std::filesystem::path, std::string>> import_roots_;
     std::unordered_map<std::string, State> states_;
     std::string active_id_;
+    std::vector<ModuleInstance> instances_;
+    ModuleRoles roles_;
     std::uint64_t next_order_ = 1;
     std::filesystem::path state_path_;
     std::filesystem::path store_dir_;

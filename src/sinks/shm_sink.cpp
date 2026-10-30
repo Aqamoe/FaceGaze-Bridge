@@ -119,6 +119,9 @@ void ShmSink::write_frame(const FaceFrame& frame, const GazeState& gaze,
     if (gaze.fixation) {
         out.attributes |= FGB_SHM_ATTR_FIXATION;
     }
+    if (gaze.valid) {
+        out.attributes |= FGB_SHM_ATTR_GAZE_VALID;
+    }
     out.shape_count = static_cast<std::uint32_t>(kShapeCount);
     out.reserved    = 0;
 
@@ -142,6 +145,34 @@ void ShmSink::write_frame(const FaceFrame& frame, const GazeState& gaze,
     out.gaze_pitch_deg  = gaze.pitch_deg;
     out.gaze_yaw_deg    = gaze.yaw_deg;
     out.gaze_confidence = gaze.confidence;
+
+    out.gaze_valid = 0;
+    if (gaze.left_valid) {
+        out.gaze_valid |= FGB_SHM_GAZE_LEFT_VALID;
+    }
+    if (gaze.right_valid) {
+        out.gaze_valid |= FGB_SHM_GAZE_RIGHT_VALID;
+    }
+    if (gaze.valid) {
+        out.gaze_valid |= FGB_SHM_GAZE_COMBINED_VALID;
+    }
+    if (gaze.point2d_valid) {
+        out.gaze_valid |= FGB_SHM_GAZE_POINT_2D_VALID;
+    }
+    out.gaze_source           = gaze.source;
+    out.gaze_source_mask      = gaze.source_mask;
+    out.gaze_reserved         = 0;
+    out.gaze_capture_ts_ns    = gaze.capture_ts_ns;
+    out.gaze_left_dir[0]      = gaze.left_dir_local.x;
+    out.gaze_left_dir[1]      = gaze.left_dir_local.y;
+    out.gaze_left_dir[2]      = gaze.left_dir_local.z;
+    out.gaze_right_dir[0]     = gaze.right_dir_local.x;
+    out.gaze_right_dir[1]     = gaze.right_dir_local.y;
+    out.gaze_right_dir[2]     = gaze.right_dir_local.z;
+    out.gaze_left_point_2d[0] = gaze.left_point_2d.x;
+    out.gaze_left_point_2d[1] = gaze.left_point_2d.y;
+    out.gaze_right_point_2d[0] = gaze.right_point_2d.x;
+    out.gaze_right_point_2d[1] = gaze.right_point_2d.y;
 
     out.head_rotation[0] = frame.headRotLocal.x;
     out.head_rotation[1] = frame.headRotLocal.y;

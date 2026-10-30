@@ -3,6 +3,8 @@
 #include "base/clock.hpp"
 #include "base/log.hpp"
 
+#include <cmath>
+
 namespace fgb {
 namespace {
 constexpr char kTag[] = "engine";
@@ -76,6 +78,52 @@ void Engine::stop() noexcept {
 
 GazeState Engine::compute_gaze(const FaceFrame& frame) const noexcept {
     GazeState gaze;
+
+    // 渲染注视优先用独立 gaze 通道；没有时才回退到眼睛反算。
+    // 头像输出不走这里（VrchatSink 只读 eyes），所以 B 的注视不会接管 A 的眼睛。
+    if (frame.has_channel(channel::kGaze) && frame.gaze.any_valid()) {
+        const GazePair& g             = frame.gaze;
+        const ChannelStamp& stamp     = frame.channelStamps[channel::index(channel::kGaze)];
+        gaze.valid                    = true;
+        gaze.left_valid               = g.left.valid;
+        gaze.right_valid              = g.right.valid;
+        gaze.left_dir_local           = g.left.dirLocal;
+        gaze.right_dir_local          = g.right.dirLocal;
+        gaze.point2d_valid            = g.pointsValid && (g.left.valid || g.right.valid);
+        gaze.left_point_2d            = g.left.point2d;
+        gaze.right_point_2d           = g.right.point2d;
+        gaze.confidence               = g.confidence;
+        gaze.capture_ts_ns            = g.captureTsNs != 0 ? g.captureTsNs : stamp.captureTsNs;
+        if (gaze.capture_ts_ns == 0) {
+            gaze.capture_ts_ns = frame.captureTsNs;
+        }
+        gaze.source      = stamp.source;
+        gaze.source_mask = frame.contributingSources;
+
+        if (g.combinedValid) {
+            gaze.dir_local = g.combinedDirLocal;
+        } else if (g.left.valid && g.right.valid) {
+            gaze.dir_local = normalize(g.left.dirLocal + g.right.dirLocal);
+        } else {
+            gaze.dir_local = g.left.valid ? g.left.dirLocal : g.right.dirLocal;
+        }
+        if (!std::isfinite(gaze.dir_local.x) || !std::isfinite(gaze.dir_local.y) ||
+            !std::isfinite(gaze.dir_local.z)) {
+            gaze.dir_local = Vec3{0.0f, 0.0f, -1.0f};
+            gaze.valid     = false;
+            return gaze;
+        }
+        gaze.dir_local = normalize(gaze.dir_local);
+        const Vec2 pitch_yaw = dir_to_pitch_yaw_deg(gaze.dir_local);
+        gaze.pitch_deg       = pitch_yaw.x;
+        gaze.yaw_deg         = pitch_yaw.y;
+
+        if (frame.eyes.hasVergence) {
+            gaze.vergence_m = frame.eyes.vergenceDistanceM;
+        }
+        return gaze;
+    }
+
     const EyeState& l = frame.eyes.left;
     const EyeState& r = frame.eyes.right;
 
@@ -83,7 +131,16 @@ GazeState Engine::compute_gaze(const FaceFrame& frame) const noexcept {
         return gaze;
     }
 
-    gaze.valid = true;
+    const ChannelStamp& stamp = frame.channelStamps[channel::index(channel::kEyes)];
+    gaze.valid                = true;
+    gaze.left_valid           = l.valid;
+    gaze.right_valid          = r.valid;
+    gaze.left_dir_local       = l.gazeDirLocal;
+    gaze.right_dir_local      = r.gazeDirLocal;
+    gaze.capture_ts_ns        = stamp.captureTsNs != 0 ? stamp.captureTsNs : frame.captureTsNs;
+    gaze.source               = stamp.source;
+    gaze.source_mask          = frame.contributingSources;
+
     if (l.valid && r.valid) {
         gaze.pitch_deg = 0.5f * (l.gazePitchYawDeg.x + r.gazePitchYawDeg.x);
         gaze.yaw_deg   = 0.5f * (l.gazePitchYawDeg.y + r.gazePitchYawDeg.y);

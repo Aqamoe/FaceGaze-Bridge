@@ -43,6 +43,7 @@ add_library(fgb_vrcft STATIC
     vrcft/module_registry.cpp
     vrcft/module_library.cpp)
 target_link_libraries(fgb_vrcft PUBLIC fgb_core fgb_net fgb_config)
+target_compile_definitions(fgb_vrcft PRIVATE FGB_VERSION="${PROJECT_VERSION}")
 if(WIN32)
     target_link_libraries(fgb_vrcft PRIVATE bcrypt)
 endif()
@@ -174,16 +175,27 @@ if(WIN32 AND FGB_BUILD_UI)
 endif()
 
 # 原生 C ABI 示例模块（无硬件也能验证整条链路）
-option(FGB_BUILD_SAMPLE_MODULE "Build the native C ABI sample module" ON)
+option(FGB_BUILD_SAMPLE_MODULE "Build the native C ABI sample modules" ON)
 if(WIN32 AND FGB_BUILD_SAMPLE_MODULE)
-    add_library(fgb-sample-native MODULE "${CMAKE_SOURCE_DIR}/samples/native-sine/native_sine.cpp")
-    target_link_libraries(fgb-sample-native PRIVATE fgb_options)
-    target_include_directories(fgb-sample-native PRIVATE "${CMAKE_SOURCE_DIR}/sdk")
-    set_target_properties(fgb-sample-native PROPERTIES
-        PREFIX ""
-        OUTPUT_NAME "fgb-sample-native"
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+    function(fgb_add_sample_module target source output_name)
+        add_library(${target} MODULE "${source}")
+        target_link_libraries(${target} PRIVATE fgb_options)
+        target_include_directories(${target} PRIVATE "${CMAKE_SOURCE_DIR}/sdk")
+        set_target_properties(${target} PROPERTIES
+            PREFIX ""
+            OUTPUT_NAME "${output_name}"
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+    endfunction()
+
+    # native-sine 保留为 v1 兼容性基准（旧模块不写 gaze 字段）
+    fgb_add_sample_module(fgb-sample-native
+        "${CMAKE_SOURCE_DIR}/samples/native-sine/native_sine.cpp" "fgb-sample-native")
+    # ADR-0030 验证用：面捕与独立注视各一个模块
+    fgb_add_sample_module(fgb-sample-face
+        "${CMAKE_SOURCE_DIR}/samples/native-face/native_face.cpp" "fgb-sample-face")
+    fgb_add_sample_module(fgb-sample-gaze
+        "${CMAKE_SOURCE_DIR}/samples/native-gaze/native_gaze.cpp" "fgb-sample-gaze")
 endif()
 
 # ---- 发布包：用户双击就能跑 ----
@@ -219,6 +231,14 @@ if(WIN32)
         "${CMAKE_SOURCE_DIR}/samples/native-sine/fgb-native.json"
         "${CMAKE_SOURCE_DIR}/samples/native-sine/CMakeLists.txt"
         DESTINATION sdk/sample-native-sine)
+    install(FILES
+        "${CMAKE_SOURCE_DIR}/samples/native-face/native_face.cpp"
+        "${CMAKE_SOURCE_DIR}/samples/native-face/fgb-native.json"
+        DESTINATION sdk/sample-native-face)
+    install(FILES
+        "${CMAKE_SOURCE_DIR}/samples/native-gaze/native_gaze.cpp"
+        "${CMAKE_SOURCE_DIR}/samples/native-gaze/fgb-native.json"
+        DESTINATION sdk/sample-native-gaze)
     # Unity 示例包：UPM package.json + Runtime/*.cs，可直接 Add package from disk
     install(DIRECTORY "${CMAKE_SOURCE_DIR}/samples/unity-face-gaze/"
         DESTINATION sdk/unity-face-gaze)
@@ -226,6 +246,16 @@ if(WIN32)
         install(TARGETS fgb-sample-native
             RUNTIME DESTINATION sdk/sample-native-sine
             LIBRARY DESTINATION sdk/sample-native-sine)
+    endif()
+    if(TARGET fgb-sample-face)
+        install(TARGETS fgb-sample-face
+            RUNTIME DESTINATION sdk/sample-native-face
+            LIBRARY DESTINATION sdk/sample-native-face)
+    endif()
+    if(TARGET fgb-sample-gaze)
+        install(TARGETS fgb-sample-gaze
+            RUNTIME DESTINATION sdk/sample-native-gaze
+            LIBRARY DESTINATION sdk/sample-native-gaze)
     endif()
     install(FILES "${CMAKE_SOURCE_DIR}/packaging/README.txt" DESTINATION .)
     install(FILES

@@ -506,6 +506,13 @@ function render_gaze(gaze) {
     ? `${Number(gaze.saccade_vel_deg_s || 0).toFixed(0)} °/s`
     : "—";
   $("g-confidence").textContent = valid ? `${Math.round((gaze.confidence || 0) * 100)}%` : "—";
+  $("g-source").textContent = valid
+    ? `${gaze.source || t("status.gaze.eye_fallback")} · ${Math.round(gaze.source_age_ms || 0)} ms`
+    : "—";
+  $("g-points").textContent = valid && gaze.point2d_valid
+    ? `L (${Number(gaze.left_point_2d[0]).toFixed(2)}, ${Number(gaze.left_point_2d[1]).toFixed(2)}) ` +
+      `R (${Number(gaze.right_point_2d[0]).toFixed(2)}, ${Number(gaze.right_point_2d[1]).toFixed(2)})`
+    : "—";
   $("g-head").textContent = gaze && gaze.head_pose
     ? `p (${gaze.head_pose.p.map((v) => Number(v).toFixed(2)).join(", ")})`
     : "—";
@@ -790,6 +797,7 @@ function render_status(status) {
     render_running_modules(status.modules);
   }
   render_sources(status.sources || []);
+  render_role_hint();
 
   const filter = status.filter || {};
   const enabled = $("f-enabled");
@@ -950,6 +958,7 @@ function render_sources(sources) {
         meta,
         expression: chip("expression"),
         eyes: chip("eyes"),
+        gaze: chip("gaze"),
         head: chip("head"),
       };
       row.append(name, meta, chips);
@@ -967,7 +976,7 @@ function render_sources(sources) {
       `${t("status.sources.frames", { count: fmt_int(source.frames) })} · ` +
       t("status.sources.age", { ms: Math.round(source.age_ms) });
     row.row.classList.toggle("stale", !source.fresh);
-    for (const key of ["expression", "eyes", "head"]) {
+    for (const key of ["expression", "eyes", "gaze", "head"]) {
       const chip = row[key];
       chip.classList.toggle("on", !!source[key]);
       chip.classList.toggle("has", !source[key] && !!source[`has_${key}`]);
@@ -988,6 +997,34 @@ const MODULE_STATE_STYLES = {
   none: "",
   external: "",
 };
+
+// 与 sdk/fgb_module_api.h 的 FGB_CAP_* 对齐
+const CAP_EYE = 0x1;
+const CAP_EXPRESSION = 0x2;
+const CAP_HEAD = 0x4;
+const CAP_GAZE = 0x8;
+const ROLE_KEYS = ["expression", "eyes", "gaze", "head"];
+const ROLE_CAPS = {
+  expression: CAP_EXPRESSION,
+  eyes: CAP_EYE,
+  gaze: CAP_GAZE,
+  head: CAP_HEAD,
+};
+
+function capabilities_of(item) {
+  return Number((item && (item.capabilities || item.declared_capabilities)) || 0);
+}
+
+function capability_chips(item) {
+  const caps = capabilities_of(item);
+  const chips = [];
+  for (const key of ROLE_KEYS) {
+    if (caps & ROLE_CAPS[key]) {
+      chips.push(el("span", "chip cap", t(`channel.${key}`)));
+    }
+  }
+  return chips;
+}
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -1046,6 +1083,7 @@ function render_modules() {
     }
   }
 
+  render_instance_section(data || {});
   render_running_modules(state.status ? state.status.modules : []);
   render_importable((data && data.importable) || []);
 }
@@ -1108,6 +1146,9 @@ function installed_card(item) {
   const badges = el("div", "module-badges");
   badges.append(el("span", "chip", item.kind === "native"
     ? t("modules.kind.native") : t("modules.kind.vrcft")));
+  for (const node of capability_chips(item)) {
+    badges.append(node);
+  }
   const chip_state = module_chip(item);
   const chip = el("span", `chip ${chip_state.cls}`.trim(), chip_state.text);
   chip.dataset.role = "chip";
@@ -1157,13 +1198,25 @@ function installed_card(item) {
   actions.append(toggle);
 
   const buttons = el("div", "module-buttons");
-  if (!item.active) {
-    const set_button = el("button", "btn ghost small", t("modules.set_active"));
-    set_button.addEventListener("click", () => send({ type: "set_module", id: item.id }));
-    buttons.append(set_button);
-  } else {
-    buttons.append(el("span", "module-current", t("modules.current")));
+  // 一旦配置了 [instances]，启动内容以实例列表为准；active 只是旧版单模块回退，
+  // 再显示"设为启动"会和实例列表互相打架。
+  const has_instances = ((state.modules && state.modules.instances) || []).length > 0;
+  if (!has_instances) {
+    if (!item.active) {
+      const set_button = el("button", "btn ghost small", t("modules.set_active"));
+      set_button.addEventListener("click", () => send({ type: "set_module", id: item.id }));
+      buttons.append(set_button);
+    } else {
+      buttons.append(el("span", "module-current", t("modules.current")));
+    }
   }
+
+  const add_instance = el("button", "btn ghost small", t("modules.add_instance"));
+  add_instance.addEventListener("click", () => {
+    const instances = (state.modules && state.modules.instances) || [];
+    send({ type: "add_instance", id: item.id, name: default_instance_name(item, instances) });
+  });
+  buttons.append(add_instance);
 
   const remove = el("button", "btn danger small", t("modules.delete"));
   remove.addEventListener("click", async () => {
@@ -1552,6 +1605,148 @@ function render_library() {
 
 // 运行中的实例：多实例时"谁在跑、哪一路坏了"要分开看，所以单独一块，
 // 而不是把状态塞进"磁盘上的模块"卡片里（那两者可能不一致：改了选择还没重启）。
+function default_instance_name(item, instances) {
+  const raw = (item.name || item.id || "module").trim();
+  const base = raw.replace(/[=\[\]\r\n#;]/g, "-").slice(0, 40) || "module";
+  let name = base;
+  let suffix = 2;
+  const taken = new Set((instances || []).map((instance) => String(instance.name).toLowerCase()));
+  while (taken.has(name.toLowerCase())) {
+    name = `${base}-${suffix++}`;
+  }
+  return name;
+}
+
+function role_options(role) {
+  const options = new Map();
+  const items = (state.modules && state.modules.items) || [];
+  const instances = (state.modules && state.modules.instances) || [];
+  const running = (state.status && state.status.modules) || [];
+  const bit = ROLE_CAPS[role];
+  const add = (value, label, caps) => {
+    if (!value || options.has(value)) {
+      return;
+    }
+    if (caps && bit && !(caps & bit)) {
+      return;
+    }
+    options.set(value, label);
+  };
+
+  for (const instance of instances) {
+    const item = items.find((entry) => entry.id === instance.module_id);
+    add(instance.module_id, `${instance.name} · ${instance.module_name || instance.module_id}`,
+        capabilities_of(item));
+  }
+  for (const entry of running) {
+    add(entry.module_id, `${entry.name} · ${entry.module_name || entry.module_id}`,
+        Number(entry.capabilities || 0));
+  }
+  return options;
+}
+
+function render_instance_section(data) {
+  const list = $("instance-list");
+  const grid = $("role-grid");
+  if (!list || !grid) {
+    return;
+  }
+  const instances = data.instances || [];
+  list.textContent = "";
+  if (!instances.length) {
+    list.append(el("div", "muted", t("modules.instances.empty")));
+  } else {
+    for (const instance of instances) {
+      const row = el("div", "instance-row");
+      row.append(el("b", "instance-name", instance.name));
+      row.append(el("span", "instance-module", instance.module_name || instance.module_id));
+      if (!instance.enabled) {
+        row.append(el("span", "chip err", t("modules.instance.unavailable")));
+      }
+      const remove = el("button", "btn danger small", t("modules.instance.remove"));
+      remove.addEventListener("click", async () => {
+        const text = t("modules.instance.remove_confirm", { name: instance.name });
+        if (await ask_confirm({
+          title: t("modules.instance.remove_title"),
+          message: text,
+          danger: true,
+        })) {
+          send({ type: "remove_instance", name: instance.name });
+        }
+      });
+      row.append(remove);
+      list.append(row);
+    }
+  }
+
+  const roles = data.roles || {};
+  grid.textContent = "";
+  for (const role of ROLE_KEYS) {
+    const row = el("div", "role-row");
+    row.append(el("span", "role-label", t(`role.${role}`)));
+    const select = document.createElement("select");
+    select.className = "select role-select";
+    select.dataset.role = role;
+    const auto = document.createElement("option");
+    auto.value = "";
+    auto.textContent = t("modules.roles.auto");
+    select.append(auto);
+
+    const values = role_options(role);
+    for (const [value, label] of values) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      select.append(option);
+    }
+    const saved = roles[role] || "";
+    if (saved && !values.has(saved)) {
+      // 配置指向的模块没有在本次运行里出现：仍显示出来，让用户知道配置没丢。
+      const option = document.createElement("option");
+      option.value = saved;
+      option.textContent = `${saved} · ${t("modules.roles.not_running")}`;
+      select.append(option);
+    }
+    select.value = saved;
+    select.addEventListener("change", () => {
+      const payload = { type: "set_module_roles" };
+      for (const key of ROLE_KEYS) {
+        const node = grid.querySelector(`.role-select[data-role="${key}"]`);
+        payload[key] = node ? node.value : "";
+      }
+      send(payload);
+    });
+    row.append(select);
+    grid.append(row);
+  }
+}
+
+function render_role_hint() {
+  const hint = $("role-hint");
+  if (!hint) {
+    return;
+  }
+  const status = state.status;
+  if (!status || !status.frames_in) {
+    hint.hidden = true;
+    return;
+  }
+  const sources = status.sources || [];
+  const missing = [];
+  for (const role of ROLE_KEYS) {
+    if (!sources.some((source) => source[role])) {
+      missing.push(t(`role.${role}`));
+    }
+  }
+  if (!missing.length) {
+    hint.hidden = true;
+    return;
+  }
+  hint.hidden = false;
+  hint.className = "role-hint warn";
+  hint.textContent = t("modules.roles.missing", { roles: missing.join(" / ") });
+}
+
 function render_running_modules(modules) {
   const list = $("running-list");
   if (!list) {

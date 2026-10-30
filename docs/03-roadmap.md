@@ -186,7 +186,8 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 | | **合计** | **31**（含 buffer，估 26–31） |
 
 > **进度（2026-10-30 更新）**：**M4 部分完成**——
-> ① 多输入源合并层：按表情 / 眼追 / 头姿三通道选提供者，可重复 `--source`
+> ① 多输入源合并层：按表情 / 眼追 / 注视 / 头姿四通道选提供者（注视通道 2026-10-30
+> 由 [ADR-0030](adr/0030-native-module-v2-composition.md) v1.1 补齐），可重复 `--source`
 > （[ADR-0013](adr/0013-source-merging.md)）；
 > ② VMC 第二路输出：`--vmc-out`，与 VRChat 并行且共享同一份 blendshape 名字表
 > （[ADR-0014](adr/0014-vmc-output-sink.md)）；
@@ -206,8 +207,9 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > 本机 WebSocket IPC，六个页面（状态 / 模块 / 参数热力图 / 输出 / 日志 / 设置）已接真实数据，
 > 见 [ADR-0010](adr/0010-webview2-ui-and-websocket-ipc.md)；模块页含扫描、选择与故障原因，
 > 见 [ADR-0011](adr/0011-module-management.md)；**3.13 已完成**（简中/英/日三语文案表 + 界面内切换，
-> 见 [ADR-0012](adr/0012-ui-localization.md)）。**3.10 里"多模块并发"没做**（引擎当前一次只跑
-> 一个模块进程），已并入 M4 的多输出工作。
+> 见 [ADR-0012](adr/0012-ui-localization.md)）。3.10 里"多模块并发"当时只到 CLI；
+> 2026-10-30 由 [ADR-0030](adr/0030-native-module-v2-composition.md) v1.1 补齐
+> 实例列表 + 四角色来源选择（整通道组合；属性级组合仍是 v2）。
 >
 > **输入协议补齐（2026-10-30）**：VMC 之外新增 **ARKit LiveLink**（UDP 11111，61 曲线二进制，
 > 52 blendshape + 头姿 + 眼姿）与 **通用 OSC**（`osc_map.ini` 地址→形状/眼睛映射，
@@ -254,6 +256,11 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > 并用 .NET 读取端对真实引擎验证过 88 形状与延迟；**未在 Unity 编辑器内实机验收**）。
 > 流式输出格式与取舍见 [ADR-0024](adr/0024-streaming-outputs.md) 和
 > [07-streaming-outputs.md](07-streaming-outputs.md)。
+
+> **v1.1 已实施（2026-10-30）**：原生模块的独立注视通道、多模块角色组合见
+> [ADR-0030](adr/0030-native-module-v2-composition.md)，覆盖“面捕 A + 整眼 B”
+> “完整 A + 注视 B”“面捕 A + 整眼 B + 注视 C”三类组合。属性级组合与跨进程宿主
+> 仍是 v2 方向，按真实需求再上。
 
 **验收**：5 个 Sink 同时输出时，主链路延迟不增加 > 0.5 ms；录制 10 分钟文件 < 20 MB。
 

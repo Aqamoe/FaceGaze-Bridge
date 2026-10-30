@@ -94,6 +94,34 @@ UdpBinarySink::Datagram UdpBinarySink::serialize(const FaceFrame& frame, const G
     wire.gaze_yaw_deg     = gaze.yaw_deg;
     wire.gaze_confidence  = gaze.confidence;
 
+    wire.gaze_valid = 0;
+    if (gaze.left_valid) {
+        wire.gaze_valid |= FGB_UDP_GAZE_LEFT_VALID;
+    }
+    if (gaze.right_valid) {
+        wire.gaze_valid |= FGB_UDP_GAZE_RIGHT_VALID;
+    }
+    if (gaze.valid) {
+        wire.gaze_valid |= FGB_UDP_GAZE_COMBINED_VALID;
+    }
+    if (gaze.point2d_valid) {
+        wire.gaze_valid |= FGB_UDP_GAZE_POINT_2D_VALID;
+    }
+    wire.gaze_source            = gaze.source;
+    wire.gaze_source_mask       = gaze.source_mask;
+    wire.gaze_reserved          = 0;
+    wire.gaze_capture_ts_ns     = gaze.capture_ts_ns;
+    wire.gaze_left_dir[0]       = gaze.left_dir_local.x;
+    wire.gaze_left_dir[1]       = gaze.left_dir_local.y;
+    wire.gaze_left_dir[2]       = gaze.left_dir_local.z;
+    wire.gaze_right_dir[0]      = gaze.right_dir_local.x;
+    wire.gaze_right_dir[1]      = gaze.right_dir_local.y;
+    wire.gaze_right_dir[2]      = gaze.right_dir_local.z;
+    wire.gaze_left_point_2d[0]  = gaze.left_point_2d.x;
+    wire.gaze_left_point_2d[1]  = gaze.left_point_2d.y;
+    wire.gaze_right_point_2d[0] = gaze.right_point_2d.x;
+    wire.gaze_right_point_2d[1] = gaze.right_point_2d.y;
+
     if (frame.hasHeadPose) {
         wire.head_rotation[0] = frame.headRotLocal.x;
         wire.head_rotation[1] = frame.headRotLocal.y;

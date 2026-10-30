@@ -59,10 +59,15 @@ sdk\                   集成文档与示例
 | ARKit LiveLink | `--source livelink` | 11111 | iPhone + Live Link Face（ARKit 模式） |
 | 通用 OSC | `--source osc --osc-map <文件>` | 9103 | 任意 OSC 发送端，按映射表翻译 |
 
-可重复 `--source` 做多源合并；`--eye-source` / `--expression-source` / `--head-source`
-用源名（`vmc` / `livelink` / `osc`）指定某一路由谁提供。桌面入口会把不认识的参数
-转给引擎，所以也可以先托盘「退出」，再运行
-`"FaceGaze Bridge.exe" --source livelink`。界面里暂时不能切换输入源或编辑映射表。
+可重复 `--source` 做多源合并；`--expression-source` / `--eye-source` /
+`--gaze-source` / `--head-source` 用源名（`vmc` / `livelink` / `osc` / `native:face`）
+指定某一路由谁提供。注视通道默认 100 ms 过期，可用 `--gaze-stale-ms` 调整；
+`--stale-ms` 会一次设置所有通道。桌面入口会把不认识的参数转给引擎，所以也可以
+先托盘「退出」，再运行 `"FaceGaze Bridge.exe" --source livelink`。
+
+多模块组合在界面「模块」页配置：把模块添加为启动实例，再给表情 / 眼睛 / 注视 /
+头姿四个角色选来源；配置写入 `%LOCALAPPDATA%\FaceGazeBridge\modules.ini`，
+实例列表变化后需要重启引擎。界面里暂时不能切换输入源或编辑 OSC 映射表。
 
 ### 3.1 ARKit LiveLink
 
@@ -117,7 +122,7 @@ fgb-cli run --source osc --osc-map .\osc_map.ini --panel 8787
 | VMC | 输出页「启用 VMC」或 `--vmc-out host:port` | `/VMC/Ext/Blend/Val` + `Apply` |
 | 共享内存 | 「启用共享内存」或 `--shm <name>` | `Local\FGB_Shm_<name>`，见 [06](06-shared-memory.md) |
 | WebSocket JSON | 「启用 WebSocket JSON」或 `--ws-out <port>` | 见 [07](07-streaming-outputs.md) |
-| UDP 二进制 | 「启用 UDP 二进制」或 `--udp-out host:port` | 592 字节固定帧，见 [07](07-streaming-outputs.md) |
+| UDP 二进制 | 「启用 UDP 二进制」或 `--udp-out host:port` | 656 字节固定帧，见 [07](07-streaming-outputs.md) |
 
 保存后要点「保存并重启引擎」才生效；命令行参数永远覆盖保存值。
 WebSocket 与控制面只绑 `127.0.0.1`。

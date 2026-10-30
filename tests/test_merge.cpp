@@ -7,6 +7,7 @@
 
 #include "test_framework.hpp"
 
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -71,6 +72,25 @@ FaceFrame eyes_frame(float yaw_deg) {
     frame.eyes.left.gazeDirLocal    = Vec3{0.0f, yaw_deg / 30.0f, -1.0f};
     frame.add_channel(channel::kEyes);
     frame.captureTsNs = 2000;
+    return frame;
+}
+
+FaceFrame gaze_frame(float yaw_deg) {
+    FaceFrame frame = FaceFrame::neutral();
+    frame.gaze.left.valid  = true;
+    frame.gaze.right.valid = true;
+    frame.gaze.left.dirLocal =
+        Vec3{std::sin(yaw_deg * kDegToRad), 0.0f, -std::cos(yaw_deg * kDegToRad)};
+    frame.gaze.right.dirLocal = frame.gaze.left.dirLocal;
+    frame.gaze.combinedValid  = true;
+    frame.gaze.combinedDirLocal = frame.gaze.left.dirLocal;
+    frame.gaze.pointsValid    = true;
+    frame.gaze.left.point2d   = Vec2{0.4f, 0.6f};
+    frame.gaze.right.point2d  = Vec2{0.45f, 0.55f};
+    frame.gaze.confidence     = 0.9f;
+    frame.gaze.captureTsNs    = 5000;
+    frame.add_channel(channel::kGaze);
+    frame.captureTsNs = 4000;
     return frame;
 }
 
@@ -166,7 +186,7 @@ FGB_TEST(merge_stale_source_is_skipped) {
 
     SourceMerger merger;
     MergePolicy policy;
-    policy.stale_ns = 100'000'000ULL; // 100 ms
+    policy.expression_stale_ns = 100'000'000ULL; // 100 ms
     merger.set_policy(policy);
     merger.add(&expression);
     merger.add(&fallback);
@@ -194,8 +214,9 @@ FGB_TEST(merge_missing_channel_is_cleared) {
     FaceFrame merged;
     FGB_CHECK(merger.poll(10'000'000ULL, merged));
     FGB_CHECK_NEAR(merged.shape(Shape::JawOpen), 0.4, 1e-6);
-    // 没有眼追/头姿来源 → 明确清空，而不是留着上一帧的值
+    // 没有眼追/注视/头姿来源 → 明确清空，而不是留着上一帧的值
     FGB_CHECK(!merged.eyes.any_valid());
+    FGB_CHECK(!merged.gaze.any_valid());
     FGB_CHECK(!merged.hasHeadPose);
 }
 
@@ -255,6 +276,104 @@ FGB_TEST(engine_processors_run_once_per_merged_frame) {
 
     // 两个源各 5 帧，但后处理只能跑 5 次：跑 10 次等于把滤波做了两遍
     FGB_CHECK(counter_raw->calls == 5);
+}
+
+FGB_TEST(merge_splits_gaze_from_eyes) {
+    FakeSource eyes{"eyes"};
+    FakeSource gaze{"gaze"};
+
+    SourceMerger merger;
+    merger.add(&eyes);
+    merger.add(&gaze);
+
+    eyes.push(eyes_frame(10.0f));
+    gaze.push(gaze_frame(20.0f));
+
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(10'000'000ULL, merged));
+    FGB_CHECK(merged.eyes.left.valid);
+    FGB_CHECK_NEAR(merged.eyes.left.gazePitchYawDeg.y, 10.0, 1e-5);
+    FGB_CHECK(merged.gaze.any_valid());
+    FGB_CHECK_NEAR(merged.gaze.combinedDirLocal.x, std::sin(20.0f * kDegToRad), 1e-5);
+    FGB_CHECK(merged.has_channel(channel::kEyes));
+    FGB_CHECK(merged.has_channel(channel::kGaze));
+    FGB_CHECK(merged.channelStamps[channel::index(channel::kEyes)].source == 1);
+    FGB_CHECK(merged.channelStamps[channel::index(channel::kGaze)].source == 2);
+    // gaze 允许带自己的捕获时间，不能被整帧时间戳覆盖
+    FGB_CHECK(merged.channelStamps[channel::index(channel::kGaze)].captureTsNs == 5000);
+    FGB_CHECK(merged.captureTsNs == 5000);
+}
+
+FGB_TEST(merge_explicit_gaze_source_overrides_priority) {
+    FakeSource first{"first"};
+    FakeSource second{"second"};
+
+    SourceMerger merger;
+    MergePolicy policy;
+    policy.gaze_source = "second";
+    merger.set_policy(policy);
+    merger.add(&first);
+    merger.add(&second);
+
+    first.push(gaze_frame(5.0f));
+    second.push(gaze_frame(-25.0f));
+
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(10'000'000ULL, merged));
+    FGB_CHECK_NEAR(merged.gaze.combinedDirLocal.x, std::sin(-25.0f * kDegToRad), 1e-5);
+}
+
+FGB_TEST(merge_gaze_has_shorter_stale_window) {
+    FakeSource eyes{"eyes"};
+    FakeSource gaze{"gaze"};
+
+    SourceMerger merger;
+    MergePolicy policy;
+    policy.eye_stale_ns  = 250'000'000ULL;
+    policy.gaze_stale_ns = 100'000'000ULL;
+    merger.set_policy(policy);
+    merger.add(&eyes);
+    merger.add(&gaze);
+
+    eyes.push(eyes_frame(1.0f));
+    gaze.push(gaze_frame(2.0f));
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(1'000'000'000ULL, merged));
+    FGB_CHECK(merged.has_channel(channel::kGaze));
+
+    // 150 ms 后：眼睛仍新鲜（<=250），注视已过期（>100）
+    eyes.push(eyes_frame(3.0f));
+    FGB_CHECK(merger.poll(1'150'000'000ULL, merged));
+    FGB_CHECK(merged.has_channel(channel::kEyes));
+    FGB_CHECK(!merged.has_channel(channel::kGaze));
+    FGB_CHECK(!merged.gaze.any_valid());
+}
+
+FGB_TEST(engine_uses_gaze_channel_for_render_gaze) {
+    Engine engine;
+    auto face = std::make_unique<FakeSource>("face");
+    auto gaze = std::make_unique<FakeSource>("gaze");
+    FakeSource* face_raw = face.get();
+    FakeSource* gaze_raw = gaze.get();
+    engine.add_source(std::move(face));
+    engine.add_source(std::move(gaze));
+
+    face_raw->push(expression_frame(0.7f));
+    gaze_raw->push(gaze_frame(18.0f));
+    engine.tick_once(1'000'000ULL);
+
+    const FaceFrame latest = engine.latest();
+    FGB_CHECK(latest.has_channel(channel::kExpression));
+    FGB_CHECK(latest.has_channel(channel::kGaze));
+    FGB_CHECK(!latest.eyes.any_valid()); // 头像眼睛没有被注视源伪造
+
+    const GazeState render = engine.current_gaze();
+    FGB_CHECK(render.valid);
+    FGB_CHECK_NEAR(render.dir_local.x, std::sin(18.0f * kDegToRad), 1e-5);
+    FGB_CHECK(render.left_valid && render.right_valid);
+    FGB_CHECK(render.point2d_valid);
+    FGB_CHECK(render.capture_ts_ns == 5000);
+    FGB_CHECK(render.source == 2); // 第二个注册的源
 }
 
 FGB_TEST(engine_single_source_is_passthrough) {

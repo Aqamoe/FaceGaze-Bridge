@@ -6,8 +6,9 @@
 
 检查项：
   - HTTP Upgrade 成功
-  - 文本帧是 JSON，带 t / seq / src / eye / shapes
+  - 文本帧是 JSON，带 t / seq / src / eye / gaze / shapes
   - eye.left/right 有 open/gaze/pupil/ok；有头姿时带 head.q/head.p
+  - gaze 是独立渲染注视（v1.1）：ok / left / right / dir / ts_ns / src / mask
   - 实测帧率接近 --ws-out-rate（默认 30 Hz）
 """
 import base64
@@ -103,7 +104,7 @@ def main():
           f"ok_left={first.get('eye', {}).get('left', {}).get('ok')}")
 
     ok = True
-    for key_name in ("t", "seq", "src", "eye", "shapes"):
+    for key_name in ("t", "seq", "src", "eye", "gaze", "shapes"):
         if key_name not in first:
             print(f"FAIL 第一帧缺少字段 {key_name}")
             ok = False
@@ -120,6 +121,21 @@ def main():
     if "vergence" not in eye:
         print("FAIL eye 缺少 vergence")
         ok = False
+
+    gaze = first.get("gaze", {})
+    for field in ("ok", "left", "right", "dir", "ts_ns", "src", "mask"):
+        if field not in gaze:
+            print(f"FAIL gaze 缺少 {field}")
+            ok = False
+    for side in ("left", "right"):
+        value = gaze.get(side, {})
+        for field in ("ok", "dir", "point_ok", "point"):
+            if field not in value:
+                print(f"FAIL gaze.{side} 缺少 {field}")
+                ok = False
+    print(f"渲染注视：ok={gaze.get('ok')} src={gaze.get('src')} "
+          f"left={gaze.get('left', {}).get('ok')} point={gaze.get('left', {}).get('point_ok')}")
+
     shapes = first.get("shapes", {})
     if not isinstance(shapes, dict):
         print("FAIL shapes 不是对象")

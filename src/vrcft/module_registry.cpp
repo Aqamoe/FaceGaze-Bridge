@@ -3,6 +3,7 @@
 #include "base/json.hpp"
 #include "base/log.hpp"
 #include "config/ini.hpp"
+#include "fgb_module_api.h"
 
 #include <algorithm>
 #include <cctype>
@@ -22,6 +23,72 @@ namespace fgb::vrcft {
 namespace {
 
 constexpr char kTag[] = "modules";
+
+#ifndef FGB_VERSION
+#define FGB_VERSION "0.0.0"
+#endif
+
+// 只比较 x.y.z 的数字段；预发布后缀/Microsoft 式四段版本也能接受（多出来的段按数字比）。
+bool version_greater(std::string_view a, std::string_view b) {
+    std::size_t ia = 0;
+    std::size_t ib = 0;
+    while (ia < a.size() || ib < b.size()) {
+        auto next = [](std::string_view s, std::size_t& i) {
+            while (i < s.size() && (s[i] < '0' || s[i] > '9')) {
+                ++i;
+            }
+            int value = 0;
+            while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+                value = value * 10 + (s[i] - '0');
+                ++i;
+            }
+            return value;
+        };
+        const int va = next(a, ia);
+        const int vb = next(b, ib);
+        if (va != vb) {
+            return va > vb;
+        }
+        if (ia >= a.size() && ib >= b.size()) {
+            break;
+        }
+    }
+    return false;
+}
+
+bool valid_instance_name(std::string_view name) {
+    if (name.empty() || name.size() > 64) {
+        return false;
+    }
+    for (const char c : name) {
+        const auto uc = static_cast<unsigned char>(c);
+        if (uc < 0x20 || c == '=' || c == '[' || c == ']' || c == '#' || c == ';' ||
+            c == '\r' || c == '\n') {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::uint32_t parse_capabilities(const std::vector<std::string>& names) {
+    std::uint32_t bits = 0;
+    for (const std::string& raw : names) {
+        std::string name = raw;
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        if (name == "expression") {
+            bits |= FGB_CAP_EXPRESSION;
+        } else if (name == "eye" || name == "eyes") {
+            bits |= FGB_CAP_EYE;
+        } else if (name == "gaze") {
+            bits |= FGB_CAP_GAZE;
+        } else if (name == "head") {
+            bits |= FGB_CAP_HEAD;
+        }
+    }
+    return bits;
+}
 
 std::string read_file(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
@@ -205,6 +272,19 @@ bool parse_module_metadata(std::string_view text, ModuleInfo& out) {
         any     = true;
     }
 
+    // ADR-0030 §8 的可选字段：旧清单没有也照常工作。
+    std::vector<std::string> capabilities;
+    if (fgb::json::field_string_array(text, "Capabilities", capabilities)) {
+        out.declared_capabilities = parse_capabilities(capabilities);
+    }
+    if (fgb::json::field_string(text, "RoleHint", value)) {
+        out.role_hint = value;
+    }
+    if (fgb::json::field_string(text, "MinHostVersion", value)) {
+        out.min_host_version = value;
+        out.host_compatible  = !version_greater(value, FGB_VERSION);
+    }
+
     out.metadata_ok = any;
     return any;
 }
@@ -293,6 +373,8 @@ void ModuleRegistry::add_import_root(std::filesystem::path path, std::string ori
 
 void ModuleRegistry::load_state() {
     states_.clear();
+    instances_.clear();
+    roles_      = ModuleRoles{};
     active_id_.clear();
     next_order_ = 1;
     if (state_path_.empty()) {
@@ -301,6 +383,35 @@ void ModuleRegistry::load_state() {
     config::ini_load(state_path_.string(), [this](const config::IniEntry& entry) {
         if (entry.section == "state" && entry.key == "active") {
             active_id_ = entry.value;
+            return;
+        }
+        if (entry.section == "instances") {
+            const std::string name = entry.key;
+            const std::string id   = entry.value;
+            if (!valid_instance_name(name) || id.empty()) {
+                return;
+            }
+            const bool duplicate = std::any_of(
+                instances_.begin(), instances_.end(),
+                [&name](const ModuleInstance& instance) {
+                    return lower(instance.name) == lower(name);
+                });
+            if (!duplicate) {
+                instances_.push_back(ModuleInstance{name, id});
+            }
+            return;
+        }
+        if (entry.section == "roles") {
+            const std::string key = lower(entry.key);
+            if (key == "expression") {
+                roles_.expression = entry.value;
+            } else if (key == "eyes" || key == "eye") {
+                roles_.eyes = entry.value;
+            } else if (key == "gaze") {
+                roles_.gaze = entry.value;
+            } else if (key == "head") {
+                roles_.head = entry.value;
+            }
             return;
         }
         constexpr std::string_view prefix = "module.";
@@ -344,6 +455,20 @@ void ModuleRegistry::save_state() const {
     writer.comment("FaceGaze Bridge 模块状态（自动生成，可手改）");
     writer.section("state");
     writer.kv("active", active_id_);
+    if (!instances_.empty()) {
+        writer.section("instances");
+        for (const ModuleInstance& instance : instances_) {
+            writer.kv(instance.name, instance.module_id);
+        }
+    }
+    if (!roles_.expression.empty() || !roles_.eyes.empty() || !roles_.gaze.empty() ||
+        !roles_.head.empty()) {
+        writer.section("roles");
+        writer.kv("expression", roles_.expression);
+        writer.kv("eyes", roles_.eyes);
+        writer.kv("gaze", roles_.gaze);
+        writer.kv("head", roles_.head);
+    }
     for (const ModuleInfo& module : modules_) {
         const auto it = states_.find(state_key(module.id));
         if (it == states_.end()) {
@@ -547,6 +672,56 @@ bool ModuleRegistry::set_active(std::string_view id) {
         active_id_.clear();
     }
     apply_state();
+    save_state();
+    return true;
+}
+
+bool ModuleRegistry::add_instance(std::string_view name, std::string_view module_id) {
+    if (!valid_instance_name(name)) {
+        return false;
+    }
+    const ModuleInfo* module = find(module_id);
+    if (module == nullptr || module->broken) {
+        return false;
+    }
+    const bool duplicate = std::any_of(
+        instances_.begin(), instances_.end(), [&name](const ModuleInstance& instance) {
+            return lower(instance.name) == lower(name);
+        });
+    if (duplicate) {
+        return false;
+    }
+    instances_.push_back(ModuleInstance{std::string{name}, module->id});
+    save_state();
+    return true;
+}
+
+bool ModuleRegistry::remove_instance(std::string_view name) {
+    const std::string needle = lower(name);
+    const auto it = std::find_if(instances_.begin(), instances_.end(),
+                                 [&needle](const ModuleInstance& instance) {
+                                     return lower(instance.name) == needle;
+                                 });
+    if (it == instances_.end()) {
+        return false;
+    }
+    instances_.erase(it);
+    save_state();
+    return true;
+}
+
+bool ModuleRegistry::set_roles(const ModuleRoles& roles) {
+    auto normalize = [this](std::string value) {
+        if (value.empty()) {
+            return std::string{};
+        }
+        const ModuleInfo* module = find(value);
+        return module != nullptr ? module->id : value;
+    };
+    roles_.expression = normalize(roles.expression);
+    roles_.eyes       = normalize(roles.eyes);
+    roles_.gaze       = normalize(roles.gaze);
+    roles_.head       = normalize(roles.head);
     save_state();
     return true;
 }
@@ -869,6 +1044,17 @@ bool ModuleRegistry::remove_module(std::string_view id, std::string& error) {
     states_.erase(state_key(module->id));
     if (lower(active_id_) == lower(module->id)) {
         active_id_.clear();
+    }
+    const std::string removed = lower(module->id);
+    instances_.erase(std::remove_if(instances_.begin(), instances_.end(),
+                                    [&removed](const ModuleInstance& instance) {
+                                        return lower(instance.module_id) == removed;
+                                    }),
+                     instances_.end());
+    for (std::string* role : {&roles_.expression, &roles_.eyes, &roles_.gaze, &roles_.head}) {
+        if (lower(*role) == removed) {
+            role->clear();
+        }
     }
     rescan();
     save_state();

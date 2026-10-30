@@ -23,6 +23,7 @@ struct ModuleRuntimeStatus {
     bool alive      = false;
     std::uint64_t frames = 0;
     int restarts    = 0;
+    std::uint32_t capabilities = 0; // FGB_CAP_*；0 = 未知（例如 VRCFT 模块）
     std::string error; // 模块自己报的错优先，其次宿主错误
 };
 

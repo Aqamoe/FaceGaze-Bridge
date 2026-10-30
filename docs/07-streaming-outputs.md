@@ -55,6 +55,15 @@ ws://127.0.0.1:<port>/ws
     "right": { "open": 0.90, "gaze": [0.01, 0.10, -0.99], "pupil": 4.7, "ok": 1 },
     "vergence": 1.24
   },
+  "gaze": {
+    "ok": 1,
+    "left":  { "ok": 1, "dir": [0.03, 0.10, -0.99], "point_ok": 1, "point": [0.42, 0.61] },
+    "right": { "ok": 1, "dir": [0.01, 0.10, -0.99], "point_ok": 1, "point": [0.45, 0.58] },
+    "dir": [0.02, 0.10, -0.99],
+    "ts_ns": 1284733000000,
+    "src": 2,
+    "mask": 9
+  },
   "head": { "q": [0, 0.03, 0, 0.999], "p": [0, 0.05, 0] },
   "shapes": { "JawOpen": 0.31, "MouthSmileLeft": 0.44, "BrowInnerUp": 0.12 }
 }
@@ -65,8 +74,11 @@ ws://127.0.0.1:<port>/ws
 | `t` | 引擎发布时刻，毫秒（单调时钟） |
 | `seq` | 本次连接建立后 FGB 的发送序号；只在真正广播时递增 |
 | `src` | 输入源标签（`vrcft`、`vmc`、`replay` 或合并后的名字） |
-| `eye.left/right` | 单眼：`open` 0..1、`gaze` HMD 局部单位向量、`pupil` 毫米（0=不提供）、`ok` 1/0 |
+| `eye.left/right` | 头像眼睛：`open` 0..1、`gaze` HMD 局部单位向量、`pupil` 毫米（0=不提供）、`ok` 1/0 |
 | `eye.vergence` | 聚散距离（米）；没有有效眼追时为 0 |
+| `gaze` | 渲染注视（v1.1）：优先独立 `GAZE` 通道，没有时由眼睛反算；`ok` 1/0 |
+| `gaze.left/right` | 逐眼 `ok`、`dir`、`point_ok`、`point`（归一化屏幕点，约定待对齐） |
+| `gaze.ts_ns` / `gaze.src` / `gaze.mask` | 捕获时刻 / 来源序号 / 各通道贡献源位掩码 |
 | `head` | 仅当这一帧有头姿时出现：`q` = [x,y,z,w]，`p` = 米 |
 | `shapes` | 形状名 → 值（0..1）。默认只含有效且 > 0.01 的；`--ws-out-all` 发全部 88 个 |
 
@@ -101,7 +113,7 @@ asyncio.run(main())
 
 ### 传输
 
-一个 UDP 数据报 = 一帧，固定 **592 字节**，小端，1 字节对齐。默认每个引擎 tick
+一个 UDP 数据报 = 一帧，固定 **656 字节**（v2 起追加注视字段），小端，1 字节对齐。默认每个引擎 tick
 发送（`--udp-out-rate <hz>` 可限速，0 = 每 tick）。不做分片、不重传；丢帧就等下一帧。
 
 ### 布局
@@ -112,12 +124,12 @@ C 定义在 [`sdk/fgb_udp_frame.h`](../sdk/fgb_udp_frame.h)，安装包在 `sdk/
 | 偏移 | 类型 | 字段 |
 |---|---|---|
 | 0 | u32 | `magic` = `0x55424746`（"FGBU" 小端） |
-| 4 | u16 | `version` = 1 |
+| 4 | u16 | `version` = 2 |
 | 6 | u16 | `header_size` = 8 |
 | 8 | u64 | `sequence`（引擎发布序号） |
 | 16 | u64 | `capture_ts_ns` |
 | 24 | u64 | `publish_ts_ns` |
-| 32 | u32 | `channels`（1=表情 2=眼追 4=头姿） |
+| 32 | u32 | `channels`（1=表情 2=眼追 4=头姿 8=独立注视） |
 | 36 | u32 | `attributes`（见下） |
 | 40 | u32 | `shape_count` = 88 |
 | 44 | u32 | `reserved` |
@@ -132,6 +144,15 @@ C 定义在 [`sdk/fgb_udp_frame.h`](../sdk/fgb_udp_frame.h)，安装包在 `sdk/
 | 140 | f32×3 | `head_position`（米） |
 | 152 | f32×88 | `shapes[88]`（0..1，顺序见下） |
 | 504 | u8×88 | `shape_valid[88]`（0/1） |
+| 592 | u32 | `gaze_valid`（1=左眼 2=右眼 4=合并 8=2D 点） |
+| 596 | u32 | `gaze_source`（源序号，0=未知/眼睛反算） |
+| 600 | u32 | `gaze_source_mask`（各通道贡献源位掩码） |
+| 604 | u32 | `gaze_reserved` |
+| 608 | u64 | `gaze_capture_ts_ns` |
+| 616 | f32×3 | `gaze_left_dir` |
+| 628 | f32×3 | `gaze_right_dir` |
+| 640 | f32×2 | `gaze_left_point_2d` |
+| 648 | f32×2 | `gaze_right_point_2d` |
 
 `attributes` 位：
 
@@ -141,7 +162,7 @@ C 定义在 [`sdk/fgb_udp_frame.h`](../sdk/fgb_udp_frame.h)，安装包在 `sdk/
 | `0x02` | 右眼有效 |
 | `0x04` | 这一帧有头姿 |
 | `0x08` | 注视处于 fixation |
-| `0x10` | 合并注视 `gaze_*` 有效 |
+| `0x10` | 渲染注视 `gaze_*` 有效 |
 
 形状顺序与共享内存、`core/model/shape.hpp` 的 `kShapeNames` 一致（Unified Expressions，
 88 项；例如 `JawOpen` 是索引 22）。没有名字表，消费者按固定顺序读。
@@ -151,8 +172,8 @@ C 定义在 [`sdk/fgb_udp_frame.h`](../sdk/fgb_udp_frame.h)，安装包在 `sdk/
 ```python
 import socket, struct
 
-FMT = "<IHHQQQIIII" + "f" * 26 + "f" * 88 + "B" * 88
-assert struct.calcsize(FMT) == 592
+FMT = "<IHHQQQIIII" + "f" * 26 + "f" * 88 + "B" * 88 + "IIIIQ" + "f" * 10
+assert struct.calcsize(FMT) == 656
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(("127.0.0.1", 9102))
@@ -193,6 +214,6 @@ fgb-cli run --source replay --replay .workbuddy/tmp/golden.fgbrec --replay-loop 
 
 - **本机/局域网信任模型**：WS 只绑回环，但无鉴权；UDP 目标由用户给，默认关闭。
 - **不保证送达**：UDP 丢包是正常的；WS 慢客户端会被断开。需要可靠传输请用共享内存或自己加应用层协议。
-- **帧是快照，不是增量**：接收端不需要维护状态；代价是每帧都带 88 个形状（UDP 约 592 字节）。
+- **帧是快照，不是增量**：接收端不需要维护状态；代价是每帧都带 88 个形状（UDP 约 656 字节）。
 - **形状顺序是契约**：增删形状要升 `version`；消费者应检查 `magic/version`。
 - **不做历史回放/录制**：需要回放用 `.fgbcap`（`--record` / `--replay`）。

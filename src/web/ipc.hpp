@@ -69,6 +69,7 @@ struct IpcContext {
     bool calib_loaded = false;          // 启动时是否真的读到了档案（界面文案用）
 
     std::string source_name;
+    std::vector<std::string> source_names; // 逐个实例名，角色解析用
     std::string params_mode;
     std::string eye_mode;
 

@@ -23,7 +23,7 @@ FaceFrame sample_frame() {
     frame.sequence    = 42;
     frame.captureTsNs = 123'456'789;
     frame.add_channel(static_cast<std::uint8_t>(channel::kExpression | channel::kEyes |
-                                                channel::kHead));
+                                                channel::kGaze | channel::kHead));
 
     frame.set_shape(Shape::JawOpen, 0.5f);
     frame.eyes.left.valid         = true;
@@ -42,13 +42,23 @@ FaceFrame sample_frame() {
 
 GazeState sample_gaze() {
     GazeState gaze;
-    gaze.valid      = true;
-    gaze.dir_local  = Vec3{0.01f, 0.1f, -0.99f};
-    gaze.pitch_deg  = 5.0f;
-    gaze.yaw_deg    = 1.0f;
-    gaze.vergence_m = 1.24f;
-    gaze.confidence = 0.93f;
-    gaze.fixation   = true;
+    gaze.valid           = true;
+    gaze.dir_local       = Vec3{0.01f, 0.1f, -0.99f};
+    gaze.pitch_deg       = 5.0f;
+    gaze.yaw_deg         = 1.0f;
+    gaze.vergence_m      = 1.24f;
+    gaze.confidence      = 0.93f;
+    gaze.fixation        = true;
+    gaze.left_valid      = true;
+    gaze.right_valid     = true;
+    gaze.left_dir_local  = Vec3{0.02f, 0.1f, -0.99f};
+    gaze.right_dir_local = Vec3{-0.02f, 0.1f, -0.99f};
+    gaze.point2d_valid   = true;
+    gaze.left_point_2d   = Vec2{0.4f, 0.6f};
+    gaze.right_point_2d  = Vec2{0.45f, 0.55f};
+    gaze.capture_ts_ns   = 999;
+    gaze.source          = 2;
+    gaze.source_mask     = 0b1010;
     return gaze;
 }
 
@@ -83,6 +93,12 @@ FGB_TEST(udp_binary_serializes_fixed_layout) {
     FGB_CHECK_NEAR(wire.right_gaze_dir[0], -0.1, 1e-6);
     FGB_CHECK_NEAR(wire.vergence_distance_m, 1.24, 1e-6);
     FGB_CHECK_NEAR(wire.gaze_pitch_deg, 5.0, 1e-6);
+    FGB_CHECK((wire.gaze_valid & FGB_UDP_GAZE_POINT_2D_VALID) != 0);
+    FGB_CHECK(wire.gaze_source == 2);
+    FGB_CHECK(wire.gaze_source_mask == 0b1010);
+    FGB_CHECK(wire.gaze_capture_ts_ns == 999);
+    FGB_CHECK_NEAR(wire.gaze_left_dir[0], 0.02, 1e-6);
+    FGB_CHECK_NEAR(wire.gaze_left_point_2d[1], 0.6, 1e-6);
     FGB_CHECK_NEAR(wire.head_rotation[3], 0.999, 1e-6);
     FGB_CHECK_NEAR(wire.head_position[1], 0.05, 1e-6);
     FGB_CHECK_NEAR(wire.shapes[index_of(Shape::JawOpen)], 0.5, 1e-6);
@@ -142,6 +158,9 @@ FGB_TEST(ws_json_builds_active_shapes_only) {
     FGB_CHECK(text.find("\"vergence\":1.240") != std::string::npos);
     FGB_CHECK(text.find("\"BrowInnerUpLeft\"") == std::string::npos);
     FGB_CHECK(text.find("\"head\"") != std::string::npos);
+    FGB_CHECK(text.find("\"gaze\"") != std::string::npos);
+    FGB_CHECK(text.find("\"point_ok\":1") != std::string::npos);
+    FGB_CHECK(text.find("\"ts_ns\":999") != std::string::npos);
     FGB_CHECK(text.find("\"q\":[0.000,0.030,0.000,0.999]") != std::string::npos);
 }
 

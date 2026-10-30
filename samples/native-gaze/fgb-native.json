@@ -1,0 +1,12 @@
+{
+  "ModuleId": "com.fgbbridge.sample.gaze",
+  "ModuleName": "Native Gaze Sample",
+  "AuthorName": "FaceGaze Bridge",
+  "Version": "1.0.0",
+  "ModuleDescription": "Synthetic gaze-only module for ADR-0030 composition tests.",
+  "ModulePageUrl": "https://github.com/Aqamoe/FaceGaze-Bridge",
+  "DllFileName": "fgb-sample-gaze.dll",
+  "Capabilities": ["gaze"],
+  "RoleHint": "gaze",
+  "MinHostVersion": "1.0.2"
+}

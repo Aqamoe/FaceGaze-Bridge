@@ -463,3 +463,71 @@ FGB_TEST(modules_keep_installation_order) {
     FGB_CHECK(reopened.modules()[0].id == "zebra-id");
     FGB_CHECK(reopened.modules()[1].id == "alpha-id");
 }
+
+FGB_TEST(module_manifest_min_host_version_is_checked) {
+    TempDir root;
+    const fs::path dir = root.path / "store" / "future";
+    write_file(dir / "module.json",
+               R"({"ModuleId":"future-id","ModuleName":"Future","DllFileName":"Mod.dll",
+                   "Capabilities":["eye","gaze"],"RoleHint":"gaze",
+                   "MinHostVersion":"99.0.0"})");
+    write_file(dir / "Mod.dll", "not a real dll");
+
+    ModuleRegistry registry{root.path / "modules.ini", root.path / "store"};
+    registry.rescan();
+    const ModuleInfo* module = registry.find("future-id");
+    FGB_CHECK(module != nullptr);
+    if (module != nullptr) {
+        FGB_CHECK(module->declared_capabilities == (0x1u | 0x8u));
+        FGB_CHECK(module->role_hint == "gaze");
+        FGB_CHECK(module->min_host_version == "99.0.0");
+        FGB_CHECK(!module->host_compatible);
+    }
+}
+
+FGB_TEST(module_instances_and_roles_persist) {
+    TempDir root;
+    make_module_dir(root.path / "face", "face-id", "Face Module");
+    make_module_dir(root.path / "gaze", "gaze-id", "Gaze Module");
+    const fs::path store = root.path / "store";
+    const fs::path state = root.path / "modules.ini";
+
+    {
+        ModuleRegistry registry{state, store};
+        std::string error;
+        FGB_CHECK(registry.install_path(root.path / "face", error));
+        FGB_CHECK(registry.install_path(root.path / "gaze", error));
+
+        FGB_CHECK(registry.add_instance("face", "face-id"));
+        FGB_CHECK(registry.add_instance("gaze", "gaze-id"));
+        FGB_CHECK(!registry.add_instance("face", "gaze-id")); // 名字重复
+        FGB_CHECK(!registry.add_instance("bad", "missing-id"));
+
+        ModuleRoles roles;
+        roles.expression = "face-id";
+        roles.eyes       = "face-id";
+        roles.gaze       = "gaze-id";
+        roles.head       = "face-id";
+        FGB_CHECK(registry.set_roles(roles));
+    }
+
+    ModuleRegistry reopened{state, store};
+    reopened.rescan();
+    FGB_CHECK(reopened.instances().size() == 2);
+    if (reopened.instances().size() == 2) {
+        FGB_CHECK(reopened.instances()[0].name == "face");
+        FGB_CHECK(reopened.instances()[0].module_id == "face-id");
+        FGB_CHECK(reopened.instances()[1].name == "gaze");
+        FGB_CHECK(reopened.instances()[1].module_id == "gaze-id");
+    }
+    FGB_CHECK(reopened.roles().expression == "face-id");
+    FGB_CHECK(reopened.roles().eyes == "face-id");
+    FGB_CHECK(reopened.roles().gaze == "gaze-id");
+    FGB_CHECK(reopened.roles().head == "face-id");
+
+    FGB_CHECK(reopened.remove_instance("gaze"));
+    FGB_CHECK(!reopened.remove_instance("gaze"));
+    ModuleRegistry after_remove{state, store};
+    after_remove.rescan();
+    FGB_CHECK(after_remove.instances().size() == 1);
+}

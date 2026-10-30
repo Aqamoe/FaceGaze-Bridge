@@ -8,6 +8,7 @@
 #include "core/model/shape.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace fgb {
@@ -40,6 +41,28 @@ struct EyePair {
     bool any_valid() const noexcept { return left.valid || right.valid; }
 };
 
+// 独立注视通道的逐眼样本。与 EyeState 分开：这里没有 openness/pupil，
+// 所以只提供注视点的模块不会把头像眼睛一起接管。
+struct GazeSample {
+    bool valid = false;
+    Vec3 dirLocal{0.0f, 0.0f, -1.0f};
+    Vec2 point2d{0.0f, 0.0f};
+};
+
+struct GazePair {
+    GazeSample left;
+    GazeSample right;
+
+    bool combinedValid = false;
+    Vec3 combinedDirLocal{0.0f, 0.0f, -1.0f};
+
+    bool pointsValid = false; // left/right 的 point2d 同时有效
+    float confidence = 0.0f;
+    std::uint64_t captureTsNs = 0; // 0 = 用帧的 captureTsNs
+
+    bool any_valid() const noexcept { return left.valid || right.valid || combinedValid; }
+};
+
 // 一帧实际携带了哪些通道。
 //
 // 为什么不能"看值猜"：neutral() 里眼睛是 valid + 睁开正前（降级时也要发合法值），
@@ -50,7 +73,20 @@ namespace channel {
 inline constexpr std::uint8_t kExpression = 1U << 0;
 inline constexpr std::uint8_t kEyes       = 1U << 1;
 inline constexpr std::uint8_t kHead       = 1U << 2;
+inline constexpr std::uint8_t kGaze       = 1U << 3;
+
+inline constexpr std::size_t kCount = 4;
+inline constexpr std::size_t index(std::uint8_t mask) noexcept {
+    return mask == kGaze ? 3 : (mask == kHead ? 2 : (mask == kEyes ? 1 : 0));
+}
 } // namespace channel
+
+// 合并后每个通道实际来自哪个源、数据捕获于何时。
+// 多模块组合时 "面捕 A、注视 B" 必须能逐路看到，否则排查只能靠猜。
+struct ChannelStamp {
+    SourceId source = kInvalidSource;
+    std::uint64_t captureTsNs = 0;
+};
 
 struct FaceFrame {
     std::uint64_t captureTsNs = 0; // 数据在物理世界发生的时刻
@@ -60,12 +96,14 @@ struct FaceFrame {
     std::uint8_t channels = 0; // channel::k* 的位或，由 source 填写
 
     EyePair eyes;
+    GazePair gaze; // 独立注视通道；与 eyes 互不替代
 
     std::array<float, kShapeCount> shapes{};      // 0..1
     std::array<std::uint8_t, kShapeCount> shapeValid{};
 
     SourceId source = kInvalidSource;
     std::uint32_t contributingSources = 0; // 位掩码
+    std::array<ChannelStamp, channel::kCount> channelStamps{};
     float qualityScore = 1.0f;
 
     bool hasHeadPose = false;

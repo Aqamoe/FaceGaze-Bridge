@@ -22,6 +22,7 @@ FGB_TEST(shm_sink_writes_readable_frame) {
     frame.sequence    = 7;
     frame.add_channel(channel::kExpression);
     frame.add_channel(channel::kEyes);
+    frame.add_channel(channel::kGaze);
     frame.add_channel(channel::kHead);
     frame.set_shape(Shape::JawOpen, 0.75f);
     frame.eyes.left.valid    = true;
@@ -30,10 +31,20 @@ FGB_TEST(shm_sink_writes_readable_frame) {
     frame.headRotLocal       = Quat{0.0f, 0.1f, 0.0f, 0.99f};
 
     GazeState gaze;
-    gaze.valid      = true;
-    gaze.pitch_deg  = 5.0f;
-    gaze.yaw_deg    = -3.0f;
-    gaze.confidence = 1.0f;
+    gaze.valid           = true;
+    gaze.pitch_deg       = 5.0f;
+    gaze.yaw_deg         = -3.0f;
+    gaze.confidence      = 1.0f;
+    gaze.left_valid      = true;
+    gaze.right_valid     = true;
+    gaze.left_dir_local  = Vec3{0.1f, 0.2f, -0.97f};
+    gaze.right_dir_local = Vec3{-0.1f, 0.2f, -0.97f};
+    gaze.point2d_valid   = true;
+    gaze.left_point_2d   = Vec2{0.4f, 0.6f};
+    gaze.right_point_2d  = Vec2{0.45f, 0.55f};
+    gaze.capture_ts_ns   = 444;
+    gaze.source          = 2;
+    gaze.source_mask     = 0b1010;
 
     sink.submit(frame, gaze, 333);
     FGB_CHECK(sink.stats().messages == 1);
@@ -54,13 +65,21 @@ FGB_TEST(shm_sink_writes_readable_frame) {
             const std::uint32_t slot = block->active_slot;
             FGB_CHECK(slot < FGB_SHM_SLOTS);
             const FgbSharedFrameV1& out = block->slots[slot];
-            FGB_CHECK(out.channels == (channel::kExpression | channel::kEyes | channel::kHead));
+            FGB_CHECK(out.channels ==
+                      (channel::kExpression | channel::kEyes | channel::kGaze | channel::kHead));
             FGB_CHECK((out.attributes & FGB_SHM_ATTR_LEFT_VALID) != 0);
             FGB_CHECK((out.attributes & FGB_SHM_ATTR_HAS_HEAD) != 0);
+            FGB_CHECK((out.attributes & FGB_SHM_ATTR_GAZE_VALID) != 0);
             FGB_CHECK(out.capture_ts_ns == 111);
             FGB_CHECK(out.publish_ts_ns == 222);
             FGB_CHECK(out.left_openness > 0.39f && out.left_openness < 0.41f);
             FGB_CHECK(out.gaze_yaw_deg < -2.9f && out.gaze_yaw_deg > -3.1f);
+            FGB_CHECK((out.gaze_valid & FGB_SHM_GAZE_POINT_2D_VALID) != 0);
+            FGB_CHECK(out.gaze_source == 2);
+            FGB_CHECK(out.gaze_source_mask == 0b1010);
+            FGB_CHECK(out.gaze_capture_ts_ns == 444);
+            FGB_CHECK(out.gaze_left_dir[2] < -0.9f);
+            FGB_CHECK(out.gaze_left_point_2d[0] > 0.39f && out.gaze_left_point_2d[0] < 0.41f);
             const std::size_t jaw = index_of(Shape::JawOpen);
             FGB_CHECK(jaw < FGB_SHM_MAX_SHAPES);
             FGB_CHECK(out.shapes[jaw] > 0.74f && out.shapes[jaw] < 0.76f);

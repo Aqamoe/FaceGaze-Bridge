@@ -34,7 +34,8 @@ do {
 } while (seq != seq2 || (seq2 & 1));
 
 // frame.shapes[22] == JawOpen（顺序见 Unified Expressions）
-// frame.channels 位：1=eye, 2=expression, 4=head
+// frame.channels 位：1=expression, 2=eyes, 4=head, 8=gaze（v1.1）
+// 先检查 block->version / struct_size：v2 在末尾追加了独立注视字段
 ```
 
 C# 用 `MemoryMappedFile.OpenExisting(@"Local\FGB_Shm_fgbtest")`，按相同字段顺序用
@@ -46,13 +47,20 @@ C# 用 `MemoryMappedFile.OpenExisting(@"Local\FGB_Shm_fgbtest")`，按相同字�
 |---|---|
 | `sequence` | 写序号；奇数表示写入中 |
 | `capture_ts_ns` / `publish_ts_ns` | 原始采集时刻 / 引擎发布时刻（ns） |
-| `channels` | 1=眼追，2=表情，4=头姿 |
-| `attributes` | 1=左眼有效，2=右眼有效，4=有头姿，8=fixation（M5） |
+| `channels` | 1=表情，2=眼追，4=头姿，8=独立注视 |
+| `attributes` | 1=左眼有效，2=右眼有效，4=有头姿，8=fixation，16=渲染注视有效 |
 | `left/right_openness` | 睁眼度 0..1 |
-| `left/right_gaze_dir` | HMD 局部单位向量，-Z 前 |
-| `gaze_*` | 合并后的注视点（方向/俯仰/偏航/置信度） |
+| `left/right_gaze_dir` | 头像眼睛的 HMD 局部方向，-Z 前 |
+| `gaze_dir` / `gaze_pitch_deg` / `gaze_yaw_deg` | 渲染注视；有 gaze 通道时来自它，否则由眼睛反算 |
+| `gaze_valid` | 1=左眼，2=右眼，4=合并方向，8=2D 点有效 |
+| `gaze_source` / `gaze_source_mask` | 注视来源序号 / 本帧各通道贡献源位掩码 |
+| `gaze_capture_ts_ns` | 注视数据捕获时刻；0 = 未知 |
+| `gaze_left/right_dir` | 逐眼 HMD 局部单位向量 |
+| `gaze_left/right_point_2d` | 归一化屏幕点（暂定 [0,1] 左上；约定待对齐） |
 | `head_rotation/position` | 头姿，四元数 + 米 |
 | `shapes[88]` / `shape_valid[88]` | Unified Expressions 形状与有效位 |
+
+`version` 目前是 **2**；追加字段只加在末尾，旧字段偏移不变。
 
 ## 调试
 
@@ -60,4 +68,4 @@ C# 用 `MemoryMappedFile.OpenExisting(@"Local\FGB_Shm_fgbtest")`，按相同字�
 python tools/probe_shm.py fgbtest 3
 ```
 
-会打印 magic/version、帧序号、通道、左眼睁开度与 JawOpen，用来确认写端和理解布局。
+会打印 magic/version、帧序号、通道、左眼睁开度、JawOpen 与注视来源，用来确认写端和理解布局。

@@ -5,9 +5,9 @@
     python tools/probe_udp_out.py 9102 5
 
 检查项：
-  - 数据报正好 592 字节，magic/version/header_size 正确
+  - 数据报正好 656 字节（v2 起追加独立注视通道），magic/version/header_size 正确
   - shape_count == 88，shapes 偏移处能读到非零形状
-  - 眼追/头姿属性位与 gaze 字段一致
+  - 眼追/头姿/渲染注视属性位与字段一致
   - 实测帧率与 --udp-out-rate（默认每 tick）对比
 """
 import re
@@ -20,9 +20,9 @@ from pathlib import Path
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 9102
 SECONDS = float(sys.argv[2]) if len(sys.argv) > 2 else 5.0
 
-FRAME_SIZE = 592
+FRAME_SIZE = 656
 MAGIC = 0x55424746
-VERSION = 1
+VERSION = 2
 ATTR = {
     "left_valid": 0x01,
     "right_valid": 0x02,
@@ -30,13 +30,22 @@ ATTR = {
     "fixation": 0x08,
     "gaze_valid": 0x10,
 }
+GAZE_FLAGS = {
+    "left_valid": 0x01,
+    "right_valid": 0x02,
+    "combined_valid": 0x04,
+    "point2d_valid": 0x08,
+}
 # 10 个整数头 + 26 个 float（眼/注视/头）+ 88 个形状 + 88 个有效性字节
-FORMAT = "<IHHQQQIIII" + "f" * 26 + "f" * 88 + "B" * 88
+# + v2 追加：4 个 u32 + u64 + 6 个方向 float + 4 个 2D 点 float
+FORMAT = ("<IHHQQQIIII" + "f" * 26 + "f" * 88 + "B" * 88
+          + "IIIIQ" + "f" * 10)
 PARSER = struct.Struct(FORMAT)
 assert PARSER.size == FRAME_SIZE
 
 SHAPE_OFFSET = 36
 VALID_OFFSET = SHAPE_OFFSET + 88
+GAZE_BASE = 10 + 26 + 88 + 88
 
 
 def load_shape_names():
@@ -115,6 +124,18 @@ def main():
         if abs(norm - 1.0) > 0.05:
             print(f"FAIL 头姿四元数未归一化：{quat} norm={norm:.3f}")
             ok = False
+
+    gaze_valid = first[GAZE_BASE]
+    gaze_source = first[GAZE_BASE + 1]
+    gaze_capture = first[GAZE_BASE + 4]
+    print(f"渲染注视：flags=0x{gaze_valid:x} source={gaze_source} capture_ts={gaze_capture}")
+    if attrs & ATTR["gaze_valid"] and not (gaze_valid & GAZE_FLAGS["combined_valid"]):
+        print("FAIL gaze_valid 属性位有效，但 gaze_valid 字段没有 combined 位")
+        ok = False
+    if gaze_valid & GAZE_FLAGS["point2d_valid"]:
+        points = first[GAZE_BASE + 11:GAZE_BASE + 15]
+        if not all(0.0 <= value <= 1.0 for value in points):
+            print(f"WARN 2D 注视点超出 [0,1]：{points}（约定仍待对齐）")
 
     print("OK" if ok else "FAILED")
     return 0 if ok else 1

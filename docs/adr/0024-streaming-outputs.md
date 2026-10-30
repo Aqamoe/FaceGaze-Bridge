@@ -1,6 +1,6 @@
 # ADR-0024 · 流式输出：WebSocket JSON 与 UDP 二进制
 
-- 状态：**已实施**（2026-10-30）
+- 状态：**已实施**（2026-10-30）；v1.1 在 UDP/WS 末尾追加注视字段（见 ADR-0030）
 - 日期：2026-10-30
 - 影响：`src/sinks/ws_json_sink.*`、`src/sinks/udp_binary_sink.*`、`src/sinks/throttle.hpp`
   （新增）、`sdk/fgb_udp_frame.h`（新增）、`src/cli/main.cpp`、`src/web/ipc.*`、`ui/`、

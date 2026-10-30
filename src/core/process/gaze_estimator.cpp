@@ -15,9 +15,11 @@ void GazeEstimator::reset() noexcept {
 
 void GazeEstimator::update(const FaceFrame& frame, GazeState& gaze,
                            std::uint64_t now_ns) noexcept {
+    (void)frame; // 只依赖 gaze.valid；gaze-only 源没有眼睛通道
     gaze.ts_ns = now_ns;
 
-    if (!gaze.valid || !frame.eyes.any_valid()) {
+    // 只看渲染注视是否有效：gaze-only 源没有眼睛通道，但注视照样可以估计扫视/注视。
+    if (!gaze.valid) {
         reset();
         gaze.fixation          = false;
         gaze.fixation_ms       = 0.0f;

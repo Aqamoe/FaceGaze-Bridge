@@ -1,0 +1,12 @@
+{
+  "ModuleId": "com.fgbbridge.sample.face",
+  "ModuleName": "Native Face Sample",
+  "AuthorName": "FaceGaze Bridge",
+  "Version": "1.0.0",
+  "ModuleDescription": "Synthetic expression-only module for ADR-0030 composition tests.",
+  "ModulePageUrl": "https://github.com/Aqamoe/FaceGaze-Bridge",
+  "DllFileName": "fgb-sample-face.dll",
+  "Capabilities": ["expression"],
+  "RoleHint": "expression",
+  "MinHostVersion": "1.0.2"
+}

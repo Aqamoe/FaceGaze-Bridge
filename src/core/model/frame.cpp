@@ -48,6 +48,43 @@ void FaceFrame::sanitize() noexcept {
         e->pupilDilation = clamp_sym(e->pupilDilation);
     }
 
+    auto sanitize_gaze_sample = [](GazeSample& sample) {
+        if (!sample.valid) {
+            return;
+        }
+        if (!std::isfinite(sample.dirLocal.x) || !std::isfinite(sample.dirLocal.y) ||
+            !std::isfinite(sample.dirLocal.z)) {
+            sample.dirLocal = {0.0f, 0.0f, -1.0f};
+            sample.valid    = false;
+            return;
+        }
+        sample.dirLocal = normalize(sample.dirLocal);
+    };
+    sanitize_gaze_sample(gaze.left);
+    sanitize_gaze_sample(gaze.right);
+
+    if (gaze.combinedValid) {
+        if (!std::isfinite(gaze.combinedDirLocal.x) || !std::isfinite(gaze.combinedDirLocal.y) ||
+            !std::isfinite(gaze.combinedDirLocal.z)) {
+            gaze.combinedDirLocal = {0.0f, 0.0f, -1.0f};
+            gaze.combinedValid    = false;
+        } else {
+            gaze.combinedDirLocal = normalize(gaze.combinedDirLocal);
+        }
+    }
+
+    if (gaze.pointsValid) {
+        const float points[4] = {gaze.left.point2d.x, gaze.left.point2d.y,
+                                 gaze.right.point2d.x, gaze.right.point2d.y};
+        for (const float value : points) {
+            if (!std::isfinite(value)) {
+                gaze.pointsValid = false;
+                break;
+            }
+        }
+    }
+    gaze.confidence = clamp01(gaze.confidence);
+
     if (!std::isfinite(qualityScore)) {
         qualityScore = 0.0f;
     }

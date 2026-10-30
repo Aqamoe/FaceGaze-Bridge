@@ -17,6 +17,7 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -492,6 +493,7 @@ void IpcServer::build_metrics(std::string& out) {
         writer.key("error").str(status.error);
         writer.key("restarts").integer(static_cast<long long>(status.restarts));
         writer.key("alive").boolean(status.alive);
+        writer.key("capabilities").integer(static_cast<long long>(status.capabilities));
         writer.obj_end();
     }
     writer.arr_end();
@@ -601,9 +603,11 @@ void IpcServer::build_metrics(std::string& out) {
             writer.key("fresh").boolean(report.fresh);
             writer.key("expression").boolean(report.used_expression);
             writer.key("eyes").boolean(report.used_eyes);
+            writer.key("gaze").boolean(report.used_gaze);
             writer.key("head").boolean(report.used_head);
             writer.key("has_expression").boolean(report.provides_expression);
             writer.key("has_eyes").boolean(report.provides_eyes);
+            writer.key("has_gaze").boolean(report.provides_gaze);
             writer.key("has_head").boolean(report.provides_head);
             writer.obj_end();
         }
@@ -645,6 +649,7 @@ void IpcServer::build_gaze(std::string& out) {
     writer.obj_begin();
     writer.key("type").str("gaze");
     writer.key("ts_ns").integer(static_cast<long long>(gaze.ts_ns));
+    writer.key("capture_ts_ns").integer(static_cast<long long>(gaze.capture_ts_ns));
     writer.key("valid").boolean(gaze.valid);
     // 眼原点还没有建模（FaceFrame 只带方向）；先固定 0，别假装有世界坐标
     writer.key("origin_local").arr_begin();
@@ -657,6 +662,27 @@ void IpcServer::build_gaze(std::string& out) {
     writer.num(gaze.dir_local.y, 3);
     writer.num(gaze.dir_local.z, 3);
     writer.arr_end();
+    writer.key("left_valid").boolean(gaze.left_valid);
+    writer.key("right_valid").boolean(gaze.right_valid);
+    writer.key("left_dir_local").arr_begin();
+    writer.num(gaze.left_dir_local.x, 3);
+    writer.num(gaze.left_dir_local.y, 3);
+    writer.num(gaze.left_dir_local.z, 3);
+    writer.arr_end();
+    writer.key("right_dir_local").arr_begin();
+    writer.num(gaze.right_dir_local.x, 3);
+    writer.num(gaze.right_dir_local.y, 3);
+    writer.num(gaze.right_dir_local.z, 3);
+    writer.arr_end();
+    writer.key("point2d_valid").boolean(gaze.point2d_valid);
+    writer.key("left_point_2d").arr_begin();
+    writer.num(gaze.left_point_2d.x, 4);
+    writer.num(gaze.left_point_2d.y, 4);
+    writer.arr_end();
+    writer.key("right_point_2d").arr_begin();
+    writer.num(gaze.right_point_2d.x, 4);
+    writer.num(gaze.right_point_2d.y, 4);
+    writer.arr_end();
     writer.key("pitch_deg").num(gaze.pitch_deg, 3);
     writer.key("yaw_deg").num(gaze.yaw_deg, 3);
     writer.key("vergence_distance").num(gaze.vergence_m, 3);
@@ -664,6 +690,23 @@ void IpcServer::build_gaze(std::string& out) {
     writer.key("fixation").boolean(gaze.fixation);
     writer.key("fixation_ms").num(gaze.fixation_ms, 1);
     writer.key("saccade_vel_deg_s").num(gaze.saccade_vel_deg_s, 1);
+
+    // 逐通道来源：状态页要显示"注视来自哪个实例、多久前"。源名在合并层的 report 里。
+    std::string gaze_source;
+    std::uint64_t gaze_age_ms = 0;
+    if (ctx_.engine != nullptr) {
+        for (const SourceReport& report : ctx_.engine->source_report()) {
+            if (report.used_gaze) {
+                gaze_source = report.name;
+                gaze_age_ms = report.age_ns / 1'000'000ULL;
+                break;
+            }
+        }
+    }
+    writer.key("source").str(gaze_source);
+    writer.key("source_age_ms").integer(static_cast<long long>(gaze_age_ms));
+    writer.key("source_id").integer(static_cast<long long>(gaze.source));
+    writer.key("source_mask").integer(static_cast<long long>(gaze.source_mask));
     if (frame.hasHeadPose) {
         writer.key("head_pose").obj_begin();
         writer.key("q").arr_begin();
@@ -981,9 +1024,57 @@ void IpcServer::build_modules(std::string& out) {
                         return module.module_id == ctx_.active_module_id;
                     });
     writer.key("state").str(selected_running ? "active" : (ctx_.active_module_id.empty() ? "none" : "installed"));
-    // 选了启动模块但没在跑（或者改了启停）：界面提示用户点"重启引擎"
-    writer.key("restart_needed")
-        .boolean(!ctx_.active_module_id.empty() && !selected_running);
+
+    // 配置的实例是否都真的在跑。名字是 "vrcft:face" / "native:gaze"，
+    // 这里按 module_id + 后缀匹配，不依赖实例顺序。
+    bool instances_match = true;
+    if (registry != nullptr) {
+        for (const vrcft::ModuleInstance& instance : registry->instances()) {
+            bool found = false;
+            for (const RunningModule& running : ctx_.running_modules) {
+                if (running.module_id != instance.module_id) {
+                    continue;
+                }
+                const std::string suffix = ":" + instance.name;
+                if (running.display_name.size() >= suffix.size() &&
+                    running.display_name.compare(running.display_name.size() - suffix.size(),
+                                                 suffix.size(), suffix) == 0) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                instances_match = false;
+                break;
+            }
+        }
+    }
+
+    // 选了启动模块但没在跑（或者改了启停/实例列表）：界面提示用户点"重启引擎"
+    writer.key("restart_needed").boolean(
+        (!ctx_.active_module_id.empty() && !selected_running) || !instances_match);
+
+    writer.key("instances").arr_begin();
+    if (registry != nullptr) {
+        for (const vrcft::ModuleInstance& instance : registry->instances()) {
+            const vrcft::ModuleInfo* module = registry->find(instance.module_id);
+            writer.obj_begin();
+            writer.key("name").str(instance.name);
+            writer.key("module_id").str(instance.module_id);
+            writer.key("module_name").str(module != nullptr ? module->name : instance.module_id);
+            writer.key("enabled").boolean(module != nullptr && module->enabled && !module->broken);
+            writer.obj_end();
+        }
+    }
+    writer.arr_end();
+
+    writer.key("roles").obj_begin();
+    const vrcft::ModuleRoles roles = registry != nullptr ? registry->roles() : vrcft::ModuleRoles{};
+    writer.key("expression").str(roles.expression);
+    writer.key("eyes").str(roles.eyes);
+    writer.key("gaze").str(roles.gaze);
+    writer.key("head").str(roles.head);
+    writer.obj_end();
 
     const auto runtime = vrcft::find_vrcft_runtime();
     writer.key("runtime").obj_begin();
@@ -1012,6 +1103,11 @@ void IpcServer::build_modules(std::string& out) {
             writer.key("installed_at").str(module.installed_at);
             writer.key("bytes").integer(static_cast<long long>(module.bytes));
             writer.key("kind").str(module.kind == vrcft::ModuleKind::native ? "native" : "vrcft");
+            writer.key("declared_capabilities")
+                .integer(static_cast<long long>(module.declared_capabilities));
+            writer.key("role_hint").str(module.role_hint);
+            writer.key("min_host_version").str(module.min_host_version);
+            writer.key("host_compatible").boolean(module.host_compatible);
 
             // 这个模块现在是不是被某个实例加载着？是的话状态来自那个实例，
             // 而不是注册表里"下次启动加载"的选择——两者可能不一致（用户刚改过选择还没重启）。
@@ -1032,6 +1128,15 @@ void IpcServer::build_modules(std::string& out) {
             writer.key("state").str(state);
             writer.key("running").boolean(running != nullptr);
             writer.key("instance").str(running != nullptr ? running->display_name : std::string{});
+            // 运行时能力以模块自报为准（清单可能没写或写错）
+            std::uint32_t capabilities = module.declared_capabilities;
+            if (running != nullptr && running->source != nullptr) {
+                const auto runtime_status = running->source->module_status();
+                if (runtime_status.has_value() && runtime_status->capabilities != 0) {
+                    capabilities = runtime_status->capabilities;
+                }
+            }
+            writer.key("capabilities").integer(static_cast<long long>(capabilities));
             writer.obj_end();
         }
     }
@@ -1495,6 +1600,86 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             ok                    = true;
         } else {
             error = "unknown module";
+        }
+    } else if (has_type && type == "add_instance") {
+        std::string id;
+        std::string name;
+        json::field_string(text, "id", id);
+        json::field_string(text, "name", name);
+        if (ctx_.modules == nullptr) {
+            error = "module registry not available";
+        } else if (id.empty() || name.empty()) {
+            error = "missing module id or instance name";
+        } else if (ctx_.modules->add_instance(name, id)) {
+            modules_touched = true;
+            modules_message = "启动实例已添加（重启引擎后生效）";
+            ack_message     = "实例 " + name + " 已添加";
+            ok              = true;
+        } else {
+            error = "无法添加实例（名字重复或模块不可用）";
+        }
+    } else if (has_type && type == "remove_instance") {
+        std::string name;
+        json::field_string(text, "name", name);
+        if (ctx_.modules == nullptr) {
+            error = "module registry not available";
+        } else if (ctx_.modules->remove_instance(name)) {
+            modules_touched = true;
+            modules_message = "启动实例已移除（重启引擎后生效）";
+            ack_message     = "实例 " + name + " 已移除";
+            ok              = true;
+        } else {
+            error = "unknown instance";
+        }
+    } else if (has_type && type == "set_module_roles") {
+        if (ctx_.modules == nullptr) {
+            error = "module registry not available";
+        } else {
+            vrcft::ModuleRoles roles;
+            json::field_string(text, "expression", roles.expression);
+            json::field_string(text, "eyes", roles.eyes);
+            json::field_string(text, "gaze", roles.gaze);
+            json::field_string(text, "head", roles.head);
+            ctx_.modules->set_roles(roles);
+
+            if (ctx_.engine != nullptr) {
+                const auto lower = [](std::string value) {
+                    std::transform(value.begin(), value.end(), value.begin(),
+                                   [](unsigned char c) {
+                                       return static_cast<char>(std::tolower(c));
+                                   });
+                    return value;
+                };
+                const vrcft::ModuleRoles saved = ctx_.modules->roles();
+                const auto resolve = [&](const std::string& value) -> std::string {
+                    if (value.empty()) {
+                        return {};
+                    }
+                    const std::string needle = lower(value);
+                    for (const RunningModule& module : ctx_.running_modules) {
+                        if (lower(module.module_id) == needle) {
+                            return module.display_name;
+                        }
+                    }
+                    for (const std::string& name : ctx_.source_names) {
+                        if (lower(name) == needle) {
+                            return name;
+                        }
+                    }
+                    return {};
+                };
+                MergePolicy policy = ctx_.engine->merge_policy();
+                policy.expression_source = resolve(saved.expression);
+                policy.eye_source        = resolve(saved.eyes);
+                policy.gaze_source       = resolve(saved.gaze);
+                policy.head_source       = resolve(saved.head);
+                ctx_.engine->set_merge_policy(policy);
+            }
+
+            modules_touched = true;
+            modules_message = "角色来源已更新（立即生效）";
+            ack_message     = "角色来源已保存";
+            ok              = true;
         }
     } else if (has_type && type == "delete_module") {
         std::string id;

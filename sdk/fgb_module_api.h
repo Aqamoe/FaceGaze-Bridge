@@ -24,10 +24,16 @@
 #define FGB_MODULE_ABI_V1 1u
 #define FGB_MAX_SHAPES 88u
 
-/* 模块能力位。宿主据此决定这一路能参与哪些通道的合并。 */
+/* 模块能力位。宿主据此决定这一路能参与哪些通道的合并。
+ *
+ * EYE 是整眼能力：声明它就必须同时给出 gaze、openness 和 pupil。
+ * 只提供注视方向/注视点、不提供睁眼度的模块只能声明 GAZE，不能借用 EYE，
+ * 否则头像会因为 openness 缺失而闭眼。EYE 与 GAZE 可以同时声明。
+ */
 #define FGB_CAP_EYE 0x1u
 #define FGB_CAP_EXPRESSION 0x2u
 #define FGB_CAP_HEAD 0x4u
+#define FGB_CAP_GAZE 0x8u
 
 /* 日志级别，与引擎内部一致 */
 #define FGB_LOG_TRACE 0
@@ -62,13 +68,45 @@ typedef struct FgbEyeV1 {
     float pupil_diameter_mm; /* 0 表示不提供 */
     float pupil_dilation;    /* -1..1，0 为基线 */
 
-    float gaze_dir[3];    /* HMD 局部单位向量，-Z 为前 */
+    float gaze_dir[3];    /* HMD 局部单位向量，-Z 为前；这是头像眼睛方向 */
     float gaze_confidence; /* 0..1 */
 } FgbEyeV1;
+
+/* FgbGazeV1::valid 的位。逐眼/合并方向与 2D 点分别有效，互不连坐。 */
+#define FGB_GAZE_LEFT 0x1u
+#define FGB_GAZE_RIGHT 0x2u
+#define FGB_GAZE_COMBINED 0x4u
+#define FGB_GAZE_POINT_2D 0x8u
+
+/*
+ * 独立注视通道。只声明 FGB_CAP_GAZE 的模块写这里，不要伪造 FgbEyeV1。
+ *
+ * 2D 点暂定：归一化屏幕坐标，x/y ∈ [0,1]，原点左上。这个约定尚未和
+ * 串流/OpenXR 消费端对齐（ADR-0030 开放问题），消费端应把它当作“来源自己的
+ * 屏幕坐标”，不要直接当成 HMD 视口坐标使用。
+ */
+typedef struct FgbGazeV1 {
+    uint32_t valid; /* FGB_GAZE_* 位或；0 = 本帧没有注视数据 */
+    uint32_t reserved;
+
+    float left_dir[3];     /* HMD 局部单位向量，-Z 前 */
+    float right_dir[3];
+    float combined_dir[3];
+
+    float left_point_2d[2]; /* 可选，FGB_GAZE_POINT_2D 有效时读取 */
+    float right_point_2d[2];
+
+    float confidence;      /* 0..1 */
+    uint64_t capture_ts_ns; /* 0 = 用帧的 capture_ts_ns */
+} FgbGazeV1;
 
 /*
  * 宿主分配、模块写入的帧槽。v1 是进程内调用，指针直接指向宿主的缓冲；
  * 结构本身按共享内存兼容的方式设计，后续跨进程模块可以复用。
+ *
+ * gaze 是 v1.1 在末尾追加的字段。写它之前必须先检查：
+ *     slot->struct_size >= offsetof(FgbFrameSlotV1, gaze) + sizeof(FgbGazeV1)
+ * 旧宿主不会分配这段内存，直接写会越界。
  */
 typedef struct FgbFrameSlotV1 {
     uint32_t struct_size;
@@ -90,6 +128,8 @@ typedef struct FgbFrameSlotV1 {
     float head_position[3]; /* 米，HMD 局部 */
 
     uint64_t capture_ts_ns; /* 可选：数据在物理世界发生的时刻，0 = 由宿主补 */
+
+    FgbGazeV1 gaze; /* v1.1 追加；写之前检查 struct_size */
 } FgbFrameSlotV1;
 
 typedef struct FgbHostServicesV1 {

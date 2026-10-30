@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <string>
 
@@ -190,6 +191,37 @@ void NativeModuleSource::apply_slot(const FgbFrameSlotV1& slot,
         }
     }
 
+    // gaze 是 v1.1 追加字段：旧模块的 struct_size 不含它，不能读。
+    const std::size_t gaze_need = offsetof(FgbFrameSlotV1, gaze) + sizeof(FgbGazeV1);
+    if ((capabilities & FGB_CAP_GAZE) != 0 && slot.struct_size >= gaze_need) {
+        const FgbGazeV1& in = slot.gaze;
+        if ((in.valid & (FGB_GAZE_LEFT | FGB_GAZE_RIGHT | FGB_GAZE_COMBINED)) != 0) {
+            frame.gaze.left.valid  = (in.valid & FGB_GAZE_LEFT) != 0;
+            frame.gaze.right.valid = (in.valid & FGB_GAZE_RIGHT) != 0;
+            if (frame.gaze.left.valid) {
+                frame.gaze.left.dirLocal =
+                    normalize(Vec3{in.left_dir[0], in.left_dir[1], in.left_dir[2]});
+            }
+            if (frame.gaze.right.valid) {
+                frame.gaze.right.dirLocal =
+                    normalize(Vec3{in.right_dir[0], in.right_dir[1], in.right_dir[2]});
+            }
+            frame.gaze.combinedValid = (in.valid & FGB_GAZE_COMBINED) != 0;
+            if (frame.gaze.combinedValid) {
+                frame.gaze.combinedDirLocal =
+                    normalize(Vec3{in.combined_dir[0], in.combined_dir[1], in.combined_dir[2]});
+            }
+            frame.gaze.pointsValid = (in.valid & FGB_GAZE_POINT_2D) != 0;
+            frame.gaze.left.point2d  = Vec2{in.left_point_2d[0], in.left_point_2d[1]};
+            frame.gaze.right.point2d = Vec2{in.right_point_2d[0], in.right_point_2d[1]};
+            frame.gaze.confidence    = clamp01(in.confidence);
+            frame.gaze.captureTsNs   = in.capture_ts_ns;
+            if (frame.gaze.any_valid()) {
+                frame.add_channel(channel::kGaze);
+            }
+        }
+    }
+
     if ((capabilities & FGB_CAP_HEAD) != 0 && slot.has_head_pose != 0) {
         frame.hasHeadPose  = true;
         frame.headRotLocal = normalized(Quat{slot.head_rotation[0], slot.head_rotation[1],
@@ -243,7 +275,8 @@ bool NativeModuleSource::start() {
         stop();
         return false;
     }
-    if ((api_->capabilities & (FGB_CAP_EYE | FGB_CAP_EXPRESSION | FGB_CAP_HEAD)) == 0) {
+    if ((api_->capabilities &
+         (FGB_CAP_EYE | FGB_CAP_EXPRESSION | FGB_CAP_HEAD | FGB_CAP_GAZE)) == 0) {
         last_error_ = "模块没有声明任何能力位";
         stop();
         return false;
@@ -333,10 +366,11 @@ SourceStats NativeModuleSource::stats() const noexcept {
 
 std::optional<ModuleRuntimeStatus> NativeModuleSource::module_status() const {
     ModuleRuntimeStatus status;
-    status.alive    = alive_.load(std::memory_order_acquire);
-    status.frames   = stats().frames;
-    status.restarts = 0;
-    status.error    = last_error_;
+    status.alive        = alive_.load(std::memory_order_acquire);
+    status.frames       = stats().frames;
+    status.restarts     = 0;
+    status.capabilities = api_ != nullptr ? api_->capabilities : 0;
+    status.error        = last_error_;
     return status;
 }
 

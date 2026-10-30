@@ -41,7 +41,7 @@
   运行态统一走 `ISource::module_status()`，不要按具体 Source 类型分支。
 - **模块只从 `%LOCALAPPDATA%\FaceGazeBridge\modules` 加载**；VRCFT 的 `CustomLibs` 只是导入候选，
   任何"直接扫别人的目录然后 LoadLibrary"的写法都不要加（[ADR-0017](docs/adr/0017-module-store-library-runtime.md)）。
-- **新增输入源必须声明 `frame.channels`**（`channel::kExpression / kEyes / kHead`）。
+- **新增输入源必须声明 `frame.channels`**（`channel::kExpression / kEyes / kGaze / kHead`）。
   合并层只认声明，不猜值——`FaceFrame::neutral()` 里眼睛是 valid 的，靠值猜会让源被误判成眼追来源。
 - **VMC 的 blendshape 名字表只有一份**（`src/vmc/vmc_map`）。输入和输出都 include 它，
   不要各写一份——漂移的症状是"能收不能发"，且看起来像对端的问题。

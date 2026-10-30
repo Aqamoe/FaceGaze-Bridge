@@ -611,6 +611,53 @@ input[type="range"]:disabled::-webkit-slider-thumb {
 .running-module { flex: 1; color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .running-extra { grid-column: 1 / -1; color: var(--dim-2); font-size: 11px; font-variant-numeric: tabular-nums; }
 
+/* ---------- 启动实例与角色 ---------- */
+.instance-list { display: grid; gap: 2px; margin-top: 4px; }
+.instance-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px dashed var(--line-soft);
+}
+.instance-row:last-child { border-bottom: 0; }
+.instance-name { min-width: 100px; font-weight: 600; font-size: 13px; }
+.instance-module { flex: 1; color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.role-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+  margin-top: 14px;
+}
+.role-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.role-label { min-width: 56px; color: var(--dim); font-size: 12.5px; }
+.role-select { flex: 1; min-width: 0; }
+
+.role-hint {
+  margin-top: 12px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  color: var(--dim);
+}
+.role-hint.warn {
+  color: #f3c969;
+  border-color: rgb(243 201 105 / .35);
+  background: rgb(243 201 105 / .07);
+}
+
+.chip.cap {
+  color: #9fb3d9;
+  border-color: rgb(159 179 217 / .28);
+  background: rgb(159 179 217 / .07);
+}
+
+@media (max-width: 1240px) {
+  .role-grid { grid-template-columns: 1fr; }
+}
+
 .module-card {
   background: linear-gradient(180deg, #0f1932, #0c142a);
   border: 1px solid var(--line);

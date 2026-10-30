@@ -12,7 +12,8 @@ import sys
 import time
 
 FGB_SHM_MAGIC = 0x53424746
-CHANNELS = {0x1: "eye", 0x2: "expression", 0x4: "head"}
+FGB_SHM_VERSION = 2
+CHANNELS = {0x1: "expression", 0x2: "eyes", 0x4: "head", 0x8: "gaze"}
 JAW_OPEN_INDEX = 22  # Unified Expressions 顺序里的 JawOpen
 
 
@@ -42,6 +43,16 @@ class Frame(ctypes.Structure):
         ("head_position", ctypes.c_float * 3),
         ("shapes", ctypes.c_float * 88),
         ("shape_valid", ctypes.c_uint8 * 88),
+        # v1.1 追加：独立注视通道（ADR-0030）
+        ("gaze_valid", ctypes.c_uint32),
+        ("gaze_source", ctypes.c_uint32),
+        ("gaze_source_mask", ctypes.c_uint32),
+        ("gaze_reserved", ctypes.c_uint32),
+        ("gaze_capture_ts_ns", ctypes.c_uint64),
+        ("gaze_left_dir", ctypes.c_float * 3),
+        ("gaze_right_dir", ctypes.c_float * 3),
+        ("gaze_left_point_2d", ctypes.c_float * 2),
+        ("gaze_right_point_2d", ctypes.c_float * 2),
     ]
 
 
@@ -86,8 +97,13 @@ def main() -> int:
     block = Block.from_address(view)
     print(f"mapping={mapping_name} magic=0x{block.magic:08X} version={block.version} "
           f"struct_size={block.struct_size} slots={block.slot_count}")
-    if block.magic != FGB_SHM_MAGIC:
-        print("FAIL magic 不匹配")
+    if block.magic != FGB_SHM_MAGIC or block.version != FGB_SHM_VERSION:
+        print("FAIL magic/version 不匹配（这个探针按 v2 布局读取）")
+        kernel32.UnmapViewOfFile(view)
+        kernel32.CloseHandle(handle)
+        return 1
+    if ctypes.sizeof(Frame) != 648:
+        print(f"FAIL Frame 布局大小 {ctypes.sizeof(Frame)}，期望 648")
         kernel32.UnmapViewOfFile(view)
         kernel32.CloseHandle(handle)
         return 1
@@ -121,7 +137,8 @@ def main() -> int:
             jaw = frame.shapes[JAW_OPEN_INDEX]
             print(f"seq={frame.sequence} channels={channels} "
                   f"left_open={frame.left_openness:.3f} jawOpen={jaw:.3f} "
-                  f"attr=0x{frame.attributes:X}")
+                  f"attr=0x{frame.attributes:X} gaze_flags=0x{frame.gaze_valid:X} "
+                  f"gaze_src={frame.gaze_source}")
         time.sleep(0.1)
 
     kernel32.UnmapViewOfFile(view)

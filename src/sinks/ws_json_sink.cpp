@@ -85,6 +85,39 @@ std::string WsJsonSink::build_json(const FaceFrame& frame, const GazeState& gaze
                                3);
     writer.obj_end(); // eye
 
+    // 渲染注视（ADR-0030 v1.1）：与 eye 分开，avatar 眼睛仍看上面的 eye。
+    writer.key("gaze").obj_begin();
+    writer.key("ok").integer(gaze.valid ? 1 : 0);
+    const auto write_gaze_eye = [&writer](std::string_view name, bool valid, Vec3 dir,
+                                          Vec2 point, bool point_valid) {
+        writer.key(name).obj_begin();
+        writer.key("ok").integer(valid ? 1 : 0);
+        writer.key("dir").arr_begin();
+        writer.num(dir.x, 3);
+        writer.num(dir.y, 3);
+        writer.num(dir.z, 3);
+        writer.arr_end();
+        writer.key("point_ok").integer(point_valid ? 1 : 0);
+        writer.key("point").arr_begin();
+        writer.num(point.x, 4);
+        writer.num(point.y, 4);
+        writer.arr_end();
+        writer.obj_end();
+    };
+    write_gaze_eye("left", gaze.left_valid, gaze.left_dir_local, gaze.left_point_2d,
+                   gaze.point2d_valid);
+    write_gaze_eye("right", gaze.right_valid, gaze.right_dir_local, gaze.right_point_2d,
+                   gaze.point2d_valid);
+    writer.key("dir").arr_begin();
+    writer.num(gaze.dir_local.x, 3);
+    writer.num(gaze.dir_local.y, 3);
+    writer.num(gaze.dir_local.z, 3);
+    writer.arr_end();
+    writer.key("ts_ns").integer(static_cast<long long>(gaze.capture_ts_ns));
+    writer.key("src").integer(static_cast<long long>(gaze.source));
+    writer.key("mask").integer(static_cast<long long>(gaze.source_mask));
+    writer.obj_end();
+
     if (frame.hasHeadPose) {
         writer.key("head").obj_begin();
         writer.key("q").arr_begin();

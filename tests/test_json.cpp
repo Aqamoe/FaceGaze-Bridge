@@ -3,6 +3,7 @@
 #include "test_framework.hpp"
 
 #include <string>
+#include <vector>
 
 using namespace fgb::json;
 
@@ -36,6 +37,21 @@ FGB_TEST(json_writer_escapes_keys_and_values) {
     // 裸字符串 R"(...)" 会在 ")" 处提前结束
     const std::string expected = "{\"a\\\"b\":\"x\\\\y\"}";
     FGB_CHECK(out == expected);
+}
+
+FGB_TEST(json_field_string_array_reads_capabilities) {
+    const std::string text = R"({
+  "Capabilities": ["expression", "gaze"],
+  "RoleHint": "gaze"
+})";
+    std::vector<std::string> values;
+    FGB_CHECK(field_string_array(text, "Capabilities", values));
+    FGB_CHECK(values.size() == 2);
+    if (values.size() == 2) {
+        FGB_CHECK(values[0] == "expression");
+        FGB_CHECK(values[1] == "gaze");
+    }
+    FGB_CHECK(!field_string_array(text, "Missing", values));
 }
 
 FGB_TEST(json_field_readers) {

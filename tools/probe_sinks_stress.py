@@ -25,8 +25,8 @@ import threading
 import time
 import urllib.request
 
-FRAME_SIZE = 592  # sdk/fgb_udp_frame.h
-SHM_BLOCK_SIZE = 1200  # FgbSharedBlockV1：32 字节头 + 2 × 584 字节槽
+FRAME_SIZE = 656  # sdk/fgb_udp_frame.h（v2 追加注视字段）
+SHM_BLOCK_SIZE = 1328  # FgbSharedBlockV1：32 字节头 + 2 × 648 字节槽
 
 VMC_ARG = {
     "/VMC/Ext/Blend/Val": b",sf\x00",

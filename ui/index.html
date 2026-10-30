@@ -139,6 +139,8 @@
               <div class="kv"><span data-i18n="status.gaze.fixation">注视状态</span><b id="g-fixation">—</b></div>
               <div class="kv"><span data-i18n="status.gaze.saccade">扫视速度</span><b id="g-saccade">—</b></div>
               <div class="kv"><span data-i18n="status.gaze.confidence">置信度</span><b id="g-confidence">—</b></div>
+              <div class="kv"><span data-i18n="status.gaze.source">来源 / 年龄</span><b id="g-source">—</b></div>
+              <div class="kv"><span data-i18n="status.gaze.point">屏幕点</span><b id="g-points" class="mono">—</b></div>
               <div class="kv"><span data-i18n="status.gaze.head">头姿</span><b id="g-head" class="mono">—</b></div>
             </div>
           </div>
@@ -172,6 +174,16 @@
           <span class="pill" id="mod-runtime">—</span>
           <span class="muted mono" id="mod-store">—</span>
         </div>
+
+        <article class="card" style="margin-bottom:14px">
+          <h2 data-i18n="modules.roles.title">启动实例与角色</h2>
+          <div class="instance-list" id="instance-list"></div>
+          <div class="role-grid" id="role-grid"></div>
+          <div class="role-hint" id="role-hint" hidden></div>
+          <p class="hint" data-i18n="modules.roles.hint">
+            角色按 module_id 绑定；缺角色时头像用中性值、渲染注视回退到眼睛。实例列表变化需重启引擎。
+          </p>
+        </article>
 
         <article class="card" style="margin-bottom:14px">
           <h2 data-i18n="modules.running.title">运行中的实例</h2>

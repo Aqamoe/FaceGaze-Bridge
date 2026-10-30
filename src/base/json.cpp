@@ -168,6 +168,45 @@ bool field_bool(std::string_view text, std::string_view key, bool& out) {
     return false;
 }
 
+bool field_string_array(std::string_view text, std::string_view key,
+                        std::vector<std::string>& out) {
+    const std::size_t pos = find_value_after(text, key);
+    if (pos == std::string_view::npos || pos >= text.size() || text[pos] != '[') {
+        return false;
+    }
+
+    std::vector<std::string> values;
+    std::size_t i = pos + 1;
+    while (i < text.size()) {
+        if (text[i] == ']') {
+            out = std::move(values);
+            return true;
+        }
+        if (text[i] != '"') {
+            ++i;
+            continue;
+        }
+        std::string value;
+        ++i;
+        while (i < text.size()) {
+            const char c = text[i];
+            if (c == '\\' && i + 1 < text.size()) {
+                value.push_back(text[i + 1]);
+                i += 2;
+                continue;
+            }
+            if (c == '"') {
+                ++i;
+                values.push_back(std::move(value));
+                break;
+            }
+            value.push_back(c);
+            ++i;
+        }
+    }
+    return false;
+}
+
 bool field_string(std::string_view text, std::string_view key, std::string& out) {
     const std::size_t pos = find_value_after(text, key);
     // null 也是"没有值"：module.json 里 FileHash 就是 null

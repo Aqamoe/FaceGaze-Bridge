@@ -457,6 +457,11 @@ FaceFrame
 > **v1 已实现**（2026-10-29，见 [ADR-0018](adr/0018-native-c-abi-v1.md)）：进程内加载、
 > `sdk/fgb_module_api.h`、`samples/native-sine`。与下面的纸面设计相比多了
 > `shape_index(name)` 服务（模块不硬编码形状下标），帧槽 v1 是宿主堆内存，布局按跨进程兼容设计。
+>
+> **v1.1 已实现**（2026-10-30，见 [ADR-0030](adr/0030-native-module-v2-composition.md)）：
+> 模块能力扩展 `FGB_CAP_GAZE`，合并层增加独立注视通道，注视新鲜度与头像眼睛分开；
+> 多模块按角色组合（面捕 / 眼睛 / 注视 / 头姿），头像输出与 foveation 渲染输出分路。
+> 属性级组合（A 的 openness + B 的 gaze）与跨进程模块宿主仍是 v2 方向，等真实需求再做。
 
 给新模块用的高性能接口。设计要点：
 
@@ -480,7 +485,7 @@ typedef struct FgbModuleV1 {
     uint32_t abi_version;
     const char* id;            // 反向域名，如 "com.example.questpro"
     const char* display_name;
-    uint32_t capabilities;     // FGB_CAP_EYE | FGB_CAP_EXPRESSION | FGB_CAP_TONGUE | FGB_CAP_HEADPOSE
+    uint32_t capabilities;     // FGB_CAP_EYE | FGB_CAP_EXPRESSION | FGB_CAP_GAZE | FGB_CAP_HEAD
 
     bool (*initialize)(void** self, const FgbHostServicesV1*, const FgbInitParamsV1*);
     void (*update)(void* self);          /* 宿主按 tick 调用，或模块自驱 push */
@@ -509,7 +514,7 @@ FGB_EXPORT const FgbModuleV1* fgb_module_query(uint32_t host_abi_version);
 | MeowFace / iFacialMocap | UDP/HTTP | Android/iOS | 格式相近，需适配 |
 | ALVR | UDP（协商） | ALVR | 眼追 + 面捕 |
 | Virtual Desktop | UDP（协商） | Quest Pro/3 经 VD | 需逆向，注意版本 |
-| PICO Connect | UDP（协商） | PICO 4 Pro/Enterprise | 同上 |
+| PICO Connect | UDP（协商） | PICO 4 Pro/Enterprise | 面捕与眼动建议拆成两个原生模块，见 [ADR-0030](adr/0030-native-module-v2-composition.md) |
 | OpenXR 眼追 | 进程内 | 任意 OpenXR 应用 | `XR_EXT_eye_gaze_interaction` 只有合并视线 |
 
 **优先级建议**：VMC → OSC 通用 → ARKit LiveLink → OpenXR → ALVR/VD/PICO（涉及逆向，放后）。
@@ -600,7 +605,7 @@ OSC 开关在游戏内 `Options > OSC`，写入位置未确认；在没有可靠
 | VMC | UDP 39539，`/VMC/Ext/Blend/Val`、`/VMC/Ext/Blend/Apply` | Warudo / VSeeFace / Unity |
 | 共享内存 | 固定布局 ring，双缓冲 + 版本号 | Unity/UE 插件、OpenXR Layer（微秒级） |
 | WebSocket JSON | 每帧一个 JSON（回环，默认 30 Hz） | 网页/脚本/第三方集成；[§07](07-streaming-outputs.md) |
-| UDP 二进制 | 592 字节紧凑 struct（小端，一个数据报一帧） | 串流软件（最低延迟）；[§07](07-streaming-outputs.md) |
+| UDP 二进制 | 656 字节紧凑 struct（小端，一个数据报一帧） | 串流软件（最低延迟）；[§07](07-streaming-outputs.md) |
 | OSC 自定义 | 用户配置映射 | 高级用户 |
 
 ### 9.4 多目标并发
