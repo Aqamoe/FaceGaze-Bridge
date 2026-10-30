@@ -161,19 +161,27 @@ FGB_TEST(osc_source_receives_and_maps) {
 
     net::UdpSocket sender;
     FGB_CHECK(sender.open_sender());
-    send_float(sender, "/jaw", 0.75f);
-    send_float(sender, "/lid", 0.25f);
-    send_float(sender, "/ex", 0.5f);
-    send_float(sender, "/ey", -0.5f);
 
     FaceFrame frame;
     bool complete = false;
-    const std::uint64_t deadline = clock::now_ns() + 1'000'000'000ULL;
+    const std::uint64_t deadline = clock::now_ns() + 2'000'000'000ULL;
+    // 四个包只发一轮时，CI 上偶发 UDP 丢一个包就整条用例失败；重发到收齐或超时。
     while (clock::now_ns() < deadline) {
-        if (wait_for_frame(source, frame) && frame.shape_is_valid(Shape::JawOpen) &&
-            frame.eyes.left.valid && frame.has_channel(channel::kExpression) &&
-            frame.eyes.left.gazeConf > 0.0f) {
-            complete = true;
+        send_float(sender, "/jaw", 0.75f);
+        send_float(sender, "/lid", 0.25f);
+        send_float(sender, "/ex", 0.5f);
+        send_float(sender, "/ey", -0.5f);
+
+        const std::uint64_t round_deadline = clock::now_ns() + 100'000'000ULL;
+        while (clock::now_ns() < round_deadline) {
+            if (wait_for_frame(source, frame, 20) && frame.shape_is_valid(Shape::JawOpen) &&
+                frame.eyes.left.valid && frame.has_channel(channel::kExpression) &&
+                frame.eyes.left.gazeConf > 0.0f) {
+                complete = true;
+                break;
+            }
+        }
+        if (complete) {
             break;
         }
     }
