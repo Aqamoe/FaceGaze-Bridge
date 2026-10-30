@@ -356,12 +356,17 @@ fgb-cli run --source vrcft --module-id <A> --source vrcft --module-id <B> `
   --attr-source left-openness="native[1],native[2]" `
   --attr-source left-pupil="native[2]" `
   --attr-source left-gaze="native[3]"
+
+# 列表里多个源都新鲜时，按置信度加权平均（openness/pupil/gaze）
+fgb-cli run ... --attr-source left-openness="native[1],native[2]" --attr-fuse
 ```
 
 - 不传这些参数时，左右眼来自同一个 `EYE` 源，头像眼睛不会被 `Gaze` 通道改写。
 - `--avatar-eye-from-gaze` 只替换方向；openness/pupil 仍来自 `EYE` 源。
 - `--attr-source` 的属性名：`left/right-openness`、`left/right-pupil`、
   `left/right-gaze`、`vergence`。显式列表找不到源时该字段为空，不会回退到列表外。
+- `--attr-fuse` 让列表里多个新鲜源按置信度加权平均；默认取第一个可用源。
+  vergence 没有置信度，融合模式下仍取第一个。
 - 逐属性列表只影响**头像眼睛**；渲染注视继续由 `--gaze-source` /
   `--gaze-left/right-source` 选择。
 - 合并结果会逐眼记录来源与捕获时间；左右眼来自不同源时，`Eyes` 通道的整通道

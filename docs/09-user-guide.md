@@ -73,7 +73,8 @@ sdk\                   集成文档与示例
   写入 `modules.ini` 的 `[instance_host]`；宿主实例行还有「停止 / 启动 / 重启实例」，
   可在不重启引擎的情况下替换 DLL（停止 → 替换文件 → 启动）。
 - `--attr-source <属性=源[,源]>`：逐属性有序源列表，属性包括
-  `left/right-openness`、`left/right-pupil`、`left/right-gaze`、`vergence`。
+  `left/right-openness`、`left/right-pupil`、`left/right-gaze`、`vergence`；
+  `--attr-fuse` 让多个新鲜源按置信度加权平均。
 
 注视通道默认 100 ms 过期，可用 `--gaze-stale-ms` 调整；`--stale-ms` 会一次
 设置所有通道。桌面入口会把不认识的参数转给引擎，所以也可以先托盘「退出」，

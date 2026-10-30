@@ -98,6 +98,7 @@ void print_usage() {
                  "  --attr-source <属性=源[,源]> 逐属性有序源，如 left-openness=A,B\n"
                  "                          属性：left/right-openness、left/right-pupil、\n"
                  "                          left/right-gaze、vergence\n"
+                 "  --attr-fuse              属性列表里有多个新鲜源时按置信度加权平均\n"
                  "  --expression-source <名> 指定表情来自哪个源（默认自动）\n"
                  "  --head-source <名>      指定头姿来自哪个源（默认自动）\n"
                  "  --stale-ms <毫秒>       同时设置所有通道的过期阈值\n"
@@ -389,6 +390,7 @@ int cmd_run(int argc, char** argv) {
     std::string merge_gaze_right_source;
     std::string merge_head_source;
     bool avatar_eye_from_gaze = false;
+    bool attr_fuse = false;
     std::vector<fgb::AttributeSourceList> attribute_sources;
     int expression_stale_ms = 500;
     int eye_stale_ms        = 250;
@@ -499,6 +501,8 @@ int cmd_run(int argc, char** argv) {
             merge_gaze_right_source = std::string{next_value(arg)};
         } else if (arg == "--avatar-eye-from-gaze") {
             avatar_eye_from_gaze = true;
+        } else if (arg == "--attr-fuse") {
+            attr_fuse = true;
         } else if (arg == "--attr-source") {
             fgb::AttributeSourceList entry;
             std::string error;
@@ -1154,6 +1158,7 @@ int cmd_run(int argc, char** argv) {
         merge_policy.head_source       = merge_head_source;
         merge_policy.avatar_eye_from_gaze = avatar_eye_from_gaze;
         merge_policy.attribute_sources   = attribute_sources;
+        merge_policy.fuse_attributes     = attr_fuse;
         merge_policy.expression_stale_ns =
             static_cast<std::uint64_t>(expression_stale_ms) * 1'000'000ULL;
         merge_policy.eye_stale_ns = static_cast<std::uint64_t>(eye_stale_ms) * 1'000'000ULL;
@@ -1181,7 +1186,8 @@ int cmd_run(int argc, char** argv) {
                  avatar_eye_from_gaze ? "gaze" : "eyes", expression_stale_ms, eye_stale_ms,
                  gaze_stale_ms, head_stale_ms);
         if (!attribute_sources.empty()) {
-            FGB_INFO("cli", "逐属性源：%zu 组（见 --attr-source）", attribute_sources.size());
+            FGB_INFO("cli", "逐属性源：%zu 组（%s，见 --attr-source）", attribute_sources.size(),
+                     attr_fuse ? "多源加权" : "首个可用");
         }
     }
     // 校准链路的顺序：取样（校准前的原始值）→ 校准 → 滤波。

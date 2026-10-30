@@ -597,6 +597,37 @@ FGB_TEST(merge_attribute_ordered_list_skips_stale_source) {
     FGB_CHECK(merged.eyes.left.opennessSource == 2);
 }
 
+FGB_TEST(merge_attribute_can_fuse_sources_by_confidence) {
+    FakeSource high{"high"};
+    FakeSource low{"low"};
+
+    SourceMerger merger;
+    MergePolicy policy;
+    policy.fuse_attributes = true;
+    policy.attribute_sources = {{"left-openness", {"high", "low"}}};
+    merger.set_policy(policy);
+    merger.add(&high);
+    merger.add(&low);
+
+    FaceFrame high_frame =
+        eye_attrs_frame(true, true, false, false, 0.2f, 0.2f, 0, 0, 0, 0, false);
+    high_frame.eyes.left.opennessConf = 0.9f;
+    high_frame.eyes.right.opennessConf = 0.9f;
+    FaceFrame low_frame =
+        eye_attrs_frame(true, true, false, false, 0.8f, 0.8f, 0, 0, 0, 0, false);
+    low_frame.eyes.left.opennessConf = 0.1f;
+    low_frame.eyes.right.opennessConf = 0.1f;
+    high.push(high_frame);
+    low.push(low_frame);
+
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(10'000'000ULL, merged));
+    FGB_CHECK_NEAR(merged.eyes.left.openness, 0.26, 1e-5);
+    FGB_CHECK(merged.eyes.left.opennessSource == kInvalidSource);
+    FGB_CHECK_NEAR(merged.eyes.left.opennessConf, 0.5, 1e-5);
+    FGB_CHECK(merged.contributingSources == 0b11u);
+}
+
 FGB_TEST(merge_attribute_gaze_can_come_from_another_source) {
     FakeSource first{"first"};
     FakeSource second{"second"};

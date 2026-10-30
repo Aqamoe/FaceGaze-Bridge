@@ -153,40 +153,40 @@ const std::vector<std::string>* SourceMerger::attribute_list(std::string_view at
     return nullptr;
 }
 
-int SourceMerger::pick_attribute(std::string_view attribute, int fallback_index,
-                                 std::uint64_t now_ns) const noexcept {
-    const std::vector<std::string>* sources = attribute_list(attribute);
-    if (sources == nullptr) {
-        return fallback_index;
-    }
-    if (sources->empty()) {
-        return -1;
-    }
+bool SourceMerger::provides_attribute(const Slot& slot,
+                                      std::string_view attribute) const noexcept {
     const std::string attr = lower(attribute);
-    auto provides = [&attr](const Slot& slot) {
-        const EyeState* eye = nullptr;
-        if (attr.rfind("left-", 0) == 0) {
-            eye = &slot.last.eyes.left;
-        } else if (attr.rfind("right-", 0) == 0) {
-            eye = &slot.last.eyes.right;
-        }
-        if (attr == "vergence") {
-            return slot.last.eyes.hasVergence;
-        }
-        if (eye == nullptr || !eye->valid) {
-            return false;
-        }
-        if (attr.size() >= 8 && attr.compare(attr.size() - 8, 8, "openness") == 0) {
-            return eye->opennessValid;
-        }
-        if (attr.size() >= 5 && attr.compare(attr.size() - 5, 5, "pupil") == 0) {
-            return eye->pupilValid;
-        }
-        if (attr.size() >= 4 && attr.compare(attr.size() - 4, 4, "gaze") == 0) {
-            return eye->gazeValid;
-        }
+    const EyeState* eye    = nullptr;
+    if (attr.rfind("left-", 0) == 0) {
+        eye = &slot.last.eyes.left;
+    } else if (attr.rfind("right-", 0) == 0) {
+        eye = &slot.last.eyes.right;
+    }
+    if (attr == "vergence") {
+        return slot.last.eyes.hasVergence;
+    }
+    if (eye == nullptr || !eye->valid) {
         return false;
-    };
+    }
+    if (attr.size() >= 8 && attr.compare(attr.size() - 8, 8, "openness") == 0) {
+        return eye->opennessValid;
+    }
+    if (attr.size() >= 5 && attr.compare(attr.size() - 5, 5, "pupil") == 0) {
+        return eye->pupilValid;
+    }
+    if (attr.size() >= 4 && attr.compare(attr.size() - 4, 4, "gaze") == 0) {
+        return eye->gazeValid;
+    }
+    return false;
+}
+
+std::vector<int> SourceMerger::attribute_candidates(std::string_view attribute,
+                                                    std::uint64_t now_ns) const {
+    std::vector<int> out;
+    const std::vector<std::string>* sources = attribute_list(attribute);
+    if (sources == nullptr || sources->empty()) {
+        return out;
+    }
     const std::uint64_t stale_ns = stale_for(kEyes);
     for (const std::string& wanted_name : *sources) {
         const std::string wanted = lower(wanted_name);
@@ -195,12 +195,24 @@ int SourceMerger::pick_attribute(std::string_view attribute, int fallback_index,
             if (slot.source == nullptr || lower(slot.source->name()) != wanted) {
                 continue;
             }
-            if (fresh(slot, now_ns, stale_ns) && provides(slot)) {
-                return static_cast<int>(i);
+            if (!fresh(slot, now_ns, stale_ns) || !provides_attribute(slot, attribute)) {
+                continue;
+            }
+            if (std::find(out.begin(), out.end(), static_cast<int>(i)) == out.end()) {
+                out.push_back(static_cast<int>(i));
             }
         }
     }
-    return -1;
+    return out;
+}
+
+int SourceMerger::pick_attribute(std::string_view attribute, int fallback_index,
+                                 std::uint64_t now_ns) const noexcept {
+    if (attribute_list(attribute) == nullptr) {
+        return fallback_index;
+    }
+    const std::vector<int> candidates = attribute_candidates(attribute, now_ns);
+    return candidates.empty() ? -1 : candidates.front();
 }
 
 bool SourceMerger::poll(std::uint64_t now_ns, FaceFrame& out) {
@@ -335,43 +347,137 @@ bool SourceMerger::poll(std::uint64_t now_ns, FaceFrame& out) {
             out.pupilValid    = false;
             out.gazeValid     = false;
 
-            const int open_idx =
-                pick_attribute(attr_name(right, "openness"), fallback, now_ns);
-            if (open_idx >= 0) {
-                const EyeState& src = source_eye(open_idx, right);
-                if (src.valid && src.opennessValid) {
-                    out.openness      = src.openness;
-                    out.opennessConf  = src.opennessConf;
-                    out.opennessTsNs  = src.opennessTsNs != 0 ? src.opennessTsNs : slot_ts(open_idx);
-                    out.opennessSource = static_cast<SourceId>(open_idx + 1);
-                    out.opennessValid = true;
-                    mark(open_idx);
+            const auto candidates_for = [&](const char* field, int fb) {
+                const std::string attr = attr_name(right, field);
+                if (policy_.fuse_attributes && attribute_list(attr) != nullptr) {
+                    return attribute_candidates(attr, now_ns);
+                }
+                const int idx = pick_attribute(attr, fb, now_ns);
+                return idx >= 0 ? std::vector<int>{idx} : std::vector<int>{};
+            };
+
+            const std::vector<int> open_candidates = candidates_for("openness", fallback);
+            if (!open_candidates.empty()) {
+                if (policy_.fuse_attributes && open_candidates.size() > 1) {
+                    float sum = 0.0f;
+                    float weights = 0.0f;
+                    float conf_sum = 0.0f;
+                    std::uint64_t ts = 0;
+                    for (const int index : open_candidates) {
+                        const EyeState& src = source_eye(index, right);
+                        if (!src.valid || !src.opennessValid) {
+                            continue;
+                        }
+                        const float weight = std::max(0.001f, src.opennessConf);
+                        sum += src.openness * weight;
+                        weights += weight;
+                        conf_sum += src.opennessConf;
+                        ts = std::max(ts, src.opennessTsNs != 0 ? src.opennessTsNs
+                                                                : slot_ts(index));
+                        mark(index);
+                    }
+                    if (weights > 0.0f) {
+                        out.openness       = clamp01(sum / weights);
+                        out.opennessConf   = clamp01(conf_sum /
+                                                     static_cast<float>(open_candidates.size()));
+                        out.opennessTsNs   = ts;
+                        out.opennessSource = kInvalidSource;
+                        out.opennessValid  = true;
+                    }
+                } else {
+                    const int index = open_candidates.front();
+                    const EyeState& src = source_eye(index, right);
+                    if (src.valid && src.opennessValid) {
+                        out.openness       = src.openness;
+                        out.opennessConf   = src.opennessConf;
+                        out.opennessTsNs   = src.opennessTsNs != 0 ? src.opennessTsNs
+                                                                   : slot_ts(index);
+                        out.opennessSource = static_cast<SourceId>(index + 1);
+                        out.opennessValid  = true;
+                        mark(index);
+                    }
                 }
             }
-            const int pupil_idx =
-                pick_attribute(attr_name(right, "pupil"), fallback, now_ns);
-            if (pupil_idx >= 0) {
-                const EyeState& src = source_eye(pupil_idx, right);
-                if (src.valid && src.pupilValid) {
-                    out.pupilDiameterMm = src.pupilDiameterMm;
-                    out.pupilDilation   = src.pupilDilation;
-                    out.pupilTsNs       = src.pupilTsNs != 0 ? src.pupilTsNs : slot_ts(pupil_idx);
-                    out.pupilSource     = static_cast<SourceId>(pupil_idx + 1);
-                    out.pupilValid      = true;
-                    mark(pupil_idx);
+
+            const std::vector<int> pupil_candidates = candidates_for("pupil", fallback);
+            if (!pupil_candidates.empty()) {
+                if (policy_.fuse_attributes && pupil_candidates.size() > 1) {
+                    float diameter = 0.0f;
+                    float dilation = 0.0f;
+                    int count      = 0;
+                    std::uint64_t ts = 0;
+                    for (const int index : pupil_candidates) {
+                        const EyeState& src = source_eye(index, right);
+                        if (!src.valid || !src.pupilValid) {
+                            continue;
+                        }
+                        diameter += src.pupilDiameterMm;
+                        dilation += src.pupilDilation;
+                        ++count;
+                        ts = std::max(ts, src.pupilTsNs != 0 ? src.pupilTsNs : slot_ts(index));
+                        mark(index);
+                    }
+                    if (count > 0) {
+                        out.pupilDiameterMm = diameter / static_cast<float>(count);
+                        out.pupilDilation   = clamp_sym(dilation / static_cast<float>(count));
+                        out.pupilTsNs       = ts;
+                        out.pupilSource     = kInvalidSource;
+                        out.pupilValid      = true;
+                    }
+                } else {
+                    const int index = pupil_candidates.front();
+                    const EyeState& src = source_eye(index, right);
+                    if (src.valid && src.pupilValid) {
+                        out.pupilDiameterMm = src.pupilDiameterMm;
+                        out.pupilDilation   = src.pupilDilation;
+                        out.pupilTsNs       = src.pupilTsNs != 0 ? src.pupilTsNs
+                                                                 : slot_ts(index);
+                        out.pupilSource     = static_cast<SourceId>(index + 1);
+                        out.pupilValid      = true;
+                        mark(index);
+                    }
                 }
             }
-            const int gaze_idx = pick_attribute(attr_name(right, "gaze"), fallback, now_ns);
-            if (gaze_idx >= 0) {
-                const EyeState& src = source_eye(gaze_idx, right);
-                if (src.valid && src.gazeValid) {
-                    out.gazeDirLocal    = src.gazeDirLocal;
-                    out.gazePitchYawDeg = src.gazePitchYawDeg;
-                    out.gazeConf        = src.gazeConf;
-                    out.gazeTsNs        = src.gazeTsNs != 0 ? src.gazeTsNs : slot_ts(gaze_idx);
-                    out.gazeSource      = static_cast<SourceId>(gaze_idx + 1);
-                    out.gazeValid       = true;
-                    mark(gaze_idx);
+
+            const std::vector<int> gaze_candidates = candidates_for("gaze", fallback);
+            if (!gaze_candidates.empty()) {
+                if (policy_.fuse_attributes && gaze_candidates.size() > 1) {
+                    Vec3 dir{0.0f, 0.0f, 0.0f};
+                    float weights  = 0.0f;
+                    float conf_sum = 0.0f;
+                    std::uint64_t ts = 0;
+                    for (const int index : gaze_candidates) {
+                        const EyeState& src = source_eye(index, right);
+                        if (!src.valid || !src.gazeValid) {
+                            continue;
+                        }
+                        const float weight = std::max(0.001f, src.gazeConf);
+                        dir = dir + src.gazeDirLocal * weight;
+                        weights += weight;
+                        conf_sum += src.gazeConf;
+                        ts = std::max(ts, src.gazeTsNs != 0 ? src.gazeTsNs : slot_ts(index));
+                        mark(index);
+                    }
+                    if (weights > 0.0f) {
+                        out.gazeDirLocal    = normalize(dir);
+                        out.gazePitchYawDeg = dir_to_pitch_yaw_deg(out.gazeDirLocal);
+                        out.gazeConf        = clamp01(conf_sum / weights);
+                        out.gazeTsNs        = ts;
+                        out.gazeSource      = kInvalidSource;
+                        out.gazeValid       = true;
+                    }
+                } else {
+                    const int index = gaze_candidates.front();
+                    const EyeState& src = source_eye(index, right);
+                    if (src.valid && src.gazeValid) {
+                        out.gazeDirLocal    = src.gazeDirLocal;
+                        out.gazePitchYawDeg = src.gazePitchYawDeg;
+                        out.gazeConf        = src.gazeConf;
+                        out.gazeTsNs        = src.gazeTsNs != 0 ? src.gazeTsNs : slot_ts(index);
+                        out.gazeSource      = static_cast<SourceId>(index + 1);
+                        out.gazeValid       = true;
+                        mark(index);
+                    }
                 }
             }
             out.valid = out.opennessValid || out.pupilValid;

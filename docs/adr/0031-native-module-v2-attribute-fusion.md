@@ -118,9 +118,12 @@ expression、左右 openness/pupil/gaze、combined gaze、左右 2D 点、vergen
 B.2 已实现：`MergePolicy::attribute_sources` 与 CLI `--attr-source
 left-openness=A,B` 支持“属性 → 有序源列表”；`EyeState` 增加
 `opennessValid/pupilValid`，同一只眼的 openness、pupil、gaze 可来自不同源，
-未列出的属性回退到整眼/整通道策略。列表内按顺序取第一个新鲜且确实提供该属性的源，
-不存在的属性清空，不会偷偷回退到列表外。逐字段加权（多源平均）仍未做，
-目前是“首个可用源”；等真实模块需要融合时再加。
+未列出的属性回退到整眼/整通道策略。列表内默认取第一个新鲜且确实提供该属性的源，
+不存在的属性清空，不会偷偷回退到列表外。
+
+`--attr-fuse` 开启多源融合：openness/gaze 按置信度加权平均，pupil 等权平均，
+合成字段的来源记为未知、时间戳取最新；vergence 没有置信度，仍取第一个。
+这个模式默认关闭，避免正常配置下把两个源“平均”成不直观的值。
 
 ## 阶段 A 实施记录（2026-10-30）
 

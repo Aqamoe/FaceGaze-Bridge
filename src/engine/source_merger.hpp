@@ -55,6 +55,8 @@ struct MergePolicy {
 
     // 非空时启用逐属性选源；未列出的属性仍回退到左右眼/注视的整通道策略。
     std::vector<AttributeSourceList> attribute_sources;
+    // 列表里有多个新鲜源时按置信度加权平均；默认取第一个可用源。
+    bool fuse_attributes = false;
 
     std::uint64_t expression_stale_ns = 500'000'000ULL;
     std::uint64_t eye_stale_ns        = 250'000'000ULL;
@@ -122,6 +124,9 @@ private:
     const std::vector<std::string>* attribute_list(std::string_view attribute) const;
     int pick_attribute(std::string_view attribute, int fallback_index,
                        std::uint64_t now_ns) const noexcept;
+    bool provides_attribute(const Slot& slot, std::string_view attribute) const noexcept;
+    std::vector<int> attribute_candidates(std::string_view attribute,
+                                          std::uint64_t now_ns) const;
 
     MergePolicy policy_;
     std::vector<Slot> slots_;
