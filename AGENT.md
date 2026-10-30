@@ -133,6 +133,20 @@ cmake --build build/windows-vs2022 --config Release --parallel
 cmake --install build/windows-vs2022 --config Release --prefix dist
 ```
 
+**打 tag 的完整流程**（铁律 6：tag 与 dist 必须同时存在，等 CI 出包不算）：
+
+```powershell
+git tag v1.2.3
+cmake --preset windows-vs2022
+cmake --build build/windows-vs2022 --config Release --parallel
+cmake --install build/windows-vs2022 --config Release --prefix dist
+python tools/build_vrcft_runtime.py --dest dist/runtime/vrcft   # 需要本机装 VRCFT
+& "dist/FaceGaze Bridge.exe"                                     # 真的启动一次，确认窗口+界面正常
+git push origin v1.2.3
+```
+
+版本号对不上就重来：`dist/fgb-cli.exe version` 必须等于 tag。
+
 产物在 `dist/`：
 
 ```
