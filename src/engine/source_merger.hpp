@@ -36,6 +36,16 @@ struct MergePolicy {
     std::string gaze_source;
     std::string head_source;
 
+    // V2 阶段 A（ADR-0031）：左右眼/左右注视可分别选源；空 = 回退到上面的整通道源。
+    std::string eye_left_source;
+    std::string eye_right_source;
+    std::string gaze_left_source;
+    std::string gaze_right_source;
+
+    // 头像眼睛保留 EYE 源的 openness/pupil，方向改用融合后的 Gaze 通道。
+    // 默认 false：v1.1 的“头像只看 Eyes、渲染只看 Gaze”行为不变。
+    bool avatar_eye_from_gaze = false;
+
     std::uint64_t expression_stale_ns = 500'000'000ULL;
     std::uint64_t eye_stale_ns        = 250'000'000ULL;
     std::uint64_t gaze_stale_ns       = 100'000'000ULL;
@@ -56,6 +66,10 @@ struct SourceReport {
     bool used_eyes            = false;
     bool used_gaze            = false;
     bool used_head            = false;
+    bool used_eyes_left       = false;
+    bool used_eyes_right      = false;
+    bool used_gaze_left       = false;
+    bool used_gaze_right      = false;
 };
 
 class SourceMerger {
@@ -91,6 +105,10 @@ private:
     std::uint64_t stale_for(int channel) const noexcept;
     // 返回槽位下标，-1 表示没有可用来源
     int pick(int channel, std::uint64_t now_ns) const noexcept;
+    int pick_for(int channel, const std::string& explicit_name,
+                 std::uint64_t now_ns) const noexcept;
+    int pick_eye_side(bool right, std::uint64_t now_ns) const noexcept;
+    int pick_gaze_side(bool right, std::uint64_t now_ns) const noexcept;
 
     MergePolicy policy_;
     std::vector<Slot> slots_;

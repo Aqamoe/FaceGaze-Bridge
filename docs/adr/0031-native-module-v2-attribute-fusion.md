@@ -1,0 +1,126 @@
+# ADR-0031 · 原生模块 v2：属性级眼睛合成
+
+- 状态：**提议并分阶段实施**（2026-10-30）
+- 日期：2026-10-30
+- 影响：`src/core/model/frame.hpp`、`src/engine/source_merger.*`、`src/engine/engine.cpp`、
+  `src/cli/main.cpp`、`src/web/ipc.cpp`、后续 `sdk/fgb_module_api.h`
+- 关系：接 [ADR-0030](0030-native-module-v2-composition.md) §6；v1.1 的整通道组合保持不变
+
+## 问题
+
+v1.1 把一帧拆成 `Expression / Eyes / Gaze / Head` 四个整通道：
+
+- “A 的 openness + B 的 gaze”做不到——头像眼睛只能整块来自一个 `EYE` 源；
+- 左眼来自 A、右眼来自 B 做不到——`Eyes` 通道不拆左右；
+- 逐字段时间戳/置信度没有进入合并结果，状态页只能看到“通道级”来源。
+
+这不影响 v1.1 的目标场景（A 面捕 + B 整眼、A 完整 + B 注视），但确实限制了
+“B 只出注视、A 只出睁眼度”和“左右眼分别来自两个模块”的组合。
+
+## 分阶段决定
+
+V2 不一次性重写 ABI 和宿主，拆成三个阶段，每个阶段都能单独回滚：
+
+### 阶段 A · 合并模型属性化（本 ADR 实施）
+
+不新增 ABI，先把内部模型和合并策略升级：
+
+- `EyeState` 增加逐字段来源与捕获时间：`opennessSource/opennessTsNs`、
+  `pupilSource/pupilTsNs`、`gazeSource/gazeTsNs`；
+- `GazeSample` 增加 `source`、`captureTsNs`、`confidence`、`pointValid`；
+- `EyePair` 增加 `vergenceSource/vergenceTsNs`；
+- `MergePolicy` 增加：
+  - `eye_left_source / eye_right_source`（左右眼可来自不同 `EYE` 源）；
+  - `gaze_left_source / gaze_right_source`（左右注视可来自不同 `GAZE` 源）；
+  - `avatar_eye_from_gaze`（默认 false）：头像眼睛保留 `EYE` 源的 openness/pupil，
+    方向改为使用融合后的 `Gaze` 通道。
+- 合并结果逐眼记录来源与时间戳；`Eyes` 通道的整通道时间戳在左右源不同时取最大值，
+  来源记为未知（由逐眼字段给出真实来源）。
+- 默认策略与 v1.1 完全一致：不配置新字段时，左右眼来自同一个 `EYE` 源，
+  头像眼睛不会被 `Gaze` 通道改写。
+
+阶段 A 能表达：
+
+| 需求 | 做法 |
+|---|---|
+| A 的 openness + B 的 gaze（头像眼睛） | `eye_source=A`、`gaze_source=B`、`avatar_eye_from_gaze=true` |
+| 左眼 A、右眼 B | `eye_left_source=A`、`eye_right_source=B` |
+| 左/右渲染注视分源 | `gaze_left_source=A`、`gaze_right_source=B` |
+| v1.1 行为 | 不设新参数（默认） |
+
+阶段 A 仍受 v1 ABI 限制：模块要提供 openness 必须声明 `EYE`（同时给 gaze）。
+“只给 openness、不给 gaze”的模块要等阶段 B 的属性掩码。
+
+### 阶段 B · ABI v2 属性掩码
+
+新增 `FgbFrameSlotV2`（或 v1 末尾追加属性块）与按属性分组的有效性/时间戳：
+
+```text
+EXPRESSION / LEFT_OPENNESS / RIGHT_OPENNESS / LEFT_PUPIL / RIGHT_PUPIL
+LEFT_GAZE / RIGHT_GAZE / COMBINED_GAZE / LEFT_POINT / RIGHT_POINT
+VERGENCE / HEAD
+```
+
+每个属性组携带自己的 `capture_ts_ns` 与置信度；宿主按属性位读取，不再要求
+`EYE` 整块原子。v1 模块继续走现有路径，v2 模块通过 `fgb_module_query(2)` 选择。
+合并策略从“通道 → 一个源”升级为“属性 → 有序源列表”。
+
+### 阶段 C · 跨进程宿主
+
+引入 `fgb-host-native.exe`：每个模块一个进程，宿主与引擎之间用共享内存 ring
+交换 v2 帧。目标是模块崩溃不带走引擎、模块可热更新。跨进程只承载 v2 帧；
+稳定可信模块可继续选择 in-proc 低延迟模式。
+
+阶段 C 的延迟预算、ring 协议、崩溃回收与热更新策略在实施前单独写 ADR。
+
+## 阶段 A 的兼容性
+
+- `MergePolicy` 新字段默认空/false；不配置时输出与 v1.1 逐字节一致（除新增的
+  诊断字段）。
+- `Frame.eyes` 仍是 `VrchatSink` 的唯一来源；`avatar_eye_from_gaze` 只在显式开启时
+  改写方向，openness/pupil 始终来自 `EYE` 源。
+- 属性级来源/时间戳目前只进入内部模型和状态报告，不改变 SHM/UDP/WS 的 v2 线上字段；
+  线上值仍是合成后的头像眼睛/渲染注视。
+- 如果左右眼来自不同源，`Eyes` 通道的整通道 `ChannelStamp.source` 记为未知；
+  消费端需要逐眼来源时应读取新增的诊断字段。
+
+## 代价与边界
+
+- 阶段 A 只解决“整眼源之间的属性拼装”，不能把“只给 openness”的模块拼进来；
+  后者必须等阶段 B。
+- 左右眼分源会让两眼的 openness/置信度不同步；状态页必须按眼显示来源与年龄，
+  不能只显示一个“眼追来源”。
+- 逐字段时间戳增加了 `FaceFrame` 体积和合并分支；仍保持每 tick 零分配。
+- 属性级组合让配置面变大；默认仍必须“单模块开箱即用”，高级参数只放在 CLI
+  与高级设置，不塞进首屏。
+
+## 验证计划（阶段 A）
+
+- 单测：默认策略与 v1.1 等价；A openness + B gaze 合成；左眼 A/右眼 B；
+  左右注视分源；单侧 stale 不清掉另一侧；逐眼来源/时间戳正确。
+- 端到端：`native-sine`（EYE/EXPRESSION/HEAD）+ `native-gaze`（GAZE），
+  开启 `avatar_eye_from_gaze` 后头像眼睛方向来自 gaze、openness 仍来自 sine。
+- 状态/探针：`/api/status` 的 sources 增加逐眼来源；UI 输入源仍按通道显示，
+  不因高级配置改变首屏布局。
+
+## 阶段 A 实施记录（2026-10-30）
+
+已落地：逐字段 `EyeState` 来源/时间戳、`GazeSample` 逐眼来源/置信度/2D 点有效位、
+`EyePair.vergenceSource`；`MergePolicy` 增加左右眼/左右注视源与
+`avatar_eye_from_gaze`；CLI 增加 `--eye-left-source / --eye-right-source /
+--gaze-left-source / --gaze-right-source / --avatar-eye-from-gaze`。
+
+验证：188 个单测全绿（默认兼容、A openness + B gaze、左右眼/左右注视分源、
+单侧过期回退、逐字段来源/时间戳）；`native-sine + native-gaze` 开启
+`--avatar-eye-from-gaze` 后，SHM 中头像眼睛方向与渲染注视一致、openness 仍来自
+sine。UI 首屏未改，逐眼来源先通过 `/api/status` 的 sources 字段和内部模型提供。
+
+## 开放问题
+
+- 左右眼来自不同源时，`vergence` 取哪一侧？阶段 A 先取“有 vergence 的那一侧”，
+  两侧都有时按左眼优先；阶段 B 应改为属性级选源。
+- `avatar_eye_from_gaze` 是否要进入 `modules.ini` 的 `[roles]`？阶段 A 只做 CLI
+  开关，避免和现有四角色选择混淆。
+- 逐字段置信度是否参与加权融合？阶段 A 仍不做加权，只透传/选择。
+- 阶段 B 的 `FgbFrameSlotV2` 是独立结构还是 v1 末尾追加属性块，需要结合
+  跨进程 ring 的版本协商一起定。

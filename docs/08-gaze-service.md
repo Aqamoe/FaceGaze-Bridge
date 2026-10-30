@@ -43,6 +43,10 @@ curl http://127.0.0.1:8787/api/gaze
   "source_age_ms": 8,
   "source_id": 2,
   "source_mask": 9,
+  "left_source": 2,
+  "right_source": 2,
+  "left_capture_ts_ns": 1284732900000,
+  "right_capture_ts_ns": 1284732900000,
   "head_pose": { "q": [0, 0.03, 0, 0.999], "p": [0, 0.05, 0] }
 }
 ```
@@ -58,6 +62,8 @@ curl http://127.0.0.1:8787/api/gaze
 | `left_dir_local` / `right_dir_local` | 逐眼 HMD 局部单位向量 |
 | `point2d_valid` / `left_point_2d` / `right_point_2d` | 来源提供的 2D 屏幕点；约定尚未对齐 |
 | `source` / `source_age_ms` / `source_id` / `source_mask` | 来源实例名、数据年龄、源序号、通道位掩码 |
+| `left_source` / `right_source` | 逐眼来源序号（左右注视可来自不同源） |
+| `left_capture_ts_ns` / `right_capture_ts_ns` | 逐眼捕获时刻 |
 | `origin_local` | 眼睛原点；当前固定 `[0,0,0]`（没有建模，见"能力边界"） |
 | `dir_local` | HMD 局部单位向量，右手系，-Z 前 |
 | `pitch_deg` / `yaw_deg` | 俯仰（正 = 上）/ 偏航（正 = 右） |

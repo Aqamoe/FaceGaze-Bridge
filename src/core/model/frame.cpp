@@ -63,6 +63,21 @@ void FaceFrame::sanitize() noexcept {
     sanitize_gaze_sample(gaze.left);
     sanitize_gaze_sample(gaze.right);
 
+    auto sanitize_point = [](GazeSample& sample) {
+        if (!sample.pointValid) {
+            return;
+        }
+        if (!std::isfinite(sample.point2d.x) || !std::isfinite(sample.point2d.y)) {
+            sample.point2d = Vec2{0.0f, 0.0f};
+            sample.pointValid = false;
+        }
+    };
+    sanitize_point(gaze.left);
+    sanitize_point(gaze.right);
+    gaze.left.confidence = clamp01(gaze.left.confidence);
+    gaze.right.confidence = clamp01(gaze.right.confidence);
+    gaze.pointsValid = gaze.left.pointValid && gaze.right.pointValid;
+
     if (gaze.combinedValid) {
         if (!std::isfinite(gaze.combinedDirLocal.x) || !std::isfinite(gaze.combinedDirLocal.y) ||
             !std::isfinite(gaze.combinedDirLocal.z)) {
@@ -73,16 +88,6 @@ void FaceFrame::sanitize() noexcept {
         }
     }
 
-    if (gaze.pointsValid) {
-        const float points[4] = {gaze.left.point2d.x, gaze.left.point2d.y,
-                                 gaze.right.point2d.x, gaze.right.point2d.y};
-        for (const float value : points) {
-            if (!std::isfinite(value)) {
-                gaze.pointsValid = false;
-                break;
-            }
-        }
-    }
     gaze.confidence = clamp01(gaze.confidence);
 
     if (!std::isfinite(qualityScore)) {

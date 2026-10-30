@@ -99,6 +99,12 @@ GazeState Engine::compute_gaze(const FaceFrame& frame) const noexcept {
         }
         gaze.source      = stamp.source;
         gaze.source_mask = frame.contributingSources;
+        gaze.left_source  = g.left.source;
+        gaze.right_source = g.right.source;
+        gaze.left_capture_ts_ns =
+            g.left.captureTsNs != 0 ? g.left.captureTsNs : gaze.capture_ts_ns;
+        gaze.right_capture_ts_ns =
+            g.right.captureTsNs != 0 ? g.right.captureTsNs : gaze.capture_ts_ns;
 
         if (g.combinedValid) {
             gaze.dir_local = g.combinedDirLocal;
@@ -140,6 +146,10 @@ GazeState Engine::compute_gaze(const FaceFrame& frame) const noexcept {
     gaze.capture_ts_ns        = stamp.captureTsNs != 0 ? stamp.captureTsNs : frame.captureTsNs;
     gaze.source               = stamp.source;
     gaze.source_mask          = frame.contributingSources;
+    gaze.left_source          = l.gazeSource;
+    gaze.right_source         = r.gazeSource;
+    gaze.left_capture_ts_ns   = l.gazeTsNs != 0 ? l.gazeTsNs : gaze.capture_ts_ns;
+    gaze.right_capture_ts_ns  = r.gazeTsNs != 0 ? r.gazeTsNs : gaze.capture_ts_ns;
 
     if (l.valid && r.valid) {
         gaze.pitch_deg = 0.5f * (l.gazePitchYawDeg.x + r.gazePitchYawDeg.x);

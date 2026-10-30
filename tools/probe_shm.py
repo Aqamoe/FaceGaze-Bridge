@@ -135,10 +135,13 @@ def main() -> int:
             last_sequence = frame.sequence
             channels = "|".join(name for bit, name in CHANNELS.items() if frame.channels & bit)
             jaw = frame.shapes[JAW_OPEN_INDEX]
+            gaze_left = tuple(round(float(v), 3) for v in frame.gaze_left_dir)
+            eye_left = tuple(round(float(v), 3) for v in frame.left_gaze_dir)
             print(f"seq={frame.sequence} channels={channels} "
                   f"left_open={frame.left_openness:.3f} jawOpen={jaw:.3f} "
-                  f"attr=0x{frame.attributes:X} gaze_flags=0x{frame.gaze_valid:X} "
-                  f"gaze_src={frame.gaze_source}")
+                  f"attr=0x{frame.attributes:X} eye_left={eye_left} "
+                  f"gaze_flags=0x{frame.gaze_valid:X} gaze_src={frame.gaze_source} "
+                  f"gaze_left={gaze_left}")
         time.sleep(0.1)
 
     kernel32.UnmapViewOfFile(view)

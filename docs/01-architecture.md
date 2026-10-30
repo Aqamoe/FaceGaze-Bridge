@@ -461,7 +461,9 @@ FaceFrame
 > **v1.1 已实现**（2026-10-30，见 [ADR-0030](adr/0030-native-module-v2-composition.md)）：
 > 模块能力扩展 `FGB_CAP_GAZE`，合并层增加独立注视通道，注视新鲜度与头像眼睛分开；
 > 多模块按角色组合（面捕 / 眼睛 / 注视 / 头姿），头像输出与 foveation 渲染输出分路。
-> 属性级组合（A 的 openness + B 的 gaze）与跨进程模块宿主仍是 v2 方向，等真实需求再做。
+> 属性级组合的分阶段设计见 [ADR-0031](adr/0031-native-module-v2-attribute-fusion.md)：
+> 阶段 A 已支持左右眼/左右注视分源与“A 的 openness + B 的 gaze”合成（默认关闭）；
+> 属性掩码 ABI 与跨进程模块宿主仍是后续阶段。
 
 给新模块用的高性能接口。设计要点：
 

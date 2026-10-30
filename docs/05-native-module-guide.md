@@ -247,8 +247,9 @@ Compress-Archive -Path fgb-native.json,MyModule.dll -DestinationPath MyModule.zi
 | A 面捕 + B 整眼 | ✅ | A 供 Expression，B 供 Eyes |
 | A 完整 + B 注视点 | ✅ | 头像用 A，渲染注视用 B 的 `GAZE` |
 | A 面捕 + B 整眼 + C 注视 | ✅ | 三路各取所需 |
-| A 的 openness + B 的 gaze | ❌ | Eyes 是整通道原子能力（v2） |
-| 左眼 A、右眼 B | ❌ | Eyes 不拆左右（v2） |
+| A 的 openness + B 的 gaze | ✅（A 仍须是 `EYE` 模块） | `--eye-source A --gaze-source B --avatar-eye-from-gaze` |
+| 左眼 A、右眼 B | ✅（CLI） | `--eye-left-source A --eye-right-source B` |
+| A 只给 openness、不给 gaze | ❌ | 等 V2 阶段 B 的属性掩码 |
 
 配置方式有两种：
 
@@ -321,7 +322,31 @@ if (slot->struct_size >= needed) {
 `capabilities` 为准。旧清单不写这些字段也照常工作。`MinHostVersion` 高于当前
 宿主版本时，界面会标记为不兼容。
 
-### 11.4 PICO 类设备怎么拆
+### 11.4 属性级眼睛合成（V2 阶段 A）
+
+V2 阶段 A 让头像眼睛可以拆开取值，但默认行为仍是 v1.1：
+
+```powershell
+# A 提供 openness/pupil，B 提供注视方向；头像眼睛方向改用 B，睁眼度仍来自 A
+fgb-cli run --source vrcft --module-id <A> --source vrcft --module-id <B> `
+  --eye-source "native[1]" --gaze-source "native[2]" --avatar-eye-from-gaze
+
+# 左眼来自 A、右眼来自 B（两个都必须是 EYE 模块）
+fgb-cli run --source vrcft --module-id <A> --source vrcft --module-id <B> `
+  --eye-left-source "native[1]" --eye-right-source "native[2]"
+
+# 渲染注视也按左右分源
+fgb-cli run ... --gaze-left-source "native[1]" --gaze-right-source "native[2]"
+```
+
+- 不传这些参数时，左右眼来自同一个 `EYE` 源，头像眼睛不会被 `Gaze` 通道改写。
+- `--avatar-eye-from-gaze` 只替换方向；openness/pupil 仍来自 `EYE` 源。
+- 合并结果会逐眼记录来源与捕获时间；左右眼来自不同源时，`Eyes` 通道的整通道
+  来源记为未知，诊断以逐眼字段为准。
+- 这仍是 V2 阶段 A：模块必须用 v1 ABI 的整眼 `FgbEyeV1`。真正“只给 openness”
+  或“只给单眼”的模块要等阶段 B 的 `FgbFrameSlotV2` 属性掩码。
+
+### 11.5 PICO 类设备怎么拆
 
 | 模块 | 能力 | 数据来源 |
 |---|---|---|

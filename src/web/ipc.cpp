@@ -605,6 +605,10 @@ void IpcServer::build_metrics(std::string& out) {
             writer.key("eyes").boolean(report.used_eyes);
             writer.key("gaze").boolean(report.used_gaze);
             writer.key("head").boolean(report.used_head);
+            writer.key("eyes_left").boolean(report.used_eyes_left);
+            writer.key("eyes_right").boolean(report.used_eyes_right);
+            writer.key("gaze_left").boolean(report.used_gaze_left);
+            writer.key("gaze_right").boolean(report.used_gaze_right);
             writer.key("has_expression").boolean(report.provides_expression);
             writer.key("has_eyes").boolean(report.provides_eyes);
             writer.key("has_gaze").boolean(report.provides_gaze);
@@ -707,6 +711,12 @@ void IpcServer::build_gaze(std::string& out) {
     writer.key("source_age_ms").integer(static_cast<long long>(gaze_age_ms));
     writer.key("source_id").integer(static_cast<long long>(gaze.source));
     writer.key("source_mask").integer(static_cast<long long>(gaze.source_mask));
+    writer.key("left_source").integer(static_cast<long long>(gaze.left_source));
+    writer.key("right_source").integer(static_cast<long long>(gaze.right_source));
+    writer.key("left_capture_ts_ns")
+        .integer(static_cast<long long>(gaze.left_capture_ts_ns));
+    writer.key("right_capture_ts_ns")
+        .integer(static_cast<long long>(gaze.right_capture_ts_ns));
     if (frame.hasHeadPose) {
         writer.key("head_pose").obj_begin();
         writer.key("q").arr_begin();

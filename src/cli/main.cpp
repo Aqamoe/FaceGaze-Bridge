@@ -87,7 +87,12 @@ void print_usage() {
                  "run 选项:\n"
                  "  --source <类型>         vmc | livelink | osc | vrcft | replay，可重复；顺序即优先级 (默认 vmc)\n"
                  "  --eye-source <名>       指定眼追来自哪个源（默认自动）\n"
+                 "  --eye-left-source <名>  左眼单独选源（覆盖 --eye-source）\n"
+                 "  --eye-right-source <名> 右眼单独选源（覆盖 --eye-source）\n"
                  "  --gaze-source <名>      指定渲染注视来自哪个源（默认自动）\n"
+                 "  --gaze-left-source <名> 左眼注视单独选源\n"
+                 "  --gaze-right-source <名> 右眼注视单独选源\n"
+                 "  --avatar-eye-from-gaze  头像眼睛用 Gaze 方向，保留 Eyes 的 openness/pupil\n"
                  "  --expression-source <名> 指定表情来自哪个源（默认自动）\n"
                  "  --head-source <名>      指定头姿来自哪个源（默认自动）\n"
                  "  --stale-ms <毫秒>       同时设置所有通道的过期阈值\n"
@@ -313,8 +318,13 @@ int cmd_run(int argc, char** argv) {
     std::vector<std::string> module_ids;
     std::string merge_expression_source;
     std::string merge_eye_source;
+    std::string merge_eye_left_source;
+    std::string merge_eye_right_source;
     std::string merge_gaze_source;
+    std::string merge_gaze_left_source;
+    std::string merge_gaze_right_source;
     std::string merge_head_source;
+    bool avatar_eye_from_gaze = false;
     int expression_stale_ms = 500;
     int eye_stale_ms        = 250;
     int gaze_stale_ms       = 100;
@@ -408,8 +418,18 @@ int cmd_run(int argc, char** argv) {
             }
         } else if (arg == "--eye-source") {
             merge_eye_source = std::string{next_value(arg)};
+        } else if (arg == "--eye-left-source") {
+            merge_eye_left_source = std::string{next_value(arg)};
+        } else if (arg == "--eye-right-source") {
+            merge_eye_right_source = std::string{next_value(arg)};
         } else if (arg == "--gaze-source") {
             merge_gaze_source = std::string{next_value(arg)};
+        } else if (arg == "--gaze-left-source") {
+            merge_gaze_left_source = std::string{next_value(arg)};
+        } else if (arg == "--gaze-right-source") {
+            merge_gaze_right_source = std::string{next_value(arg)};
+        } else if (arg == "--avatar-eye-from-gaze") {
+            avatar_eye_from_gaze = true;
         } else if (arg == "--expression-source") {
             merge_expression_source = std::string{next_value(arg)};
         } else if (arg == "--head-source") {
@@ -983,8 +1003,13 @@ int cmd_run(int argc, char** argv) {
         fgb::MergePolicy merge_policy;
         merge_policy.expression_source = merge_expression_source;
         merge_policy.eye_source        = merge_eye_source;
+        merge_policy.eye_left_source   = merge_eye_left_source;
+        merge_policy.eye_right_source  = merge_eye_right_source;
         merge_policy.gaze_source       = merge_gaze_source;
+        merge_policy.gaze_left_source  = merge_gaze_left_source;
+        merge_policy.gaze_right_source = merge_gaze_right_source;
         merge_policy.head_source       = merge_head_source;
+        merge_policy.avatar_eye_from_gaze = avatar_eye_from_gaze;
         merge_policy.expression_stale_ns =
             static_cast<std::uint64_t>(expression_stale_ms) * 1'000'000ULL;
         merge_policy.eye_stale_ns = static_cast<std::uint64_t>(eye_stale_ms) * 1'000'000ULL;
@@ -995,10 +1020,21 @@ int cmd_run(int argc, char** argv) {
         auto name_or_auto = [](const std::string& name) {
             return name.empty() ? std::string{"auto"} : name;
         };
-        FGB_INFO("cli", "输入源：%s（表情=%s 眼追=%s 注视=%s 头姿=%s，过期 %d/%d/%d/%d ms）",
+        const std::string eye_left_name = name_or_auto(
+            merge_eye_left_source.empty() ? merge_eye_source : merge_eye_left_source);
+        const std::string eye_right_name = name_or_auto(
+            merge_eye_right_source.empty() ? merge_eye_source : merge_eye_right_source);
+        const std::string gaze_left_name = name_or_auto(
+            merge_gaze_left_source.empty() ? merge_gaze_source : merge_gaze_left_source);
+        const std::string gaze_right_name = name_or_auto(
+            merge_gaze_right_source.empty() ? merge_gaze_source : merge_gaze_right_source);
+        FGB_INFO("cli",
+                 "输入源：%s（表情=%s 眼追=%s/%s 注视=%s/%s 头姿=%s，头像注视=%s，"
+                 "过期 %d/%d/%d/%d ms）",
                  join_names(source_names).c_str(), name_or_auto(merge_expression_source).c_str(),
-                 name_or_auto(merge_eye_source).c_str(), name_or_auto(merge_gaze_source).c_str(),
-                 name_or_auto(merge_head_source).c_str(), expression_stale_ms, eye_stale_ms,
+                 eye_left_name.c_str(), eye_right_name.c_str(), gaze_left_name.c_str(),
+                 gaze_right_name.c_str(), name_or_auto(merge_head_source).c_str(),
+                 avatar_eye_from_gaze ? "gaze" : "eyes", expression_stale_ms, eye_stale_ms,
                  gaze_stale_ms, head_stale_ms);
     }
     // 校准链路的顺序：取样（校准前的原始值）→ 校准 → 滤波。

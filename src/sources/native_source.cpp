@@ -211,11 +211,20 @@ void NativeModuleSource::apply_slot(const FgbFrameSlotV1& slot,
                 frame.gaze.combinedDirLocal =
                     normalize(Vec3{in.combined_dir[0], in.combined_dir[1], in.combined_dir[2]});
             }
-            frame.gaze.pointsValid = (in.valid & FGB_GAZE_POINT_2D) != 0;
+            const bool points = (in.valid & FGB_GAZE_POINT_2D) != 0;
+            frame.gaze.left.pointValid =
+                points && frame.gaze.left.valid;
+            frame.gaze.right.pointValid =
+                points && frame.gaze.right.valid;
+            frame.gaze.pointsValid = frame.gaze.left.pointValid && frame.gaze.right.pointValid;
             frame.gaze.left.point2d  = Vec2{in.left_point_2d[0], in.left_point_2d[1]};
             frame.gaze.right.point2d = Vec2{in.right_point_2d[0], in.right_point_2d[1]};
             frame.gaze.confidence    = clamp01(in.confidence);
             frame.gaze.captureTsNs   = in.capture_ts_ns;
+            frame.gaze.left.confidence  = frame.gaze.confidence;
+            frame.gaze.right.confidence = frame.gaze.confidence;
+            frame.gaze.left.captureTsNs  = in.capture_ts_ns;
+            frame.gaze.right.captureTsNs = in.capture_ts_ns;
             if (frame.gaze.any_valid()) {
                 frame.add_channel(channel::kGaze);
             }

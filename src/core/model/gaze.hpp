@@ -33,6 +33,10 @@ struct GazeState {
     std::uint64_t capture_ts_ns = 0; // 数据捕获时刻；0 = 未知
     SourceId source            = kInvalidSource;
     std::uint32_t source_mask  = 0; // 本帧各通道贡献源的位掩码
+    SourceId left_source       = kInvalidSource;
+    SourceId right_source      = kInvalidSource;
+    std::uint64_t left_capture_ts_ns  = 0;
+    std::uint64_t right_capture_ts_ns = 0;
 
     // 由 GazeEstimator 维护
     bool fixation          = false;

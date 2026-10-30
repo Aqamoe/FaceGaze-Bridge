@@ -61,9 +61,16 @@ sdk\                   集成文档与示例
 
 可重复 `--source` 做多源合并；`--expression-source` / `--eye-source` /
 `--gaze-source` / `--head-source` 用源名（`vmc` / `livelink` / `osc` / `native:face`）
-指定某一路由谁提供。注视通道默认 100 ms 过期，可用 `--gaze-stale-ms` 调整；
-`--stale-ms` 会一次设置所有通道。桌面入口会把不认识的参数转给引擎，所以也可以
-先托盘「退出」，再运行 `"FaceGaze Bridge.exe" --source livelink`。
+指定某一路由谁提供。V2 阶段 A 还支持高级拆分：
+
+- `--eye-left-source` / `--eye-right-source`：左右眼分别选源；
+- `--gaze-left-source` / `--gaze-right-source`：左右渲染注视分别选源；
+- `--avatar-eye-from-gaze`：头像眼睛保留 `EYE` 源的 openness/pupil，方向改用
+  `Gaze` 通道（默认关闭，头像仍只看 `Eyes`）。
+
+注视通道默认 100 ms 过期，可用 `--gaze-stale-ms` 调整；`--stale-ms` 会一次
+设置所有通道。桌面入口会把不认识的参数转给引擎，所以也可以先托盘「退出」，
+再运行 `"FaceGaze Bridge.exe" --source livelink`。
 
 多模块组合在界面「模块」页配置：把模块添加为启动实例，再给表情 / 眼睛 / 注视 /
 头姿四个角色选来源；配置写入 `%LOCALAPPDATA%\FaceGazeBridge\modules.ini`，

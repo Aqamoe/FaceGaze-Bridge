@@ -84,13 +84,38 @@ FaceFrame gaze_frame(float yaw_deg) {
     frame.gaze.right.dirLocal = frame.gaze.left.dirLocal;
     frame.gaze.combinedValid  = true;
     frame.gaze.combinedDirLocal = frame.gaze.left.dirLocal;
-    frame.gaze.pointsValid    = true;
+    frame.gaze.left.pointValid  = true;
+    frame.gaze.right.pointValid = true;
+    frame.gaze.pointsValid      = true;
     frame.gaze.left.point2d   = Vec2{0.4f, 0.6f};
     frame.gaze.right.point2d  = Vec2{0.45f, 0.55f};
     frame.gaze.confidence     = 0.9f;
+    frame.gaze.left.confidence  = 0.9f;
+    frame.gaze.right.confidence = 0.9f;
     frame.gaze.captureTsNs    = 5000;
+    frame.gaze.left.captureTsNs  = 5000;
+    frame.gaze.right.captureTsNs = 5000;
     frame.add_channel(channel::kGaze);
     frame.captureTsNs = 4000;
+    return frame;
+}
+
+FaceFrame eyes_pair_frame(float left_open, float right_open, float left_yaw, float right_yaw) {
+    FaceFrame frame = FaceFrame::neutral();
+    frame.eyes.left.valid  = true;
+    frame.eyes.right.valid = true;
+    frame.eyes.left.openness  = left_open;
+    frame.eyes.right.openness = right_open;
+    frame.eyes.left.gazeDirLocal =
+        Vec3{std::sin(left_yaw * kDegToRad), 0.0f, -std::cos(left_yaw * kDegToRad)};
+    frame.eyes.right.gazeDirLocal =
+        Vec3{std::sin(right_yaw * kDegToRad), 0.0f, -std::cos(right_yaw * kDegToRad)};
+    frame.eyes.left.gazePitchYawDeg  = Vec2{0.0f, left_yaw};
+    frame.eyes.right.gazePitchYawDeg = Vec2{0.0f, right_yaw};
+    frame.eyes.left.gazeConf         = 0.9f;
+    frame.eyes.right.gazeConf        = 0.9f;
+    frame.add_channel(channel::kEyes);
+    frame.captureTsNs = 2000;
     return frame;
 }
 
@@ -347,6 +372,143 @@ FGB_TEST(merge_gaze_has_shorter_stale_window) {
     FGB_CHECK(merged.has_channel(channel::kEyes));
     FGB_CHECK(!merged.has_channel(channel::kGaze));
     FGB_CHECK(!merged.gaze.any_valid());
+}
+
+FGB_TEST(merge_avatar_eye_can_take_openness_from_one_source_and_gaze_from_another) {
+    FakeSource eyes{"eye"};
+    FakeSource gaze{"gaze"};
+
+    SourceMerger merger;
+    MergePolicy policy;
+    policy.eye_source            = "eye";
+    policy.gaze_source           = "gaze";
+    policy.avatar_eye_from_gaze  = true;
+    merger.set_policy(policy);
+    merger.add(&eyes);
+    merger.add(&gaze);
+
+    eyes.push(eyes_pair_frame(0.2f, 0.8f, -10.0f, -10.0f));
+    gaze.push(gaze_frame(20.0f));
+
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(10'000'000ULL, merged));
+    FGB_CHECK_NEAR(merged.eyes.left.openness, 0.2, 1e-6);
+    FGB_CHECK_NEAR(merged.eyes.right.openness, 0.8, 1e-6);
+    // 方向来自 Gaze 源，openness 仍来自 Eyes 源
+    FGB_CHECK_NEAR(merged.eyes.left.gazePitchYawDeg.y, 20.0, 1e-4);
+    FGB_CHECK_NEAR(merged.eyes.right.gazePitchYawDeg.y, 20.0, 1e-4);
+    FGB_CHECK(merged.eyes.left.opennessSource == 1);
+    FGB_CHECK(merged.eyes.left.gazeSource == 2);
+    FGB_CHECK(merged.eyes.left.opennessTsNs == 2000);
+    FGB_CHECK(merged.eyes.left.gazeTsNs == 5000);
+    FGB_CHECK(merged.channelStamps[channel::index(channel::kEyes)].source == kInvalidSource);
+    FGB_CHECK(merged.channelStamps[channel::index(channel::kGaze)].source == 2);
+}
+
+FGB_TEST(merge_eye_sides_can_come_from_different_sources) {
+    FakeSource left{"left"};
+    FakeSource right{"right"};
+
+    SourceMerger merger;
+    MergePolicy policy;
+    policy.eye_left_source  = "left";
+    policy.eye_right_source = "right";
+    merger.set_policy(policy);
+    merger.add(&left);
+    merger.add(&right);
+
+    left.push(eyes_pair_frame(0.2f, 0.9f, -12.0f, -12.0f));
+    right.push(eyes_pair_frame(0.8f, 0.3f, 12.0f, 12.0f));
+
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(10'000'000ULL, merged));
+    FGB_CHECK_NEAR(merged.eyes.left.openness, 0.2, 1e-6);
+    FGB_CHECK_NEAR(merged.eyes.right.openness, 0.3, 1e-6);
+    FGB_CHECK_NEAR(merged.eyes.left.gazePitchYawDeg.y, -12.0, 1e-4);
+    FGB_CHECK_NEAR(merged.eyes.right.gazePitchYawDeg.y, 12.0, 1e-4);
+    FGB_CHECK(merged.eyes.left.opennessSource == 1);
+    FGB_CHECK(merged.eyes.right.opennessSource == 2);
+    FGB_CHECK(merged.contributingSources == 0b11u);
+    FGB_CHECK(merged.channelStamps[channel::index(channel::kEyes)].source == kInvalidSource);
+}
+
+FGB_TEST(merge_default_keeps_avatar_eyes_on_eye_source) {
+    FakeSource eyes{"eye"};
+    FakeSource gaze{"gaze"};
+
+    SourceMerger merger;
+    MergePolicy policy;
+    policy.eye_source  = "eye";
+    policy.gaze_source = "gaze";
+    merger.set_policy(policy);
+    merger.add(&eyes);
+    merger.add(&gaze);
+
+    eyes.push(eyes_pair_frame(0.4f, 0.4f, -10.0f, -10.0f));
+    gaze.push(gaze_frame(20.0f));
+
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(10'000'000ULL, merged));
+    // 默认 avatar_eye_from_gaze=false：头像方向仍是 Eyes 源的 -10°，渲染注视仍是 20°
+    FGB_CHECK_NEAR(merged.eyes.left.gazePitchYawDeg.y, -10.0, 1e-4);
+    FGB_CHECK(merged.eyes.left.gazeSource == 1);
+    FGB_CHECK_NEAR(merged.gaze.combinedDirLocal.x, std::sin(20.0f * kDegToRad), 1e-5);
+    FGB_CHECK(merged.channelStamps[channel::index(channel::kEyes)].source == 1);
+}
+
+FGB_TEST(merge_avatar_eye_ignores_stale_gaze_source) {
+    FakeSource eyes{"eye"};
+    FakeSource gaze{"gaze"};
+
+    SourceMerger merger;
+    MergePolicy policy;
+    policy.eye_source           = "eye";
+    policy.gaze_source          = "gaze";
+    policy.avatar_eye_from_gaze = true;
+    policy.gaze_stale_ns        = 100'000'000ULL;
+    policy.eye_stale_ns         = 250'000'000ULL;
+    merger.set_policy(policy);
+    merger.add(&eyes);
+    merger.add(&gaze);
+
+    eyes.push(eyes_pair_frame(0.5f, 0.5f, -10.0f, -10.0f));
+    gaze.push(gaze_frame(20.0f));
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(1'000'000'000ULL, merged));
+    FGB_CHECK_NEAR(merged.eyes.left.gazePitchYawDeg.y, 20.0, 1e-4);
+
+    // 150 ms 后注视过期、眼睛仍新鲜：头像不能继续用已过期的注视方向
+    eyes.push(eyes_pair_frame(0.5f, 0.5f, -10.0f, -10.0f));
+    FGB_CHECK(merger.poll(1'150'000'000ULL, merged));
+    FGB_CHECK(!merged.has_channel(channel::kGaze));
+    FGB_CHECK_NEAR(merged.eyes.left.gazePitchYawDeg.y, -10.0, 1e-4);
+    FGB_CHECK(merged.eyes.left.gazeSource == 1);
+}
+
+FGB_TEST(merge_gaze_sides_can_come_from_different_sources) {
+    FakeSource left{"left"};
+    FakeSource right{"right"};
+
+    SourceMerger merger;
+    MergePolicy policy;
+    policy.gaze_left_source  = "left";
+    policy.gaze_right_source = "right";
+    merger.set_policy(policy);
+    merger.add(&left);
+    merger.add(&right);
+
+    left.push(gaze_frame(10.0f));
+    right.push(gaze_frame(-10.0f));
+
+    FaceFrame merged;
+    FGB_CHECK(merger.poll(10'000'000ULL, merged));
+    FGB_CHECK_NEAR(merged.gaze.left.dirLocal.x, std::sin(10.0f * kDegToRad), 1e-5);
+    FGB_CHECK_NEAR(merged.gaze.right.dirLocal.x, std::sin(-10.0f * kDegToRad), 1e-5);
+    FGB_CHECK(merged.gaze.left.source == 1);
+    FGB_CHECK(merged.gaze.right.source == 2);
+    // 左右来自不同源时，合并方向由两侧平均得到
+    FGB_CHECK_NEAR(merged.gaze.combinedDirLocal.x, 0.0, 1e-5);
+    FGB_CHECK(merged.channelStamps[channel::index(channel::kGaze)].source == kInvalidSource);
 }
 
 FGB_TEST(engine_uses_gaze_channel_for_render_gaze) {

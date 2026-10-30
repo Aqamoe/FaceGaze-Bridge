@@ -29,6 +29,15 @@ struct EyeState {
     Vec3 gazeDirLocal{0.0f, 0.0f, -1.0f}; // HMD 局部，单位向量
     Vec2 gazePitchYawDeg{0.0f, 0.0f};     // 缓存，避免每帧重复三角函数
     float gazeConf = 0.0f;
+
+    // 属性级来源（ADR-0031）。v1 输入整眼来自同一个源，三个字段通常相同；
+    // 开启 avatar_eye_from_gaze 后 gazeSource/gazeTsNs 会单独指向 Gaze 通道。
+    SourceId opennessSource = kInvalidSource;
+    SourceId pupilSource    = kInvalidSource;
+    SourceId gazeSource     = kInvalidSource;
+    std::uint64_t opennessTsNs = 0;
+    std::uint64_t pupilTsNs    = 0;
+    std::uint64_t gazeTsNs     = 0;
 };
 
 struct EyePair {
@@ -37,6 +46,8 @@ struct EyePair {
 
     bool hasVergence = false;
     float vergenceDistanceM = 0.0f;
+    SourceId vergenceSource = kInvalidSource;
+    std::uint64_t vergenceTsNs = 0;
 
     bool any_valid() const noexcept { return left.valid || right.valid; }
 };
@@ -46,7 +57,12 @@ struct EyePair {
 struct GazeSample {
     bool valid = false;
     Vec3 dirLocal{0.0f, 0.0f, -1.0f};
+    bool pointValid = false;
     Vec2 point2d{0.0f, 0.0f};
+
+    SourceId source = kInvalidSource;
+    std::uint64_t captureTsNs = 0;
+    float confidence = 0.0f;
 };
 
 struct GazePair {
@@ -56,7 +72,7 @@ struct GazePair {
     bool combinedValid = false;
     Vec3 combinedDirLocal{0.0f, 0.0f, -1.0f};
 
-    bool pointsValid = false; // left/right 的 point2d 同时有效
+    bool pointsValid = false; // left/right 的 point2d 同时有效（兼容字段）
     float confidence = 0.0f;
     std::uint64_t captureTsNs = 0; // 0 = 用帧的 captureTsNs
 
