@@ -109,11 +109,21 @@ bool parse_params_mode(std::string_view text, ParamsMode& out) noexcept {
     return false;
 }
 
-VrchatSink::VrchatSink(VrchatSinkConfig config) : config_(std::move(config)) {
+VrchatSink::VrchatSink(VrchatSinkConfig config)
+    : config_(std::move(config)), enabled_(config_.enabled) {
     reset_dedup();
 }
 
 VrchatSink::~VrchatSink() { stop(); }
+
+void VrchatSink::set_enabled(bool enabled) noexcept {
+    const bool previous = enabled_.exchange(enabled, std::memory_order_relaxed);
+    if (previous == enabled) {
+        return;
+    }
+    // 关掉只停发送：watcher 与地址解析还要继续，否则换头像后参数页会一直是旧数据
+    FGB_INFO(kTag, enabled ? "OSC 输出已恢复" : "OSC 输出已关闭（头像参数发现继续）");
+}
 
 void VrchatSink::map_target_groups() {
     // 目标列表与 catalog 同序，按参数逐个对齐即可，不需要额外查找
@@ -587,6 +597,11 @@ void VrchatSink::submit(const FaceFrame& frame, const GazeState& /*gaze*/, std::
     // 头像切换/手动重读在引擎线程落地，控制面只发布"待应用"的配置
     apply_pending_avatar();
     std::shared_lock avatar_lock(router_mutex_);
+
+    // 关掉 OSC 输出时仍然走上面的头像重绑；这里直接返回，不计节流也不累计发送统计
+    if (!enabled_.load(std::memory_order_relaxed)) {
+        return;
+    }
 
     if (!throttle_.due(now_ns, config_.min_interval_ns)) {
         return;

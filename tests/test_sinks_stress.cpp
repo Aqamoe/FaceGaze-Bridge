@@ -168,6 +168,19 @@ FGB_TEST(five_sinks_run_together_at_target_rates) {
     FGB_CHECK(vrchat.stats().messages > 0);
     FGB_CHECK(vrchat.stats().bytes > 0);
 
+    // 运行时关闭：发送计数冻结，但 submit 仍然跑头像重绑；恢复后心跳会补发全量
+    const std::uint64_t paused = vrchat.stats().messages;
+    vrchat.set_enabled(false);
+    for (int tick = 0; tick < 120; ++tick) {
+        vrchat.submit(stress_frame(tick), gaze, static_cast<std::uint64_t>(kTicks + tick) * kTick);
+    }
+    FGB_CHECK(vrchat.stats().messages == paused);
+
+    vrchat.set_enabled(true);
+    vrchat.submit(stress_frame(kTicks + 120), gaze,
+                  static_cast<std::uint64_t>(kTicks + 120 + 240) * kTick);
+    FGB_CHECK(vrchat.stats().messages > paused);
+
     for (const auto* sink : {static_cast<ISink*>(&vrchat), static_cast<ISink*>(&vmc),
                              static_cast<ISink*>(&shm), static_cast<ISink*>(&ws),
                              static_cast<ISink*>(&udp)}) {

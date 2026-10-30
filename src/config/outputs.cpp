@@ -100,7 +100,9 @@ std::string profile_stem(std::string_view name) {
 // 把一条 [section] key=value 应用到输出设置；失败时给出可显示的原因
 bool apply_output_entry(const IniEntry& entry, OutputOptions& out, std::string& bad_error) {
     if (entry.section == "output") {
-        if (entry.key == "vrchat") {
+        if (entry.key == "enabled") {
+            out.vrchat_enabled = parse_bool(entry.value, out.vrchat_enabled);
+        } else if (entry.key == "vrchat") {
             if (!parse_target(entry.value, out.vrchat_host, out.vrchat_port)) {
                 bad_error = "output.vrchat 需要 host:port";
                 return false;
@@ -169,6 +171,7 @@ bool apply_output_entry(const IniEntry& entry, OutputOptions& out, std::string& 
 
 void write_output_sections(IniWriter& writer, const OutputOptions& options) {
     writer.section("output");
+    writer.kv_bool("enabled", options.vrchat_enabled);
     writer.kv("vrchat", format_target(options.vrchat_host, options.vrchat_port));
     writer.kv("eye_mode", options.eye_mode);
     writer.kv("params_mode", options.params_mode);

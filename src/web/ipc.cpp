@@ -136,6 +136,9 @@ bool parse_output_patch(std::string_view text, config::OutputOptions& next, std:
     if (error.empty() && json::field_string(text, "params_mode", mode)) {
         next.params_mode = mode;
     }
+    if (error.empty() && json::field_bool(text, "vrchat_enabled", flag)) {
+        next.vrchat_enabled = flag;
+    }
     if (error.empty() && json::field_bool(text, "vmc_enabled", flag)) {
         next.vmc_enabled = flag;
     }
@@ -570,6 +573,7 @@ void IpcServer::build_metrics(std::string& out) {
         config::format_target(ctx_.outputs.vrchat_host, ctx_.outputs.vrchat_port));
     writer.key("eye_mode").str(ctx_.outputs.eye_mode);
     writer.key("params_mode").str(ctx_.outputs.params_mode);
+    writer.key("vrchat_enabled").boolean(ctx_.outputs.vrchat_enabled);
     writer.key("vmc_enabled").boolean(ctx_.outputs.vmc_enabled);
     writer.key("vmc_target").str(
         config::format_target(ctx_.outputs.vmc_host, ctx_.outputs.vmc_port));
@@ -1169,6 +1173,10 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
                 ctx_.outputs    = next;
                 ok              = true;
                 outputs_touched = true;
+                // OSC 发送开关可以热生效；端口/目标类改动仍需重启引擎
+                if (ctx_.sink != nullptr) {
+                    ctx_.sink->set_enabled(next.vrchat_enabled);
+                }
                 ack_message     = "输出设置已保存，重启引擎后生效";
             }
         }
@@ -1214,6 +1222,9 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
                     ok               = true;
                     outputs_touched  = true;
                     profiles_touched = true;
+                    if (ctx_.sink != nullptr) {
+                        ctx_.sink->set_enabled(loaded.vrchat_enabled);
+                    }
                     ack_message      = "预设「" + name + "」已应用，重启引擎后生效";
                 }
             }

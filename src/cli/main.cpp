@@ -342,8 +342,12 @@ int cmd_run(int argc, char** argv) {
         FGB_WARN("cli", "输出设置读取失败（%s），本次使用默认值", outputs_error.c_str());
     }
     if (apply_saved_outputs && outputs_loaded) {
-        vrchat_cfg.host = saved_outputs.vrchat_host;
-        vrchat_cfg.port = saved_outputs.vrchat_port;
+        vrchat_cfg.host    = saved_outputs.vrchat_host;
+        vrchat_cfg.port    = saved_outputs.vrchat_port;
+        vrchat_cfg.enabled = saved_outputs.vrchat_enabled;
+        if (!vrchat_cfg.enabled) {
+            FGB_INFO("cli", "VRChat OSC 输出已按保存设置关闭（头像参数发现保留）");
+        }
         fgb::EyeOutputMode eye_mode;
         if (fgb::parse_eye_output_mode(saved_outputs.eye_mode, eye_mode)) {
             vrchat_cfg.eye_mode = eye_mode;

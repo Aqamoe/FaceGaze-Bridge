@@ -55,6 +55,8 @@ bool parse_params_mode(std::string_view text, ParamsMode& out) noexcept;
 struct VrchatSinkConfig {
     std::string host       = "127.0.0.1";
     std::uint16_t port     = 9000;
+    // 关掉只停 OSC 发送；头像参数发现与路由照常，参数页不会跟着空掉
+    bool enabled           = true;
     EyeOutputMode eye_mode = EyeOutputMode::parameters;
     ParamsMode params_mode = ParamsMode::v2;
 
@@ -103,6 +105,9 @@ public:
     // 头像切换后重新解析地址。只置标志，实际重绑在引擎线程下一次 submit 完成。
     void reload_avatar();
 
+    // 运行时开关 OSC 发送（控制面 set_outputs 用）。头像发现不受影响，恢复后下一帧继续发。
+    void set_enabled(bool enabled) noexcept;
+
     // 供控制面显示"现在绑的是哪个头像、发了多少参数"
     RouterStatus status() const;
     // 供参数页判断哪些逻辑参数已绑定（按 catalog 扁平索引）
@@ -137,6 +142,7 @@ private:
 
     VrchatSinkConfig config_;
     net::UdpSocket socket_;
+    std::atomic<bool> enabled_{true};
     SinkStats stats_{};
     params::ParamRouter router_;
     std::string avatar_name_;

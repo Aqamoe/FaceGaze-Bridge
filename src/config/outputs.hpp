@@ -18,6 +18,8 @@ namespace fgb::config {
 struct OutputOptions {
     std::string vrchat_host = "127.0.0.1";
     std::uint16_t vrchat_port = 9000;
+    // 默认开启：绝大多数用户只给 VRChat 用。关掉只停 OSC 发送，头像参数发现照旧
+    bool vrchat_enabled       = true;
     std::string eye_mode      = "parameters"; // parameters | native | both
     std::string params_mode   = "v2";         // v2 | v1 | both
 

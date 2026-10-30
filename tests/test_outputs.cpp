@@ -32,10 +32,11 @@ struct TempDir {
 
 config::OutputOptions sample() {
     config::OutputOptions out;
-    out.vrchat_host  = "127.0.0.2";
-    out.vrchat_port  = 9001;
-    out.eye_mode     = "both";
-    out.params_mode  = "v1";
+    out.vrchat_host    = "127.0.0.2";
+    out.vrchat_port    = 9001;
+    out.vrchat_enabled = false;
+    out.eye_mode       = "both";
+    out.params_mode    = "v1";
     out.vmc_enabled  = true;
     out.vmc_host     = "127.0.0.3";
     out.vmc_port     = 39540;
@@ -92,6 +93,27 @@ FGB_TEST(outputs_validate_rejects_bad_values) {
     options.udp_enabled = true;
     options.udp_host    = "";
     FGB_CHECK(!config::validate_outputs(options, error));
+}
+
+FGB_TEST(outputs_vrchat_enabled_defaults_on_and_persists) {
+    TempDir temp;
+    const fs::path path = temp.path / "outputs.ini";
+    std::string error;
+
+    // 旧配置没有这个键：必须当作开启，否则升级后用户的 OSC 会悄悄断掉
+    {
+        std::ofstream out(path);
+        out << "[output]\nvrchat = 127.0.0.1:9000\n";
+    }
+    config::OutputOptions loaded;
+    FGB_CHECK(config::load_outputs(path, loaded, error));
+    FGB_CHECK(loaded.vrchat_enabled);
+
+    config::OutputOptions off;
+    off.vrchat_enabled = false;
+    FGB_CHECK(config::save_outputs(path, off, error));
+    FGB_CHECK(config::load_outputs(path, loaded, error));
+    FGB_CHECK(!loaded.vrchat_enabled);
 }
 
 FGB_TEST(outputs_save_load_roundtrip) {
