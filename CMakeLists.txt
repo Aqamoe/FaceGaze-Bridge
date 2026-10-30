@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(FaceGazeBridge
-    VERSION 1.0.2
+    VERSION 1.0.3
     DESCRIPTION "Eye and face tracking bridge for VRChat and other consumers"
     LANGUAGES CXX)
 
