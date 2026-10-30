@@ -165,6 +165,7 @@ VRCFT 协议层已真机跑通；**模块覆盖仍是当前最大缺口**（road
 | 模块 | 硬件/来源 | 状态 | 备注 |
 |---|---|---|---|
 | `VRCFTPicoModule` v0.1.11 | PICO + PICO Connect | ✅ 真机验收（2026-10-29） | 先退出 VRCFT；真实面捕数据 |
+| 只报 2D 点的原生模块（`samples/native-gaze` 的 POINTS_ONLY 模式） | 无 | ✅ 单测 + ABI 端到端（2026-10-31） | 只声明 `FGB_GAZE_POINT_2D`：`valid=false`、点正常透传；未标定就只显示 `2D~`，标定后再加 `POINT_VIEWPORT` 才是 `2D` |
 | `native-sine` 示例 | 无 | ✅ 单测 + 端到端 | 无硬件验证链路 |
 | 回放（`.fgbrec`） | 无 | ✅ 单测 + 探针 | 金样为真实 PICO 抓包 |
 | VMC 输入 | VSeeFace 等 | ✅ 协议冒烟 | 必须跟 `Apply` 才生效 |

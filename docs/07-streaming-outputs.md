@@ -62,7 +62,8 @@ ws://127.0.0.1:<port>/ws
     "dir": [0.02, 0.10, -0.99],
     "ts_ns": 1284733000000,
     "src": 2,
-    "mask": 9
+    "mask": 9,
+    "point_space": "viewport"
   },
   "head": { "q": [0, 0.03, 0, 0.999], "p": [0, 0.05, 0] },
   "shapes": { "JawOpen": 0.31, "MouthSmileLeft": 0.44, "BrowInnerUp": 0.12 }
@@ -144,7 +145,7 @@ C 定义在 [`sdk/fgb_udp_frame.h`](../sdk/fgb_udp_frame.h)，安装包在 `sdk/
 | 140 | f32×3 | `head_position`（米） |
 | 152 | f32×88 | `shapes[88]`（0..1，顺序见下） |
 | 504 | u8×88 | `shape_valid[88]`（0/1） |
-| 592 | u32 | `gaze_valid`（1=左眼 2=右眼 4=合并 8=2D 点） |
+| 592 | u32 | `gaze_valid`（1=左眼 2=右眼 4=合并 8=2D 点 16=点在视口坐标，见 ADR-0033） |
 | 596 | u32 | `gaze_source`（源序号，0=未知/眼睛反算） |
 | 600 | u32 | `gaze_source_mask`（各通道贡献源位掩码） |
 | 604 | u32 | `gaze_reserved` |

@@ -316,6 +316,10 @@ GET /api/gaze
 3. **无障碍**：gaze cursor、dwell click
 
 **已实现（2026-10-30）**：`GET /api/gaze` + 控制面 WS 30 Hz `gaze` 消息；
+**逐眼（2026-10-31）**：左右眼方向/俯仰偏航/2D 点/来源与捕获时刻各自独立，
+状态页左右眼分行显示并各画一个点，单眼失效时该行为 `—`；
+**2D 点坐标（2026-10-31）**：定为该眼显示视口的归一化坐标（`[0,1]`、左上原点、畸变前），
+见 [ADR-0033](adr/0033-gaze-point-2d-space.md)；
 `GazeEstimator` 用角速度判断扫视/注视（30°/s 入口、80°/s 退出、80 ms 停留、0.5 s 断档复位）。
 字段见 [08-gaze-service.md](08-gaze-service.md) 与 [ADR-0026](adr/0026-gaze-estimator-and-api.md)。
 当前返回 HMD **局部**方向和头姿，不返回世界坐标；预测与 OpenXR 注入仍未做。

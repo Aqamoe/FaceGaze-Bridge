@@ -244,6 +244,10 @@ Compress-Archive -Path fgb-native.json,MyModule.dll -DestinationPath MyModule.zi
 | 卡片显示故障 | 看模块 `report_status(ERROR, ...)` / 日志里的具体原因；初始化返回 0 也会显示 |
 | 帧率 0 | `update` 没有 `commit`，或 `shape_valid` 全 0（表情通道不会启用） |
 | 位数错误 | DLL 不是 x64，`LoadLibrary` 会失败并给出错误码 |
+| 注视一直「注视中」、方向恒 `(0,0,-1)` | 声明了 `LEFT/RIGHT` 却没有方向模型（伪造方向）；只声明 `POINT_2D` |
+| 状态页注视是 `—`、但逐眼有 `2D (x,y)` | 正常：只报点的源没有方向，`valid=false` |
+| 逐眼显示的是 `2D~ (x,y)` | 模块没声明 `POINT_VIEWPORT`：点在来源自己的空间（原始坐标），不是视口坐标 |
+| 只声明 `POINT_2D` 却一帧都没有 | 1.0.2 及更早的宿主会丢弃这类帧；升级到带本次修复的版本 |
 
 ## 11. 多模块与注视通道（ADR-0030 v1.1，已实现）
 
@@ -292,27 +296,73 @@ head       = com.example.pico-face
 ### 11.2 写一个注视模块
 
 声明 `FGB_CAP_GAZE`，不要声明 `EYE`；在 `update()` 里填 `slot->gaze`。它位于
-`FgbFrameSlotV1` 末尾，旧宿主不会分配这段内存，所以写之前必须检查 `struct_size`：
+`FgbFrameSlotV1` 末尾，旧宿主不会分配这段内存，所以写之前必须检查 `struct_size`。
+
+**先确定你手上有什么数据**——方向位和 2D 点位是两条独立的位，有哪样写哪样：
+
+| 你有的数据 | `valid` 该写 | 宿主给出的结果 |
+|---|---|---|
+| 逐眼方向 | `LEFT \| RIGHT`（`COMBINED` 可选，缺了由左右眼推） | `valid=true`；逐眼方向/角度、注视/扫视判定可用 |
+| 逐眼 2D 点，**已标定到该眼视口** | `POINT_2D \| POINT_VIEWPORT` | `valid=false`（不编方向）；点可用，`point_space="viewport"`，能用于 foveation |
+| 逐眼 2D 点，**只有原始坐标**（未标定） | 只写 `POINT_2D` | `valid=false`；点可用但 `point_space="source"`，只能展示/看趋势 |
+| 方向 + 点 | 方向位 + 上面的点位组合 | 方向与点都可用 |
+
+方向型模块：
 
 ```c
 const size_t needed = offsetof(FgbFrameSlotV1, gaze) + sizeof(FgbGazeV1);
 if (slot->struct_size >= needed) {
-    slot->gaze.valid = FGB_GAZE_LEFT | FGB_GAZE_RIGHT |
-                       FGB_GAZE_COMBINED | FGB_GAZE_POINT_2D;
+    slot->gaze.valid = FGB_GAZE_LEFT | FGB_GAZE_RIGHT | FGB_GAZE_COMBINED |
+                       FGB_GAZE_POINT_2D | FGB_GAZE_POINT_VIEWPORT;
     slot->gaze.left_dir[0] = dx;   /* HMD 局部单位向量，-Z 前 */
     slot->gaze.left_dir[1] = dy;
     slot->gaze.left_dir[2] = dz;
     /* right_dir / combined_dir 同上 */
-    slot->gaze.left_point_2d[0]  = x; /* 暂定 [0,1]，左上原点 */
-    slot->gaze.left_point_2d[1]  = y;
+    slot->gaze.left_point_2d[0]  = u; /* 该眼视口归一化 [0,1]，左上原点 */
+    slot->gaze.left_point_2d[1]  = v;
     slot->gaze.confidence = 0.9f;
     slot->gaze.capture_ts_ns = device_ts_ns; /* 0 = 用帧时间戳 */
 }
 ```
 
-- 方向会被宿主归一化；非法/NaN 会被丢弃。
-- `FGB_GAZE_POINT_2D` 只表示点字段可用，是否按眼由 `LEFT/RIGHT` 位决定。
-- 2D 点约定尚未与串流/OpenXR 消费端对齐，暂时只做透传。
+只报点的模块（**没有方向就不要写方向位**，标定过再加 `POINT_VIEWPORT`）：
+
+```c
+if (slot->struct_size >= needed) {
+    slot->gaze.valid              = FGB_GAZE_POINT_2D; /* 标定过就 | FGB_GAZE_POINT_VIEWPORT */
+    slot->gaze.left_point_2d[0]   = x_l;
+    slot->gaze.left_point_2d[1]   = y_l;
+    slot->gaze.right_point_2d[0]  = x_r;
+    slot->gaze.right_point_2d[1]  = y_r;
+    slot->gaze.confidence         = 0.9f;
+    slot->gaze.capture_ts_ns      = device_ts_ns;
+}
+```
+
+- `LEFT/RIGHT` 是**方向**有效位，`POINT_2D` 是**点**有效位，两者互不连坐；
+  `POINT_2D` 一次覆盖左右眼，没有"单眼点"单独的位。
+- **写了 `LEFT/RIGHT` 就必须给真实方向。** 伪造 `(0,0,-1)` 会让 `/api/gaze`、共享内存、
+  UDP 里出现一个恒定的"正前方"，`fixation` 永远成立、`vergence` 恒 0。
+  宿主发现这个指纹（方向位 + 方向恰好 `-Z` + 有点，连续 30 帧）会在日志里警告一次。
+- 方向会被宿主归一化；全零/NaN 退回 `-Z` 但 `valid` 仍按你声明的位走，所以不要把
+  "还没算出来"写成方向位。
+- **2D 点坐标约定（[ADR-0033](adr/0033-gaze-point-2d-space.md)）**：
+  - `POINT_2D` = 有点；`POINT_VIEWPORT` = 这些点**已标定到该眼显示视口**：
+    `x/y ∈ [0,1]`、原点左上、+x 向右、+y 向下、畸变前、逐眼独立
+    （不是物理面板、不是眼动相机图像）。
+  - **不写 `POINT_VIEWPORT` 就按"来源原始坐标"处理**：能看趋势，但消费端不会拿它做
+    foveation。原始坐标（相机图像、协议字段）请只报 `POINT_2D`，别声称视口坐标。
+  - 映射由模块负责，宿主不做换算：
+
+    ```c
+    u = px / viewport_w;  v = py / viewport_h;             /* 像素 → 视口归一化 */
+    u = (x_ndc + 1.0f) * 0.5f;  v = (1.0f - y_ndc) * 0.5f; /* NDC → 视口归一化 */
+    ```
+
+  - 越界（看向画外、标定误差）不是错误，宿主**保留原值不裁剪**，消费端自己 clamp；
+  - `NaN`/`Inf` 会把该眼的点标为无效（另一只眼不受影响）；
+  - 声明了 `POINT_VIEWPORT` 却连续 30 帧明显越界（单轴超出 `[-0.25,1.25]`）
+    宿主告警一次：多半是标定或声明错了。
 - 合并层每个通道独立选源、独立新鲜度：表情 500 ms、眼睛 250 ms、注视 100 ms
   （CLI 可用 `--*-stale-ms` 覆盖）。状态页会显示每个通道的来源与年龄。
 - 头像输出默认只看 `Eyes`；渲染/foveation 用 `Gaze`，没有时回退到眼睛反算。

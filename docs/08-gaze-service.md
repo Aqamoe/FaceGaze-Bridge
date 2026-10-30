@@ -29,7 +29,14 @@ curl http://127.0.0.1:8787/api/gaze
   "right_valid": true,
   "left_dir_local": [0.03, 0.10, -0.99],
   "right_dir_local": [0.01, 0.10, -0.99],
+  "left_pitch_deg": 5.7,
+  "left_yaw_deg": 3.9,
+  "right_pitch_deg": 5.7,
+  "right_yaw_deg": 2.1,
   "point2d_valid": false,
+  "left_point_valid": false,
+  "right_point_valid": false,
+  "point_space": "source",
   "left_point_2d": [0, 0],
   "right_point_2d": [0, 0],
   "pitch_deg": 5.0,
@@ -57,10 +64,13 @@ curl http://127.0.0.1:8787/api/gaze
 |---|---|
 | `ts_ns` | 这次估计的引擎时刻（单调时钟，纳秒）。没有新帧时保持旧值 |
 | `capture_ts_ns` | 注视数据捕获时刻；0 = 未知 |
-| `valid` | 有可用的合并方向（gaze 通道或眼睛） |
+| `valid` | 有可用的合并方向（gaze 通道或眼睛）。**只给 2D 点的来源为 `false`** |
 | `left_valid` / `right_valid` | 逐眼方向是否有效 |
 | `left_dir_local` / `right_dir_local` | 逐眼 HMD 局部单位向量 |
-| `point2d_valid` / `left_point_2d` / `right_point_2d` | 来源提供的 2D 屏幕点；约定尚未对齐 |
+| `left_pitch_deg` / `left_yaw_deg` / `right_pitch_deg` / `right_yaw_deg` | 逐眼俯仰/偏航（与 `dir_local` 同一约定）；无效眼为 0，先看 `left_valid` / `right_valid` |
+| `left_point_valid` / `right_point_valid` | 逐眼 2D 点是否有效（与方向有效**无关**；2D-only 源只有这个为真） |
+| `point_space` | 点所在坐标系：`"viewport"` = 该眼视口归一化（可用于 foveation）；`"source"` = 来源自己的原始坐标，只能展示/看趋势 |
+| `point2d_valid` / `left_point_2d` / `right_point_2d` | 该眼视口归一化坐标（[ADR-0033](adr/0033-gaze-point-2d-space.md)）：`[0,1]`、左上原点、畸变前、逐眼独立；`point2d_valid` 是"左右眼都有点"的兼容字段 |
 | `source` / `source_age_ms` / `source_id` / `source_mask` | 来源实例名、数据年龄、源序号、通道位掩码 |
 | `left_source` / `right_source` | 逐眼来源序号（左右注视可来自不同源） |
 | `left_capture_ts_ns` / `right_capture_ts_ns` | 逐眼捕获时刻 |
@@ -82,11 +92,35 @@ curl http://127.0.0.1:8787/api/gaze
 - 注视通道默认 **100 ms** 过期（`--gaze-stale-ms` 可改），比表情/眼睛更短；
   消费端应检查 `source_age_ms`，过期数据不要用于 foveation。
 
+### 2D 注视点坐标（ADR-0033）
+
+`left_point_2d` / `right_point_2d` 是**该眼显示视口**的归一化坐标：
+
+```text
+(0,0) ─────────── x ──────────► (1,0)
+  │
+  y      左眼、右眼各自一块视口（按眼分开）
+  ▼
+(0,1)                          (1,1)
+```
+
+- `x/y ∈ [0,1]`、原点左上、+x 向右、+y 向下；**畸变前**的采样空间，逐眼独立；
+- **只有 `point_space="viewport"` 才是这个规范空间**。模块没声明 `POINT_VIEWPORT` 时
+  `point_space="source"`：数值是来源自己的归一化原始坐标（相机图像/私有协议），
+  可以用来看两眼差异和趋势，**不要**当成屏幕位置去做 foveation；
+- SHM/UDP 用 `gaze_valid` 的 `FGB_*_GAZE_POINT_VIEWPORT` 位（0x10）表达同一件事；
+- 映射由来源模块负责（它才知道内参/镜像/换眼/分辨率），FGB 不做像素/NDC/反投影换算；
+- 越界不是错误（看向画外、标定误差），FGB **保留原值不裁剪**；`NaN`/`Inf` 会把该眼的
+  点标为无效，另一只眼不受影响；
+- 换到别的坐标：`ndc = (2x-1, 1-2y)`、像素 `= (x·W, y·H)`，视口尺寸由消费端掌握；
+- 眼动相机图像坐标**不是**这个空间，模块必须自己标定后再报。
+
 ### 注视判定
 
 - 进入：角速度 < **30°/s** 且持续 >= **80 ms**；
 - 退出：角速度 > **80°/s**（30–80 是迟滞区）；
 - 断档 > **0.5 s** 不跨帧累计，直接退出注视。
+- 没有方向的来源（只给 2D 点）不参与判定：`valid` 为假，状态直接清空、不累计。
 
 ## 最小客户端
 
@@ -110,7 +144,20 @@ print(g["valid"], g["fixation"], g["pitch_deg"], g["yaw_deg"], g["vergence_dista
 - **局部坐标，不是世界注视点**：没有 HMD 世界变换、眼睛原点和场景深度，
   所以不返回 `origin_world` / `target_world`。需要世界坐标时由客户端拿头姿自己做。
 - **没有预测**：M5.4 的速度外推未实现；管线延迟补偿还没有。
-- **只有合并方向**：左右眼独立方向/瞳孔字段、眨眼分类尚未加入。
+- **逐眼数据不全**：左右眼方向/角度/2D 点/来源与捕获时刻已提供；
+  逐眼置信度、瞳孔直径、逐眼注视判定、眨眼分类尚未加入。
+  控制面状态页把左右眼分行显示，单眼失效时该行为 `—`。
+- **只给 2D 点的来源**（`FGB_GAZE_POINT_2D`，没有方向模型的原生模块）：
+  帧会被正常接收，`point2d_valid` / `left_point_valid` / `right_point_valid` 为真，
+  而 `valid` / `left_valid` / `right_valid` 为假——**没有方向就不返回方向**，
+  `pitch_deg` / `yaw_deg` 保持 0 且不应被消费。
+  这类来源没有角速度可算，`fixation` / `fixation_ms` / `saccade_vel_deg_s` 恒为假/0，
+  `vergence_distance` 也是 0；消费端看 `point2d_valid` 而不是 `fixation`。
+  状态页对它们**优先显示 2D 点**（坐标约定见上文 §2D 注视点坐标），2D 框也按点画。
+- **方向与 2D 点在 SDK 层是两条独立位**（`FGB_GAZE_LEFT/RIGHT/COMBINED` 与
+  `FGB_GAZE_POINT_2D`），解析层现在也按这个约定走（`sources/native_gaze_parse.hpp`）。
+  **模块只给点时必须只声明 `FGB_GAZE_POINT_2D`**：伪造一个 `-Z` 方向位会让
+  `valid` 变真、`fixation` 永远「注视中」，第三方还会拿到假方向。
 - **本地回环**：控制面只绑 `127.0.0.1`，无鉴权。
 - **没有新帧时 `ts_ns` 不前进**：消费者应按 `ts_ns` 判断是否过期，而不是假设 30 Hz 一定有新数据。
 - **没有 OpenXR 注入**：M5.5–5.8 的 API Layer、ETFR、ALVR 对接未做。

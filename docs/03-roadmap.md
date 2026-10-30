@@ -301,6 +301,18 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > 5.2 `/api/gaze` + 30 Hz WebSocket `gaze` 推送已完成，状态页有注视卡片；
 > 5.3 的头姿已在 `FaceFrame` 里（VMC/模块来源），OpenXR 头姿接入未做；
 > 5.4 预测、5.5–5.8 OpenXR Layer / ETFR / ALVR 未做。
+> 2026-10-31 补：状态页注视卡片改为左右眼分行显示（逐眼方向/角度/来源 + 双点），
+> `/api/gaze` 增 `left/right_pitch_deg`、`left/right_yaw_deg`——5.4 的外推作用在合并方向上，
+> 逐眼可见后才能验证它是否破坏聚散一致性。
+> 同日真机（PICO + 一个只给逐眼 2D 点的原生模块）：`left_valid/right_valid` 均为真、
+> 逐眼点差异稳定 3–9% 屏宽，但该模块没有方向模型，方向恒 `-Z` → 状态页改为**有点显示点**。
+> 同日完成「方向有效」与「2D 点有效」解耦（`sources/native_gaze_parse.hpp`）：
+> 只声明 `FGB_GAZE_POINT_2D` 的帧不再被丢，`valid` 在有方向时才为真、
+> `fixation` 对 2D-only 源不再恒「注视中」；`/api/gaze` 增 `left/right_point_valid`。
+> 示例模块加了 `FGB_SAMPLE_GAZE_POINTS_ONLY=1` 覆盖这条 ABI 路径。
+> 同日收口 ADR-0030 的「2D 点坐标约定」开放问题 → [ADR-0033](adr/0033-gaze-point-2d-space.md)：
+> 该眼显示视口归一化 `[0,1]`／左上原点／畸变前／逐眼独立／越界保留／NaN 逐眼否掉，
+> 映射责任在模块，宿主只做合法性校验与越界告警（连续 30 帧）。
 > 见 [ADR-0026](adr/0026-gaze-estimator-and-api.md)、[08-gaze-service.md](08-gaze-service.md)。
 
 **验收**：在 1 个原本不支持眼追的 Unity OpenXR 游戏里，`XR_EXT_eye_gaze_interaction` 能返回 FGB 的注视数据且延迟 < 30 ms。
