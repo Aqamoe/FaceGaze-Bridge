@@ -54,8 +54,10 @@ public:
     // 每个源的贡献情况，供界面显示"哪一路在喂数据"
     std::vector<SourceReport> source_report() const { return merger_.report(last_tick_ns_); }
 
-    // 重启一个模块型输入（跨进程宿主用于崩溃恢复/热重载）；其他源返回 false。
+    // 模块型输入的重启/停止/启动（跨进程宿主用于崩溃恢复、热替换 DLL）。
     bool restart_source(std::string_view name, std::string& error);
+    bool stop_source(std::string_view name, std::string& error);
+    bool start_source(std::string_view name, std::string& error);
 
     bool start();
     void stop() noexcept;

@@ -427,8 +427,9 @@ fgb-cli run --source vrcft --native-host-exe "D:\FGB\fgb-host-native.exe"
   共享内存读帧，模块崩溃/卡死不会阻塞引擎。
 - 崩溃/心跳超时后默认自动重启最多 3 次（退避），不阻塞引擎 tick；
   `--no-host-restart` 可关闭。自动重启会重新 initialize，模块状态不保留。
-- 模块页实例行的「重启实例」会停宿主再拉起；DLL 在宿主退出期间解锁，
-  替换文件后点它即可加载新 DLL，不需要重启整个引擎。
+- 模块页实例行有「停止 / 启动 / 重启实例」：热替换 DLL 时先「停止」（宿主退出、
+  文件解锁），替换模块文件后再「启动」，不需要重启整个引擎；「重启实例」是
+  停止+启动一步完成。
 - 宿主模式暂不支持 `--record`；模块日志经共享内存 ring 回传引擎日志，同时写到
   `%LOCALAPPDATA%\FaceGazeBridge\logs\native-host-*.log`。
 - 发布包需要 `fgb-host-native.exe` 与主程序放在一起；缺失时自动回退进程内。

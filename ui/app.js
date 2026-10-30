@@ -1678,11 +1678,22 @@ function render_instance_section(data) {
         row.append(el("span", "chip err", t("modules.instance.unavailable")));
       }
       if (instance.host_process) {
+        const running = ((state.status && state.status.modules) || []).find((entry) =>
+          entry.module_id === instance.module_id &&
+          (entry.name === instance.name || entry.name.endsWith(`:${instance.name}`)));
+        const live = !!running && running.state !== "stopped";
+        const toggle = el("button", "btn ghost small",
+          live ? t("modules.instance.stop") : t("modules.instance.start"));
+        toggle.dataset.role = live ? "stop" : "start";
+        toggle.addEventListener("click", () => {
+          send({ type: live ? "stop_instance" : "start_instance", name: instance.name });
+        });
         const restart = el("button", "btn ghost small", t("modules.instance.restart"));
+        restart.dataset.role = "restart";
         restart.addEventListener("click", () => {
           send({ type: "restart_instance", name: instance.name });
         });
-        row.append(restart);
+        row.append(toggle, restart);
       }
       const remove = el("button", "btn danger small", t("modules.instance.remove"));
       remove.addEventListener("click", async () => {

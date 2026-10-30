@@ -198,6 +198,21 @@ FGB_TEST(native_host_manual_restart_reloads_process) {
     source.stop();
 }
 
+FGB_TEST(native_host_can_stop_and_start_for_hot_replace) {
+    if (!fs::exists(host_exe()) || !fs::exists(sine_dll())) {
+        return;
+    }
+    NativeHostSource source{base_config("host-stop-start", sine_dll(),
+                                        "com.fgbbridge.sample.sine", "Sine Sample Module")};
+    FGB_CHECK(source.start());
+    source.stop();
+    FGB_CHECK(!source.module_status()->alive);
+    // 停止后宿主进程退出、DLL 解锁；这里模拟替换完成后的再次启动。
+    FGB_CHECK(source.start());
+    FGB_CHECK(source.module_status()->alive);
+    source.stop();
+}
+
 FGB_TEST(native_host_missing_executable_is_reported) {
     NativeHostConfig config;
     config.host_exe    = exe_dir() / "does-not-exist-host.exe";

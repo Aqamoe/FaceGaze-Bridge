@@ -58,6 +58,37 @@ bool Engine::restart_source(std::string_view name, std::string& error) {
     return false;
 }
 
+bool Engine::stop_source(std::string_view name, std::string& error) {
+    error.clear();
+    for (auto& source : sources_) {
+        if (source == nullptr || name != source->name()) {
+            continue;
+        }
+        source->stop();
+        FGB_INFO(kTag, "输入源 '%s' 已停止", source->name());
+        return true;
+    }
+    error = "找不到输入源";
+    return false;
+}
+
+bool Engine::start_source(std::string_view name, std::string& error) {
+    error.clear();
+    for (auto& source : sources_) {
+        if (source == nullptr || name != source->name()) {
+            continue;
+        }
+        if (!source->start()) {
+            error = "输入源启动失败";
+            return false;
+        }
+        FGB_INFO(kTag, "输入源 '%s' 已启动", source->name());
+        return true;
+    }
+    error = "找不到输入源";
+    return false;
+}
+
 bool Engine::start() {
     for (auto& source : sources_) {
         if (!source->start()) {

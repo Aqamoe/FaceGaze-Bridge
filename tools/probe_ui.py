@@ -273,7 +273,7 @@ def main():
         "    hosts: document.querySelectorAll('.instance-host input').length,"
         "    host_values: [...document.querySelectorAll('.instance-host input')].map(n => n.checked),"
         "    host_expected: state.modules && state.modules.instances ? state.modules.instances.length : 0,"
-        "    restart_buttons: document.querySelectorAll('.instance-row .btn.ghost').length,"
+        "    restart_buttons: document.querySelectorAll('.instance-row [data-role=restart]').length,"
         "    host_count: state.modules && state.modules.instances"
         "      ? state.modules.instances.filter(i => i.host_process).length : 0"
         "  });"

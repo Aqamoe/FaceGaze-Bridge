@@ -1693,6 +1693,42 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
                 error = restart_error;
             }
         }
+    } else if (has_type && (type == "stop_instance" || type == "start_instance")) {
+        std::string name;
+        json::field_string(text, "name", name);
+        if (ctx_.engine == nullptr) {
+            error = "engine not available";
+        } else if (name.empty()) {
+            error = "missing instance name";
+        } else {
+            const RunningModule* target = nullptr;
+            const std::string suffix = ":" + name;
+            for (const RunningModule& module : ctx_.running_modules) {
+                if (module.display_name == name ||
+                    (module.display_name.size() >= suffix.size() &&
+                     module.display_name.compare(module.display_name.size() - suffix.size(),
+                                                 suffix.size(), suffix) == 0)) {
+                    target = &module;
+                    break;
+                }
+            }
+            std::string op_error;
+            const bool start = type == "start_instance";
+            const bool changed =
+                target != nullptr &&
+                (start ? ctx_.engine->start_source(target->display_name, op_error)
+                       : ctx_.engine->stop_source(target->display_name, op_error));
+            if (target == nullptr) {
+                error = "unknown instance";
+            } else if (changed) {
+                modules_touched = true;
+                modules_message = start ? "实例已启动" : "实例已停止";
+                ack_message     = target->display_name + (start ? " 已启动" : " 已停止");
+                ok              = true;
+            } else {
+                error = op_error;
+            }
+        }
     } else if (has_type && type == "set_module_roles") {
         if (ctx_.modules == nullptr) {
             error = "module registry not available";

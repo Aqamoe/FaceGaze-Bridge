@@ -70,7 +70,8 @@ sdk\                   集成文档与示例
 - `--native-host`：原生模块走独立 `fgb-host-native.exe` 进程，模块崩溃不带走引擎；
   默认关闭。`--native-host-exe <路径>` 可覆盖宿主位置；`--no-host-restart` 关闭
   崩溃后的自动重启。界面「模块 → 启动实例」的「独立进程」开关按实例配置，
-  写入 `modules.ini` 的 `[instance_host]`；宿主实例行还有「重启实例」。
+  写入 `modules.ini` 的 `[instance_host]`；宿主实例行还有「停止 / 启动 / 重启实例」，
+  可在不重启引擎的情况下替换 DLL（停止 → 替换文件 → 启动）。
 - `--attr-source <属性=源[,源]>`：逐属性有序源列表，属性包括
   `left/right-openness`、`left/right-pupil`、`left/right-gaze`、`vergence`。
 
