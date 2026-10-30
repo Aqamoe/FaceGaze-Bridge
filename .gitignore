@@ -61,3 +61,6 @@ desktop.ini
 # ---- keep ----
 !LICENSE
 !NOTICE
+
+# ---- 私有研究资料（禁止公开） ----
+/research-private/

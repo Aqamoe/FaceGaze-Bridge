@@ -140,7 +140,7 @@ ring），脆弱/第三方模块默认走跨进程，稳定可信模块可选 in
 | 模块 | 能力 | 数据来源 | 更新节奏 |
 |---|---|---|---|
 | `pico-connect-face` | `EXPRESSION` | PICO 互联面捕协议 | 跟随面捕格式 |
-| `pico-connect-gaze` | `GAZE`（可选 `EYE` 的 openness/pupil） | PICO 互联内部 RPC / OpenXR 眼动 | 跟随 PICO 互联版本 |
+| `pico-connect-gaze` | `GAZE`（可选 `EYE` 的 openness/pupil） | PICO 互联眼动（按可用接口适配） | 跟随 PICO 互联版本 |
 | `pico-full`（可选） | `EXPRESSION \| EYE \| GAZE \| HEAD` | 头显 APK（PicoFacialBridge 类） | 跟随 APK |
 
 用户按角色组合：面捕用 face 模块，渲染注视用 gaze 模块；不再要求一个模块包打全部。
