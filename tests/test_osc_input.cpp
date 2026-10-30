@@ -12,6 +12,7 @@
 
 #include "test_framework.hpp"
 
+#include <cmath>
 #include <cstddef>
 #include <filesystem>
 #include <span>
@@ -174,9 +175,12 @@ FGB_TEST(osc_source_receives_and_maps) {
 
         const std::uint64_t round_deadline = clock::now_ns() + 100'000'000ULL;
         while (clock::now_ns() < round_deadline) {
+            // 收齐的判据要具体到两条轴：只看 gazeConf 的话，/ex 一到就会算出一个
+            // 有效方向（另一条轴还是 0），断言会在"只丢了 /ey"的包上偶发失败。
             if (wait_for_frame(source, frame, 20) && frame.shape_is_valid(Shape::JawOpen) &&
                 frame.eyes.left.valid && frame.has_channel(channel::kExpression) &&
-                frame.eyes.left.gazeConf > 0.0f) {
+                std::abs(frame.eyes.left.gazePitchYawDeg.y - 15.0f) < 1e-3f &&
+                std::abs(frame.eyes.left.gazePitchYawDeg.x + 15.0f) < 1e-3f) {
                 complete = true;
                 break;
             }
