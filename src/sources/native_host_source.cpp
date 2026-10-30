@@ -602,6 +602,12 @@ void NativeHostSource::stop_host() noexcept {
             ::WaitForSingleObject(static_cast<HANDLE>(process_), 1000);
         }
     }
+    // 模块自己拉起的子进程（比如自带的采集 tap）不随宿主退出：Job 的
+    // KILL_ON_JOB_CLOSE 要到句柄关闭才异步生效，紧接着删模块目录会和它们
+    // 抢文件锁。这里先显式清空 Job，让子进程尽早退出。
+    if (job_ != nullptr) {
+        ::TerminateJobObject(static_cast<HANDLE>(job_), 1);
+    }
 #endif
     close_handles();
     started_ = false;

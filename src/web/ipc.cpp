@@ -38,6 +38,22 @@ namespace {
 
 constexpr char kTag[] = "ipc";
 
+// 实例在启动配置里、但引擎启动时还没加载（用户刚添加）：和"名字根本不存在"
+// 分开说，否则界面只剩一句 unknown instance。
+std::string instance_missing_error(const vrcft::ModuleRegistry* registry,
+                                   const std::string& name) {
+    if (registry != nullptr) {
+        const auto& instances = registry->instances();
+        if (std::any_of(instances.begin(), instances.end(),
+                        [&name](const vrcft::ModuleInstance& instance) {
+                            return instance.name == name;
+                        })) {
+            return "实例「" + name + "」尚未加载（新增实例需重启引擎后生效）";
+        }
+    }
+    return "未知实例：" + name;
+}
+
 // 推送节奏。10 Hz 对人眼足够（热力图看不出 100 ms 的台阶），
 // 又远低于引擎 120 Hz，不会把主循环的时间预算吃掉。
 constexpr auto kStatusPeriod = std::chrono::milliseconds(100);
@@ -1052,10 +1068,18 @@ void IpcServer::build_modules(std::string& out) {
     bool instances_match = true;
     if (registry != nullptr) {
         for (const vrcft::ModuleInstance& instance : registry->instances()) {
+            const vrcft::ModuleInfo* module = registry->find(instance.module_id);
+            // 引擎启动时同样会跳过这些实例，不该因为它们永远提示"配置已变更"
+            if (module == nullptr || !module->enabled || module->broken) {
+                continue;
+            }
+            // host_process 只对原生模块有意义：VRCFT 实例永远跑在 ModuleProcess.exe 里，
+            // 配置里残留的 true 不代表加载方式不同，拿它比较会让提示永远消不掉。
+            const bool native = module->kind == vrcft::ModuleKind::native;
             bool found = false;
             for (const RunningModule& running : ctx_.running_modules) {
                 if (running.module_id != instance.module_id ||
-                    running.host_process != instance.host_process) {
+                    (native && running.host_process != instance.host_process)) {
                     continue;
                 }
                 const std::string suffix = ":" + instance.name;
@@ -1710,7 +1734,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             }
             std::string restart_error;
             if (target == nullptr) {
-                error = "unknown instance";
+                error = instance_missing_error(ctx_.modules, name);
             } else if (ctx_.engine->restart_source(target->display_name, restart_error)) {
                 modules_touched = true;
                 modules_message = "实例已重启";
@@ -1746,7 +1770,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
                 (start ? ctx_.engine->start_source(target->display_name, op_error)
                        : ctx_.engine->stop_source(target->display_name, op_error));
             if (target == nullptr) {
-                error = "unknown instance";
+                error = instance_missing_error(ctx_.modules, name);
             } else if (changed) {
                 modules_touched = true;
                 modules_message = start ? "实例已启动" : "实例已停止";

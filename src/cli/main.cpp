@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -39,6 +40,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -1396,8 +1398,20 @@ int cmd_run(int argc, char** argv) {
     if (ipc) {
         const std::string pending_delete = ipc->take_pending_delete();
         if (!pending_delete.empty() && module_registry) {
+            // 宿主拉起的子进程（模块自带的 tap 等）退出、释放目录里的文件可能
+            // 比宿主晚几十毫秒；立刻删会偶发"另一个程序正在使用此文件"。给一个
+            // 2 秒重试窗口，别让用户在界面上再手动停一次实例。
+            bool removed = false;
             std::string remove_error;
-            if (module_registry->remove_module(pending_delete, remove_error)) {
+            for (int attempt = 0; attempt < 20; ++attempt) {
+                remove_error.clear();
+                if (module_registry->remove_module(pending_delete, remove_error)) {
+                    removed = true;
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            if (removed) {
                 FGB_INFO("modules", "停机后删除模块：%s", pending_delete.c_str());
             } else {
                 FGB_WARN("modules", "停机后删除模块失败：%s", remove_error.c_str());

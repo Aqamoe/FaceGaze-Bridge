@@ -24,6 +24,36 @@ namespace {
 
 constexpr char kTag[] = "modules";
 
+// std::error_code::message() 在中文 Windows 上是 ACP（GBK）窄串：拼进 UTF-8
+// 的错误文本会变成乱码，界面 toast 与日志都读不出来。统一转成 UTF-8。
+std::string system_message(const std::error_code& ec) {
+#ifdef _WIN32
+    const std::string narrow = ec.message();
+    if (narrow.empty()) {
+        return narrow;
+    }
+    const int wide_length = ::MultiByteToWideChar(CP_ACP, 0, narrow.data(),
+                                                  static_cast<int>(narrow.size()), nullptr, 0);
+    if (wide_length <= 0) {
+        return narrow;
+    }
+    std::wstring wide(static_cast<std::size_t>(wide_length), L'\0');
+    ::MultiByteToWideChar(CP_ACP, 0, narrow.data(), static_cast<int>(narrow.size()),
+                          wide.data(), wide_length);
+    const int utf8_length = ::WideCharToMultiByte(CP_UTF8, 0, wide.data(), wide_length,
+                                                  nullptr, 0, nullptr, nullptr);
+    if (utf8_length <= 0) {
+        return narrow;
+    }
+    std::string utf8(static_cast<std::size_t>(utf8_length), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, wide.data(), wide_length, utf8.data(), utf8_length,
+                          nullptr, nullptr);
+    return utf8;
+#else
+    return ec.message();
+#endif
+}
+
 #ifndef FGB_VERSION
 #define FGB_VERSION "0.0.0"
 #endif
@@ -910,7 +940,7 @@ bool ModuleRegistry::install_loose_dll(const std::filesystem::path& dll, std::st
     std::filesystem::create_directories(temp, ec);
     std::filesystem::copy_file(dll, temp / dll.filename(), ec);
     if (ec) {
-        error = "复制 DLL 失败：" + ec.message();
+        error = "复制 DLL 失败：" + system_message(ec);
         std::filesystem::remove_all(temp, ec);
         return false;
     }
@@ -992,7 +1022,7 @@ bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
                               std::filesystem::copy_options::overwrite_existing,
                           ec);
     if (ec) {
-        error = "复制模块文件失败：" + ec.message();
+        error = "复制模块文件失败：" + system_message(ec);
         std::filesystem::remove_all(staging, ec);
         return false;
     }
@@ -1029,7 +1059,7 @@ bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
                                        config_ec);
             if (config_ec) {
                 FGB_WARN(kTag, "升级 %s 时未能保留 config.ini：%s", id.c_str(),
-                         config_ec.message().c_str());
+                         system_message(config_ec).c_str());
             }
         }
     }
@@ -1052,7 +1082,7 @@ bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
     }
     std::filesystem::rename(staging, dest, ec);
     if (ec) {
-        error = "安装目录落位失败：" + ec.message();
+        error = "安装目录落位失败：" + system_message(ec);
         std::filesystem::remove_all(staging, ec);
         if (!backup.empty()) {
             // 落位失败要回滚，不能让用户既丢了旧版本又没装上新版本
@@ -1155,7 +1185,7 @@ bool ModuleRegistry::remove_module(std::string_view id, std::string& error) {
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
     if (ec) {
-        error = "删除失败（可能正在被引擎/模块进程占用）：" + ec.message();
+        error = "删除失败（可能正在被引擎/模块进程占用）：" + system_message(ec);
         return false;
     }
     states_.erase(state_key(module->id));

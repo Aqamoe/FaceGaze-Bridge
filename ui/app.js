@@ -891,6 +891,8 @@ function render_status(status) {
     render_running_modules(status.modules);
     // 实例行的「停止/启动」要跟着实时状态翻转，不能只在 modules 消息时更新
     update_instance_controls();
+    // 卡片上的状态 chip 同理：模块跑起来后 modules 消息不会重推
+    update_module_chips(status.modules);
   }
   render_sources(status.sources || []);
   render_role_hint();
@@ -1207,7 +1209,13 @@ function module_chip(item) {
   if (!item.enabled) {
     return { text: t("state.disabled"), cls: "" };
   }
-  if (item.running) {
+  // 运行态以 1Hz 的 status 为准：modules 消息只在配置变化时推，模块从
+  // 「初始化中」变「运行中」不会触发它，照抄 item.state 会让卡片停在旧文案。
+  const live = running_state_of(item.id);
+  if (live) {
+    return format_state(live);
+  }
+  if (item.running && !state.status) {
     return format_state(item.state);
   }
   if (item.active) {
@@ -1770,11 +1778,22 @@ function instance_is_live(instance) {
 
 function update_instance_controls() {
   for (const controls of Object.values(state.instance_controls || {})) {
-    const live = instance_is_live(controls.instance);
+    const entry = instance_running_entry(controls.instance);
+    // 新增实例只在引擎启动时加载：没重启引擎前它不在运行列表里，点启动/重启
+    // 只会收到 "unknown instance"。这里直接禁用，并把原因写在 tooltip 上。
+    const known = !!state.status && state.connected;
+    const loaded = !!entry;
+    const live = loaded && entry.state !== "stopped";
     controls.toggle.textContent = live ? t("modules.instance.stop") : t("modules.instance.start");
     controls.toggle.dataset.role = live ? "stop" : "start";
-    controls.toggle.disabled = !!controls.busy;
-    controls.restart.disabled = !!controls.busy;
+    const hint = known && !loaded ? t("modules.instance.not_loaded_hint") : "";
+    controls.toggle.title = hint;
+    controls.restart.title = hint;
+    controls.toggle.disabled = !!controls.busy || (known && !loaded);
+    controls.restart.disabled = !!controls.busy || (known && !loaded);
+    if (controls.pending) {
+      controls.pending.hidden = !(known && !loaded);
+    }
   }
 }
 
@@ -1835,6 +1854,10 @@ function render_instance_section(data) {
       if (!instance.enabled) {
         row.append(el("span", "chip err", t("modules.instance.unavailable")));
       }
+      // 配置里有、引擎还没加载（刚添加）：告诉用户差一步重启引擎
+      const pending = el("span", "chip warn", t("modules.instance.not_loaded"));
+      pending.hidden = true;
+      row.append(pending);
 
       const toggle = el("button", "btn ghost small", t("modules.instance.start"));
       toggle.dataset.role = "start";
@@ -1851,7 +1874,7 @@ function render_instance_section(data) {
         lock_instance_controls(instance.name);
       });
       row.append(toggle, restart);
-      state.instance_controls[instance.name] = { instance, toggle, restart, busy: false };
+      state.instance_controls[instance.name] = { instance, toggle, restart, pending, busy: false };
       const remove = el("button", "btn danger small", t("modules.instance.remove"));
       remove.addEventListener("click", async () => {
         const text = t("modules.instance.remove_confirm", { name: instance.name });
@@ -1997,6 +2020,37 @@ function running_state_of(module_id) {
   const running = (state.status && state.status.modules) || [];
   const hit = running.find((item) => item.module_id === module_id);
   return hit ? hit.state : null;
+}
+
+// 不重建 DOM 地刷新已装模块卡片的 chip 与错误行：modules 消息只在配置变化时推，
+// 而"初始化中 → 运行中"、模块自愈清错都只能从 1Hz 的 status 里看到。
+function update_module_chips(modules) {
+  const list = $("module-list");
+  const items = (state.modules && state.modules.items) || [];
+  if (!list || !items.length) {
+    return;
+  }
+  const live = modules || [];
+  for (const card of list.querySelectorAll(".module-card")) {
+    const item = items.find((entry) => entry.id === card.dataset.id);
+    if (!item) {
+      continue;
+    }
+    const chip_state = module_chip(item);
+    const chip = card.querySelector("[data-role=chip]");
+    if (chip) {
+      chip.className = `chip ${chip_state.cls}`.trim();
+      chip.textContent = chip_state.text;
+    }
+    const entry = live.find((row) => row.module_id === item.id);
+    const message = entry && entry.error ? entry.error : "";
+    const error = card.querySelector("[data-role=error]");
+    if (error) {
+      error.hidden = !message;
+      error.textContent = message.slice(0, 400);
+      error.title = message;
+    }
+  }
 }
 
 // ---------- 渲染：校准 ----------
