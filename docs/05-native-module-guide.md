@@ -221,7 +221,8 @@ Compress-Archive -Path fgb-native.json,MyModule.dll -DestinationPath MyModule.zi
 
 ## 9. 限制与版本演进
 
-- **v1/v2 都是进程内加载**：模块崩溃会带走引擎；跨进程宿主是 V2 阶段 C
+- **默认是进程内加载**：模块崩溃会带走引擎。`--native-host` 可让原生模块走
+  `fgb-host-native.exe` 独立进程（V2 阶段 C MVP），崩溃不再影响引擎；默认关闭
 - 界面可以配置多个启动实例并按“表情 / 眼睛 / 注视 / 头姿”选来源；CLI 还支持
   左右眼/左右注视分源与 `--avatar-eye-from-gaze`。ABI v2 属性帧支持只给
   openness/pupil 或单眼数据。见
@@ -398,7 +399,23 @@ host->commit_frame_slot(host->ctx, slot, 0);
   “真的给了方向”和“默认正前方”。只给 gaze 的模块不会驱动头像 openness。
 - 参考实现：[`samples/native-openness`](../samples/native-openness)。
 
-### 11.6 PICO 类设备怎么拆
+### 11.6 跨进程宿主（V2 阶段 C）
+
+```powershell
+fgb-cli run --source vrcft --native-host
+# 或显式指定宿主 exe
+fgb-cli run --source vrcft --native-host-exe "D:\FGB\fgb-host-native.exe"
+```
+
+- 每个原生模块一个 `fgb-host-native.exe` 进程；引擎通过 `Local\FGB_NativeHost_*`
+  共享内存读帧，模块崩溃/卡死不会阻塞引擎。
+- 首版不做自动重启：模块卡片会显示宿主退出原因，重启引擎即可恢复。
+- 宿主模式暂不支持 `--record`；模块日志写到
+  `%LOCALAPPDATA%\FaceGazeBridge\logs\native-host-*.log`。
+- 发布包需要 `fgb-host-native.exe` 与主程序放在一起；缺失时自动回退进程内。
+  协议布局见 [`sdk/fgb_native_host_shm.h`](../sdk/fgb_native_host_shm.h)。
+
+### 11.7 PICO 类设备怎么拆
 
 | 模块 | 能力 | 数据来源 |
 |---|---|---|

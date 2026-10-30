@@ -266,7 +266,11 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > 头像眼睛可保留 A 的 openness/pupil、改用 B 的 gaze 方向；默认仍是 v1.1 行为。
 > **V2 阶段 B 已实施（2026-10-30）**：`FgbFrameSlotV2` 属性掩码与
 > `fgb_module_query_v2` 落地，支持只给 openness/pupil 或单眼属性的模块；v1 模块
-> 继续走原路径。阶段 C（跨进程宿主）尚未开始。
+> 继续走原路径。
+>
+> **V2 阶段 C MVP 已实施（2026-10-30）**：`fgb-host-native.exe` 一模块一进程，
+> 共享内存 seqlock 传帧；CLI `--native-host` 显式开启，崩溃隔离已验证。自动重启、
+> 宿主日志 ring、热替换 DLL 留到 C.2（见 [ADR-0032](adr/0032-native-host-process.md)）。
 
 **验收**：5 个 Sink 同时输出时，主链路延迟不增加 > 0.5 ms；录制 10 分钟文件 < 20 MB。
 

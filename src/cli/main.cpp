@@ -20,6 +20,7 @@
 #include "sinks/ws_json_sink.hpp"
 #include "capture/capture_file.hpp"
 #include "sources/livelink_source.hpp"
+#include "sources/native_host_source.hpp"
 #include "sources/native_source.hpp"
 #include "sources/osc_source.hpp"
 #include "sources/replay_source.hpp"
@@ -119,6 +120,8 @@ void print_usage() {
                  "  --module-exe <路径>     VRCFaceTracking.ModuleProcess.exe 路径\n"
                  "  --module-dll <路径>     直接指定模块 DLL（跳过模块发现）\n"
                  "  --module-id <id>        按 id 或名字选模块，可重复（见 fgb-cli modules）\n"
+                 "  --native-host           原生模块走独立宿主进程（崩溃隔离，默认关）\n"
+                 "  --native-host-exe <路径> 指定 fgb-host-native.exe（默认 exe 旁边）\n"
                  "  --vrchat <host:port>    VRChat OSC 目标 (默认 127.0.0.1:9000)\n"
                  "  --vmc-out <host:port>   额外按 VMC 协议输出一份（如 127.0.0.1:39539）\n"
                  "  --shm <名字>            共享内存输出（Local\\FGB_Shm_<名字>，给 Unity/UE 读取）\n"
@@ -331,6 +334,9 @@ int cmd_run(int argc, char** argv) {
     int head_stale_ms       = 500;
     std::filesystem::path module_exe;
     std::filesystem::path module_dll;
+    bool native_host = false;
+    std::filesystem::path native_host_exe;
+    int native_host_counter = 0;
     std::string active_module_id;
     std::unique_ptr<fgb::vrcft::ModuleRegistry> module_registry;
     // 每个 vrcft 实例的展示信息：界面按实例显示运行态
@@ -510,6 +516,13 @@ int cmd_run(int argc, char** argv) {
             const auto v = next_value(arg);
             if (!v.empty()) {
                 module_ids.emplace_back(v);
+            }
+        } else if (arg == "--native-host") {
+            native_host = true;
+        } else if (arg == "--native-host-exe") {
+            const auto v = next_value(arg);
+            if (!v.empty()) {
+                native_host_exe = std::filesystem::path{std::string{v}};
             }
         } else if (arg == "--vmc-port") {
             const auto v = next_value(arg);
@@ -741,7 +754,50 @@ int cmd_run(int argc, char** argv) {
     };
 
     auto launch_module = [&](const ModuleLaunch& launch, const std::string& display) -> bool {
-        // 原生模块走进程内 C ABI；VRCFT 模块需要一个 .NET 宿主运行时
+        // 原生模块可以走独立宿主进程（崩溃隔离），否则走进程内 C ABI。
+        if (launch.native && native_host) {
+            const std::filesystem::path host_exe =
+                native_host_exe.empty() ? (executable_dir() / L"fgb-host-native.exe")
+                                        : native_host_exe;
+            std::error_code ec;
+            if (std::filesystem::exists(host_exe, ec)) {
+                const int index = ++native_host_counter;
+                std::filesystem::path log_dir = fgb::config::default_outputs_path().parent_path();
+                if (log_dir.empty()) {
+                    log_dir = executable_dir();
+                }
+                fgb::NativeHostConfig host_cfg;
+                host_cfg.host_exe    = host_exe;
+                host_cfg.module_dll  = launch.dll;
+                host_cfg.log_path    = log_dir / "logs" /
+                                       ("native-host-" + std::to_string(index) + ".log");
+                host_cfg.module_id   = launch.module_id;
+                host_cfg.module_name = launch.module_name;
+                host_cfg.display_name = display;
+                host_cfg.shm_name    = "module-" + std::to_string(index);
+                host_cfg.tick_hz     = tick_hz;
+                if (!record_path.empty()) {
+                    FGB_WARN("native-host", "宿主模式暂不支持 --record，已忽略");
+                }
+                auto host_source = std::make_unique<fgb::NativeHostSource>(host_cfg);
+                FGB_INFO("native-host", "%s 使用宿主进程：%s", display.c_str(),
+                         host_exe.string().c_str());
+
+                fgb::web::RunningModule running;
+                running.display_name = display;
+                running.module_id    = launch.module_id;
+                running.module_name  = launch.module_name;
+                running.source       = host_source.get();
+                running_modules.push_back(std::move(running));
+
+                engine.add_source(std::move(host_source));
+                source_names.push_back(display);
+                return true;
+            }
+            FGB_WARN("native-host", "找不到 %s，%s 回退进程内加载", host_exe.string().c_str(),
+                     display.c_str());
+        }
+
         if (launch.native) {
             fgb::NativeSourceConfig cfg;
             cfg.dll          = launch.dll;

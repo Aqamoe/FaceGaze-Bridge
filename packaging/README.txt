@@ -98,7 +98,9 @@ VRCFT 运行时
 --------
   FaceGaze Bridge.exe   唯一入口：界面窗口 + 启动引擎
   fgb-cli.exe           引擎与命令行工具（modules / run / params …）
+  fgb-host-native.exe   原生模块跨进程宿主（--native-host 时使用，可选）
   sdk/fgb_module_api.h  原生模块 ABI 头（给模块开发者，普通用户不用管）
+  sdk/fgb_native_host_shm.h 跨进程宿主共享内存布局（排查/二次开发用）
   sdk/fgb_shared_frame.h 共享内存输出布局（给 Unity/UE 集成开发）
   sdk/fgb_udp_frame.h    UDP 二进制输出布局（656 字节固定帧）
   sdk/SHARED-MEMORY.md   共享内存读取指南

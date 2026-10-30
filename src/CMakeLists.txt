@@ -105,6 +105,7 @@ add_library(fgb_engine STATIC
     sources/livelink_source.cpp
     sources/vrcft_source.cpp
     sources/native_source.cpp
+    sources/native_host_source.cpp
     sources/replay_source.cpp
     engine/engine.cpp)
 target_link_libraries(fgb_engine PUBLIC fgb_core fgb_osc fgb_net fgb_vrcft fgb_params fgb_capture
@@ -139,6 +140,14 @@ function(fgb_add_windows_resources target internal_name original_filename descri
                    "${CMAKE_CURRENT_BINARY_DIR}/res/${target}.rc" @ONLY)
     target_sources(${target} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/res/${target}.rc")
 endfunction()
+
+# 跨进程原生模块宿主：每个模块一个进程，崩溃不带走引擎（ADR-0032）
+add_executable(fgb-host-native native_host/host_main.cpp)
+target_link_libraries(fgb-host-native PRIVATE fgb_engine)
+set_target_properties(fgb-host-native PROPERTIES OUTPUT_NAME "fgb-host-native")
+if(WIN32)
+    target_compile_definitions(fgb-host-native PRIVATE UNICODE _UNICODE)
+endif()
 
 if(FGB_BUILD_CLI)
     add_executable(fgb-cli cli/main.cpp)
@@ -212,6 +221,9 @@ if(WIN32)
     if(TARGET fgb-cli)
         install(TARGETS fgb-cli RUNTIME DESTINATION .)
     endif()
+    if(TARGET fgb-host-native)
+        install(TARGETS fgb-host-native RUNTIME DESTINATION .)
+    endif()
     if(TARGET fgb-ui)
         # 静态链接 WebView2Loader，所以 exe 旁边不需要任何 DLL
         install(TARGETS fgb-ui RUNTIME DESTINATION .)
@@ -221,6 +233,7 @@ if(WIN32)
         "${CMAKE_SOURCE_DIR}/sdk/fgb_module_api.h"
         "${CMAKE_SOURCE_DIR}/sdk/fgb_shared_frame.h"
         "${CMAKE_SOURCE_DIR}/sdk/fgb_udp_frame.h"
+        "${CMAKE_SOURCE_DIR}/sdk/fgb_native_host_shm.h"
         DESTINATION sdk)
     install(FILES "${CMAKE_SOURCE_DIR}/docs/05-native-module-guide.md"
         DESTINATION sdk RENAME NATIVE-MODULE-GUIDE.md)

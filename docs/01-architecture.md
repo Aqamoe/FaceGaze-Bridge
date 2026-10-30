@@ -464,7 +464,8 @@ FaceFrame
 > 属性级组合的分阶段设计见 [ADR-0031](adr/0031-native-module-v2-attribute-fusion.md)：
 > 阶段 A 支持左右眼/左右注视分源与“A 的 openness + B 的 gaze”合成（默认关闭）；
 > 阶段 B 增加 `FgbFrameSlotV2` 属性掩码与 `fgb_module_query_v2`，v1/v2 模块并存。
-> 跨进程模块宿主仍是阶段 C。
+> 阶段 C 增加 `fgb-host-native.exe`：一模块一进程、共享内存 seqlock 传帧，
+> 引擎通过 `NativeHostSource` 读取（[ADR-0032](adr/0032-native-host-process.md)）。
 
 给新模块用的高性能接口。设计要点：
 

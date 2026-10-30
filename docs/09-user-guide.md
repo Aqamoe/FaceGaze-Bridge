@@ -67,6 +67,8 @@ sdk\                   集成文档与示例
 - `--gaze-left-source` / `--gaze-right-source`：左右渲染注视分别选源；
 - `--avatar-eye-from-gaze`：头像眼睛保留 `EYE` 源的 openness/pupil，方向改用
   `Gaze` 通道（默认关闭，头像仍只看 `Eyes`）。
+- `--native-host`：原生模块走独立 `fgb-host-native.exe` 进程，模块崩溃不带走引擎；
+  默认关闭。`--native-host-exe <路径>` 可覆盖宿主位置。
 
 注视通道默认 100 ms 过期，可用 `--gaze-stale-ms` 调整；`--stale-ms` 会一次
 设置所有通道。桌面入口会把不认识的参数转给引擎，所以也可以先托盘「退出」，

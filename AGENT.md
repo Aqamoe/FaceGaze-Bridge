@@ -128,8 +128,10 @@ cmake --install build/release --config Release --prefix dist
 dist/FaceGaze Bridge.exe   唯一入口：界面窗口 + 拉起引擎（图标/版本信息在资源里）
 dist/fgb-cli.exe           引擎（命令行用；外壳启动时会调用它）。不带产品图标，
                            免得在资源管理器里被当成第二个启动入口
+dist/fgb-host-native.exe   原生模块跨进程宿主（--native-host 时使用）
 dist/runtime/vrcft/        精简 VRCFT 宿主运行时（约 106 MB，卸载 VRCFT 也能跑模块）
 dist/sdk/fgb_module_api.h  原生模块 ABI 头（给模块开发者）
+dist/sdk/fgb_native_host_shm.h 跨进程宿主共享内存布局
 dist/ui/                   页面资源（index.html / app.js / face.js / style.css / i18n.js / logo.png）
 dist/ui/face/              3D 模型与形状映射（head_v1.fgbface / face_map.json）
 dist/app.vrmanifest        SteamVR 启动项注册清单（与入口 exe 同目录）
