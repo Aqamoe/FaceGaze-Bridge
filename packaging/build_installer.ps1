@@ -43,7 +43,7 @@ if (-not [System.IO.Path]::IsPathRooted($OutputDir)) { $OutputDir = Join-Path $r
 if ($CrtDir -and -not [System.IO.Path]::IsPathRooted($CrtDir)) { $CrtDir = Join-Path $root $CrtDir }
 
 if (-not (Test-Path (Join-Path $DistDir "FaceGaze Bridge.exe"))) {
-    throw "找不到 $DistDir\FaceGaze Bridge.exe；先运行 cmake --install build/release --config Release --prefix $DistDir"
+    throw "找不到 $DistDir\FaceGaze Bridge.exe；先运行 cmake --install build/windows-vs2022 --config Release --prefix $DistDir"
 }
 if (-not (Test-Path (Join-Path $DistDir "runtime\vrcft"))) {
     Write-Warning "dist 里缺少 runtime\vrcft；安装包将依赖用户本机安装的 VRCFT。"

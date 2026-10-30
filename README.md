@@ -154,7 +154,7 @@ Unity 读取示例见 [samples/unity-face-gaze](samples/unity-face-gaze)。
 
 - Windows 10/11 x64
 - CMake 3.24+
-- Visual Studio 2019 或 2022，含「使用 C++ 的桌面开发」和 Windows SDK
+- Visual Studio 2022，含「使用 C++ 的桌面开发」和 Windows SDK
 - Python 3（可选：抽取 VRCFT 运行时、跑探针）
 - Inno Setup 6（可选：生成安装包）
 
@@ -163,13 +163,16 @@ WebView2 SDK 会在 configure 时从 NuGet 下载一次；也可用
 
 ### 构建与测试
 
+本机与 CI 用同一个 preset（VS2022 x64，警告即错误）：
+
 ```powershell
-cmake -S . -B build/release -G "Visual Studio 17 2022" -A x64 -DFGB_WARNINGS_AS_ERRORS=ON
-cmake --build build/release --config Release --parallel
-ctest --test-dir build/release -C Release --output-on-failure
+cmake --preset windows-vs2022
+cmake --build --preset windows-vs2022 --parallel        # Debug：可运行的 fgb-tests.exe
+./build/windows-vs2022/bin/Debug/fgb-tests.exe          # 或 ctest --test-dir build/windows-vs2022 -C Debug --output-on-failure
 ```
 
-产物在 `build/release/bin/Release/`。Debug 构建把 `--config` 换成 `Debug` 即可。
+产物在 `build/windows-vs2022/bin/<Debug|Release>/`；出发布包用
+`cmake --build build/windows-vs2022 --config Release`。
 
 ### 打包
 

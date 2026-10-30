@@ -5,13 +5,13 @@
 #   powershell -ExecutionPolicy Bypass -File packaging\release.ps1 -Publish
 #   powershell -ExecutionPolicy Bypass -File packaging\release.ps1 -RuntimeZip D:\tmp\vrcft-runtime.zip
 #
-# 前提：VS 2019/2022（含 C++ 工具链与 Redist）、Inno Setup 6、Python 3。
+# 前提：VS 2022（含 C++ 工具链与 Redist）、Inno Setup 6、Python 3。
 # 运行时默认从本机已安装的 VRCFT 抽取（tools/build_vrcft_runtime.py）；CI 没有
 # VRCFT，用 -RuntimeZip 提供压缩包（根目录直接是 runtime 文件）。
 # -Publish 需要 gh 已登录，会创建/更新 **draft** release，不会自动公开。
 param(
     [string]$Version = "",
-    [string]$BuildDir = "build/release",
+    [string]$BuildDir = "build/windows-vs2022",
     [string]$DistDir = "dist",
     [string]$OutputDir = "dist-installer",
     [string]$RuntimeSource = "",
@@ -54,7 +54,7 @@ Write-Host "  output : $OutputDir"
 # 发布产物必须可复现：每次都从空的 dist 开始（runtime 会重新生成/解压）。
 if (Test-Path $DistDir) { Remove-Item -Recurse -Force $DistDir }
 
-& cmake -S . -B $BuildDir -DFGB_WARNINGS_AS_ERRORS=ON
+& cmake -S . -B $BuildDir -G "Visual Studio 17 2022" -A x64 -DFGB_WARNINGS_AS_ERRORS=ON
 if ($LASTEXITCODE -ne 0) { throw "CMake 配置失败" }
 
 & cmake --build $BuildDir --config Release --parallel
