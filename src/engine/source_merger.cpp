@@ -207,7 +207,12 @@ bool SourceMerger::poll(std::uint64_t now_ns, FaceFrame& out) {
 
     merged.eyes = EyePair{};
     const auto slot_ts = [this](int index) -> std::uint64_t {
-        return index >= 0 ? slots_[static_cast<std::size_t>(index)].last.captureTsNs : 0;
+        if (index < 0) {
+            return 0;
+        }
+        const FaceFrame& frame = slots_[static_cast<std::size_t>(index)].last;
+        const auto& stamp = frame.channelStamps[channel::index(channel::kEyes)];
+        return stamp.captureTsNs != 0 ? stamp.captureTsNs : frame.captureTsNs;
     };
     const auto stamp_eye = [](EyeState& eye, int index, std::uint64_t ts) {
         if (index < 0 || !eye.valid) {
@@ -217,9 +222,15 @@ bool SourceMerger::poll(std::uint64_t now_ns, FaceFrame& out) {
         eye.opennessSource    = source;
         eye.pupilSource       = source;
         eye.gazeSource        = source;
-        eye.opennessTsNs      = ts;
-        eye.pupilTsNs         = ts;
-        eye.gazeTsNs          = ts;
+        if (eye.opennessTsNs == 0) {
+            eye.opennessTsNs = ts;
+        }
+        if (eye.pupilTsNs == 0) {
+            eye.pupilTsNs = ts;
+        }
+        if (eye.gazeTsNs == 0) {
+            eye.gazeTsNs = ts;
+        }
     };
     if (eye_left >= 0) {
         mark(eye_left);
@@ -266,8 +277,10 @@ bool SourceMerger::poll(std::uint64_t now_ns, FaceFrame& out) {
         if (sample.confidence <= 0.0f) {
             sample.confidence = frame.gaze.confidence;
         }
-        sample.captureTsNs =
-            frame.gaze.captureTsNs != 0 ? frame.gaze.captureTsNs : frame.captureTsNs;
+        if (sample.captureTsNs == 0) {
+            sample.captureTsNs =
+                frame.gaze.captureTsNs != 0 ? frame.gaze.captureTsNs : frame.captureTsNs;
+        }
     };
     if (gaze_left >= 0) {
         mark(gaze_left);
@@ -307,7 +320,9 @@ bool SourceMerger::poll(std::uint64_t now_ns, FaceFrame& out) {
     } else {
         merged.gaze.confidence = merged.gaze.right.confidence;
     }
-    merged.gaze.captureTsNs = std::max(merged.gaze.left.captureTsNs, merged.gaze.right.captureTsNs);
+    merged.gaze.captureTsNs = std::max(
+        {merged.gaze.left.captureTsNs, merged.gaze.right.captureTsNs,
+         same_gaze_source ? slots_[static_cast<std::size_t>(gaze_left)].last.gaze.captureTsNs : 0});
     if (merged.gaze.any_valid()) {
         ChannelStamp& entry = merged.channelStamps[channel::index(channel::kGaze)];
         entry.source        = same_gaze_source ? static_cast<SourceId>(gaze_left + 1)
@@ -331,6 +346,7 @@ bool SourceMerger::poll(std::uint64_t now_ns, FaceFrame& out) {
             eye.gazeDirLocal    = dir;
             eye.gazePitchYawDeg = dir_to_pitch_yaw_deg(dir);
             eye.gazeConf        = confidence;
+            eye.gazeValid       = true;
             eye.gazeSource      = source;
             eye.gazeTsNs        = ts;
             if (eye.opennessSource != source) {
@@ -374,10 +390,12 @@ bool SourceMerger::poll(std::uint64_t now_ns, FaceFrame& out) {
             return 0;
         }
         const FaceFrame& frame = slots_[static_cast<std::size_t>(index)].last;
-        if (channel == kGaze) {
-            return frame.gaze.captureTsNs != 0 ? frame.gaze.captureTsNs : frame.captureTsNs;
+        if (channel == kGaze && frame.gaze.captureTsNs != 0) {
+            return frame.gaze.captureTsNs;
         }
-        return frame.captureTsNs;
+        // v2 模块按属性/通道给了时间戳时保留它；v1 帧没有就回到整帧时间戳。
+        const auto& stamp = frame.channelStamps[static_cast<std::size_t>(channel)];
+        return stamp.captureTsNs != 0 ? stamp.captureTsNs : frame.captureTsNs;
     };
     auto stamp = [&merged, &capture_ts_of](int index, std::uint8_t mask, int channel) {
         ChannelStamp& entry      = merged.channelStamps[channel::index(mask)];

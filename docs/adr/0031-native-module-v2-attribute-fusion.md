@@ -103,6 +103,23 @@ VERGENCE / HEAD
 - 状态/探针：`/api/status` 的 sources 增加逐眼来源；UI 输入源仍按通道显示，
   不因高级配置改变首屏布局。
 
+## 阶段 B 实施记录（2026-10-30）
+
+`FgbModuleV2` / `fgb_module_query_v2` / `FgbFrameSlotV2` 已落地；属性位覆盖
+expression、左右 openness/pupil/gaze、combined gaze、左右 2D 点、vergence、head。
+宿主优先加载 v2，失败回退 v1；v2 模块用 `FGB_CAP_EYE_ATTRIBUTES` 表示按属性提供
+眼睛。`EyeState.gazeValid` 区分“真的给了方向”和“默认正前方”，所以只给 openness
+的模块不会产生渲染注视。
+
+新增样例 `native-openness`（只给 openness/pupil，无 gaze）；单测覆盖 v2 加载、
+属性到 `FaceFrame` 的转换、与 `native-gaze` 组合成“A openness + B gaze”的头像眼睛，
+以及 v1 模块继续走原路径。阶段 B **仍是进程内加载**；跨进程宿主留待阶段 C。
+
+本阶段先把 ABI/宿主打通；更细的“每个属性独立有序源列表”目前由
+`eye_left/right_source`、`gaze_left/right_source` 与 `avatar_eye_from_gaze` 覆盖
+常见组合。逐字段加权融合（例如同一只眼的 openness 取 A、pupil 取 B）留到 B.2，
+在真实模块提出需求前不提前引入更复杂的策略配置。
+
 ## 阶段 A 实施记录（2026-10-30）
 
 已落地：逐字段 `EyeState` 来源/时间戳、`GazeSample` 逐眼来源/置信度/2D 点有效位、

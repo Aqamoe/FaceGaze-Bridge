@@ -39,6 +39,7 @@ void FaceFrame::sanitize() noexcept {
             !std::isfinite(e->gazeDirLocal.z)) {
             e->gazeDirLocal = {0.0f, 0.0f, -1.0f};
             e->valid        = false;
+            e->gazeValid    = false;
         }
         e->gazeDirLocal = normalize(e->gazeDirLocal);
 

@@ -22,6 +22,7 @@
 #include <stdint.h>
 
 #define FGB_MODULE_ABI_V1 1u
+#define FGB_MODULE_ABI_V2 2u
 #define FGB_MAX_SHAPES 88u
 
 /* 模块能力位。宿主据此决定这一路能参与哪些通道的合并。
@@ -34,6 +35,9 @@
 #define FGB_CAP_EXPRESSION 0x2u
 #define FGB_CAP_HEAD 0x4u
 #define FGB_CAP_GAZE 0x8u
+/* v2：按属性提供眼睛数据（openness/pupil/gaze 可只给其中一部分）。
+ * 具体有哪些属性看 FgbFrameSlotV2::attributes；v1 的 EYE 仍是整眼原子能力。 */
+#define FGB_CAP_EYE_ATTRIBUTES 0x10u
 
 /* 日志级别，与引擎内部一致 */
 #define FGB_LOG_TRACE 0
@@ -77,6 +81,23 @@ typedef struct FgbEyeV1 {
 #define FGB_GAZE_RIGHT 0x2u
 #define FGB_GAZE_COMBINED 0x4u
 #define FGB_GAZE_POINT_2D 0x8u
+
+/* ---- v2 属性位（FgbFrameSlotV2::attributes）----
+ * 属性级数据不再要求 EYE 整块原子：模块只声明/填写自己真正拥有的属性。
+ * 时间戳为 0 时用帧的 capture_ts_ns。
+ */
+#define FGB_ATTR_EXPRESSION 0x1ull
+#define FGB_ATTR_LEFT_OPENNESS 0x2ull
+#define FGB_ATTR_RIGHT_OPENNESS 0x4ull
+#define FGB_ATTR_LEFT_PUPIL 0x8ull
+#define FGB_ATTR_RIGHT_PUPIL 0x10ull
+#define FGB_ATTR_LEFT_GAZE 0x20ull
+#define FGB_ATTR_RIGHT_GAZE 0x40ull
+#define FGB_ATTR_COMBINED_GAZE 0x80ull
+#define FGB_ATTR_LEFT_POINT 0x100ull
+#define FGB_ATTR_RIGHT_POINT 0x200ull
+#define FGB_ATTR_VERGENCE 0x400ull
+#define FGB_ATTR_HEAD 0x800ull
 
 /*
  * 独立注视通道。只声明 FGB_CAP_GAZE 的模块写这里，不要伪造 FgbEyeV1。
@@ -171,8 +192,94 @@ typedef struct FgbModuleV1 {
     void (*teardown)(void* self);
 } FgbModuleV1;
 
-/* 唯一导出符号。返回的指针必须在本进程生命周期内有效。 */
+/* ---- v2：属性级帧 ----
+ *
+ * 与 v1 并存：v2 模块导出 fgb_module_query_v2，宿主优先尝试它，失败再回退
+ * fgb_module_query(v1)。v1 模块不需要任何改动。
+ */
+
+typedef struct FgbEyeAttributesV2 {
+    uint32_t valid; /* 本眼实际填写的 FGB_ATTR_* 子集；宿主以帧的 attributes 为准 */
+    uint32_t reserved;
+
+    float openness;            /* FGB_ATTR_*_OPENNESS */
+    float openness_confidence; /* 0..1 */
+
+    float pupil_diameter_mm; /* 0 表示不提供 */
+    float pupil_dilation;    /* -1..1，0 为基线 */
+
+    float gaze_dir[3];       /* HMD 局部单位向量，-Z 前 */
+    float gaze_confidence;   /* 0..1 */
+    float gaze_point_2d[2];  /* 归一化屏幕点，暂定 [0,1] 左上 */
+
+    uint64_t openness_ts_ns; /* 0 = 用帧的 capture_ts_ns */
+    uint64_t pupil_ts_ns;
+    uint64_t gaze_ts_ns;
+} FgbEyeAttributesV2;
+
+typedef struct FgbFrameSlotV2 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    uint32_t shape_count; /* <= FGB_MAX_SHAPES */
+    uint32_t reserved;
+
+    uint64_t attributes; /* FGB_ATTR_* 位或；决定下面哪些字段有效 */
+
+    float shapes[FGB_MAX_SHAPES];
+    uint8_t shape_valid[FGB_MAX_SHAPES];
+    uint64_t expression_ts_ns;
+
+    FgbEyeAttributesV2 left_eye;
+    FgbEyeAttributesV2 right_eye;
+
+    float combined_gaze_dir[3];
+    float combined_gaze_confidence;
+    uint64_t combined_gaze_ts_ns;
+
+    float vergence_distance_m; /* FGB_ATTR_VERGENCE */
+    uint64_t vergence_ts_ns;
+
+    float head_rotation[4]; /* x,y,z,w */
+    float head_position[3]; /* 米 */
+    uint64_t head_ts_ns;
+
+    uint64_t capture_ts_ns; /* 整帧时间戳；0 = 宿主补 */
+} FgbFrameSlotV2;
+
+typedef struct FgbHostServicesV2 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+
+    void (*log)(void* ctx, int level, const char* message);
+    void (*report_status)(void* ctx, int state, const char* detail);
+
+    FgbFrameSlotV2* (*acquire_frame_slot)(void* ctx);
+    void (*commit_frame_slot)(void* ctx, FgbFrameSlotV2* slot, uint64_t capture_ts_ns);
+
+    int32_t (*shape_index)(void* ctx, const char* name);
+
+    void* ctx;
+} FgbHostServicesV2;
+
+typedef FgbInitParamsV1 FgbInitParamsV2;
+
+typedef struct FgbModuleV2 {
+    uint32_t struct_size;
+    uint32_t abi_version;
+
+    const char* id;
+    const char* display_name;
+    uint32_t capabilities; /* FGB_CAP_*；属性级眼睛用 FGB_CAP_EYE_ATTRIBUTES */
+
+    int (*initialize)(void** self, const FgbHostServicesV2* host, const FgbInitParamsV2* params);
+    void (*update)(void* self);
+    void (*teardown)(void* self);
+} FgbModuleV2;
+
+/* 唯一 v1 导出符号。返回的指针必须在本进程生命周期内有效。 */
 FGB_MODULE_EXPORT const FgbModuleV1* fgb_module_query(uint32_t host_abi_version);
+/* v2 模块导出它；宿主优先尝试，找不到/返回空时回退 v1。 */
+FGB_MODULE_EXPORT const FgbModuleV2* fgb_module_query_v2(uint32_t host_abi_version);
 
 #ifdef __cplusplus
 } /* extern "C" */

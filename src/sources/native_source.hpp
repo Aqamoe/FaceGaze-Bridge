@@ -42,17 +42,24 @@ private:
     static FgbFrameSlotV1* host_acquire(void* ctx);
     static void host_commit(void* ctx, FgbFrameSlotV1* slot, uint64_t capture_ts_ns);
     static std::int32_t host_shape_index(void* ctx, const char* name);
+    static FgbFrameSlotV2* host_acquire_v2(void* ctx);
+    static void host_commit_v2(void* ctx, FgbFrameSlotV2* slot, uint64_t capture_ts_ns);
 
     void apply_slot(const FgbFrameSlotV1& slot, std::uint64_t capture_ts_ns);
+    void apply_slot_v2(const FgbFrameSlotV2& slot, std::uint64_t capture_ts_ns);
 
     NativeSourceConfig config_;
     std::string module_dir_utf8_;
 
     void* library_            = nullptr; // HMODULE
     const FgbModuleV1* api_   = nullptr;
+    const FgbModuleV2* api_v2_ = nullptr;
+    bool v2_                  = false;
     void* self_               = nullptr;
     FgbHostServicesV1 services_{};
+    FgbHostServicesV2 services_v2_{};
     FgbFrameSlotV1 slot_{};
+    FgbFrameSlotV2 slot_v2_{};
     FaceFrame pending_{};
     bool has_frame_   = false;
     bool initialized_ = false;

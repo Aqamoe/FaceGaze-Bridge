@@ -9,8 +9,9 @@
 
 参考实现：[`samples/native-sine`](../samples/native-sine)（完整通道）、
 [`samples/native-face`](../samples/native-face)（仅表情）、
-[`samples/native-gaze`](../samples/native-gaze)（仅独立注视）；都不需要硬件。
-头文件：[`sdk/fgb_module_api.h`](../sdk/fgb_module_api.h)。
+[`samples/native-gaze`](../samples/native-gaze)（仅独立注视）、
+[`samples/native-openness`](../samples/native-openness)（ABI v2，仅 openness/pupil）；
+都不需要硬件。头文件：[`sdk/fgb_module_api.h`](../sdk/fgb_module_api.h)。
 
 > **能力粒度（先读这一段）**
 > `FGB_CAP_EYE` 是**整块原子能力**：声明了它，就必须同时给出 gaze、openness 和 pupil。
@@ -129,9 +130,12 @@ const FgbModuleV1* fgb_module_query(uint32_t host_abi_version) {
 关键点：
 
 - `capabilities` 声明你能提供哪些通道：`FGB_CAP_EXPRESSION / FGB_CAP_EYE /
-  FGB_CAP_GAZE / FGB_CAP_HEAD`。只声明真正有数据的通道；合并层只认声明。
-- `FGB_CAP_EYE` 是整眼能力（gaze + openness + pupil）。**只给注视点**的模块不能借用它，
+  FGB_CAP_GAZE / FGB_CAP_HEAD`；ABI v2 属性模块用 `FGB_CAP_EYE_ATTRIBUTES`。
+  只声明真正有数据的通道；合并层只认声明。
+- `FGB_CAP_EYE` 是 v1 的整眼能力（gaze + openness + pupil）。**只给注视点**的模块不能借用它，
   应声明 `FGB_CAP_GAZE` 并写 `slot->gaze`（见 §11.2）。
+- 只给 openness/pupil、或只给单眼数据的模块应使用 ABI v2 的
+  `FGB_CAP_EYE_ATTRIBUTES` + `FgbFrameSlotV2`（见 §11.5）。
 - 眼追填 `slot->left_eye/right_eye`；独立注视填 `slot->gaze`；头姿填
   `has_head_pose/head_rotation/head_position`。
 - 形状用 `host->shape_index(ctx, "JawOpen")` 按名字查下标，**不要硬编码 88 项顺序**。
@@ -217,13 +221,15 @@ Compress-Archive -Path fgb-native.json,MyModule.dll -DestinationPath MyModule.zi
 
 ## 9. 限制与版本演进
 
-- **v1 是进程内加载**：模块崩溃会带走引擎；需要隔离时后续会上跨进程 ABI v2
-- 界面可以配置多个启动实例并按“表情 / 眼睛 / 注视 / 头姿”选来源；CLI 也支持
-  重复 `--source vrcft` + `--module-id`。当前仍是整通道组合，不能按左右眼/字段
-  拆来源，也不能把 A 的 openness 与 B 的 gaze 拼成一个眼睛通道。见
-  [ADR-0030](adr/0030-native-module-v2-composition.md)
+- **v1/v2 都是进程内加载**：模块崩溃会带走引擎；跨进程宿主是 V2 阶段 C
+- 界面可以配置多个启动实例并按“表情 / 眼睛 / 注视 / 头姿”选来源；CLI 还支持
+  左右眼/左右注视分源与 `--avatar-eye-from-gaze`。ABI v2 属性帧支持只给
+  openness/pupil 或单眼数据。见
+  [ADR-0030](adr/0030-native-module-v2-composition.md)、
+  [ADR-0031](adr/0031-native-module-v2-attribute-fusion.md)
 - `update` 不要阻塞（读设备建议自带线程 + 非阻塞队列，提交仍回到 `update`）
-- ABI 结构只允许在末尾追加字段；任何破坏性改动都会升 `abi_version`
+- v1 结构只允许在末尾追加字段；v2 是独立的 `FgbFrameSlotV2`，通过
+  `fgb_module_query_v2` 选择，两者并存
 - 宿主对 `struct_size` 做兼容读取；请始终用当前 SDK 头编译
 - 原生模块没有在线注册表；通过 `.zip` / `.dll` 分发和安装
 
@@ -247,9 +253,9 @@ Compress-Archive -Path fgb-native.json,MyModule.dll -DestinationPath MyModule.zi
 | A 面捕 + B 整眼 | ✅ | A 供 Expression，B 供 Eyes |
 | A 完整 + B 注视点 | ✅ | 头像用 A，渲染注视用 B 的 `GAZE` |
 | A 面捕 + B 整眼 + C 注视 | ✅ | 三路各取所需 |
-| A 的 openness + B 的 gaze | ✅（A 仍须是 `EYE` 模块） | `--eye-source A --gaze-source B --avatar-eye-from-gaze` |
+| A 的 openness + B 的 gaze | ✅ | v1 模块用 `--eye-source A --gaze-source B --avatar-eye-from-gaze`；v2 模块可直接只给 openness |
 | 左眼 A、右眼 B | ✅（CLI） | `--eye-left-source A --eye-right-source B` |
-| A 只给 openness、不给 gaze | ❌ | 等 V2 阶段 B 的属性掩码 |
+| A 只给 openness、不给 gaze | ✅（ABI v2） | 声明 `FGB_CAP_EYE_ATTRIBUTES`，只填 openness 属性位 |
 
 配置方式有两种：
 
@@ -322,7 +328,7 @@ if (slot->struct_size >= needed) {
 `capabilities` 为准。旧清单不写这些字段也照常工作。`MinHostVersion` 高于当前
 宿主版本时，界面会标记为不兼容。
 
-### 11.4 属性级眼睛合成（V2 阶段 A）
+### 11.4 属性级眼睛合成（V2 阶段 A，v1 输入）
 
 V2 阶段 A 让头像眼睛可以拆开取值，但默认行为仍是 v1.1：
 
@@ -346,7 +352,53 @@ fgb-cli run ... --gaze-left-source "native[1]" --gaze-right-source "native[2]"
 - 这仍是 V2 阶段 A：模块必须用 v1 ABI 的整眼 `FgbEyeV1`。真正“只给 openness”
   或“只给单眼”的模块要等阶段 B 的 `FgbFrameSlotV2` 属性掩码。
 
-### 11.5 PICO 类设备怎么拆
+### 11.5 ABI v2：属性帧
+
+只提供部分眼睛属性的模块使用 `FgbFrameSlotV2`，不要伪造 `FgbEyeV1`：
+
+```c
+const FgbModuleV2* fgb_module_query_v2(uint32_t host_abi_version) {
+    if (host_abi_version != FGB_MODULE_ABI_V2) return NULL;
+    return &kModule; // capabilities = FGB_CAP_EYE_ATTRIBUTES
+}
+```
+
+`update()` 里按属性填写：
+
+```c
+FgbFrameSlotV2* slot = host->acquire_frame_slot(host->ctx);
+if (slot->struct_size < sizeof(FgbFrameSlotV2)) return;
+
+slot->attributes = FGB_ATTR_LEFT_OPENNESS | FGB_ATTR_RIGHT_OPENNESS |
+                   FGB_ATTR_LEFT_PUPIL | FGB_ATTR_RIGHT_PUPIL;
+slot->left_eye.openness  = 0.7f;
+slot->right_eye.openness = 0.6f;
+slot->left_eye.openness_ts_ns = device_ts_ns; /* 0 = 帧时间戳 */
+slot->capture_ts_ns = device_ts_ns;
+host->commit_frame_slot(host->ctx, slot, 0);
+```
+
+属性位（`FgbFrameSlotV2::attributes`）：
+
+| 属性 | 说明 |
+|---|---|
+| `FGB_ATTR_EXPRESSION` | 88 形状 |
+| `FGB_ATTR_LEFT/RIGHT_OPENNESS` | 睁眼度 |
+| `FGB_ATTR_LEFT/RIGHT_PUPIL` | 瞳孔 |
+| `FGB_ATTR_LEFT/RIGHT_GAZE` | 逐眼方向 |
+| `FGB_ATTR_COMBINED_GAZE` | 合并方向 |
+| `FGB_ATTR_LEFT/RIGHT_POINT` | 2D 点 |
+| `FGB_ATTR_VERGENCE` | 聚散距离 |
+| `FGB_ATTR_HEAD` | 头姿 |
+
+- 宿主优先查 `fgb_module_query_v2`；没有或返回空时回退 v1 `fgb_module_query`。
+- v2 模块的 `capabilities` 用 `FGB_CAP_EYE_ATTRIBUTES` 表示“按属性提供眼睛”；
+  仍可同时声明 `EXPRESSION / GAZE / HEAD`。
+- 只给 openness 的模块不会产生渲染注视；宿主用 `EyeState.gazeValid` 区分
+  “真的给了方向”和“默认正前方”。只给 gaze 的模块不会驱动头像 openness。
+- 参考实现：[`samples/native-openness`](../samples/native-openness)。
+
+### 11.6 PICO 类设备怎么拆
 
 | 模块 | 能力 | 数据来源 |
 |---|---|---|

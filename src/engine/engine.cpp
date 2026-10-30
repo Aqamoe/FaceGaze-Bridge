@@ -132,15 +132,17 @@ GazeState Engine::compute_gaze(const FaceFrame& frame) const noexcept {
 
     const EyeState& l = frame.eyes.left;
     const EyeState& r = frame.eyes.right;
+    const bool l_gaze = l.valid && l.gazeValid;
+    const bool r_gaze = r.valid && r.gazeValid;
 
-    if (!l.valid && !r.valid) {
+    if (!l_gaze && !r_gaze) {
         return gaze;
     }
 
     const ChannelStamp& stamp = frame.channelStamps[channel::index(channel::kEyes)];
     gaze.valid                = true;
-    gaze.left_valid           = l.valid;
-    gaze.right_valid          = r.valid;
+    gaze.left_valid           = l_gaze;
+    gaze.right_valid          = r_gaze;
     gaze.left_dir_local       = l.gazeDirLocal;
     gaze.right_dir_local      = r.gazeDirLocal;
     gaze.capture_ts_ns        = stamp.captureTsNs != 0 ? stamp.captureTsNs : frame.captureTsNs;
@@ -151,13 +153,13 @@ GazeState Engine::compute_gaze(const FaceFrame& frame) const noexcept {
     gaze.left_capture_ts_ns   = l.gazeTsNs != 0 ? l.gazeTsNs : gaze.capture_ts_ns;
     gaze.right_capture_ts_ns  = r.gazeTsNs != 0 ? r.gazeTsNs : gaze.capture_ts_ns;
 
-    if (l.valid && r.valid) {
+    if (l_gaze && r_gaze) {
         gaze.pitch_deg = 0.5f * (l.gazePitchYawDeg.x + r.gazePitchYawDeg.x);
         gaze.yaw_deg   = 0.5f * (l.gazePitchYawDeg.y + r.gazePitchYawDeg.y);
         gaze.dir_local = normalize(l.gazeDirLocal + r.gazeDirLocal);
         gaze.confidence = 0.5f * (l.gazeConf + r.gazeConf);
     } else {
-        const EyeState& use = l.valid ? l : r;
+        const EyeState& use = l_gaze ? l : r;
         gaze.pitch_deg      = use.gazePitchYawDeg.x;
         gaze.yaw_deg        = use.gazePitchYawDeg.y;
         gaze.dir_local      = use.gazeDirLocal;

@@ -81,6 +81,8 @@ std::uint32_t parse_capabilities(const std::vector<std::string>& names) {
             bits |= FGB_CAP_EXPRESSION;
         } else if (name == "eye" || name == "eyes") {
             bits |= FGB_CAP_EYE;
+        } else if (name == "eye_attributes" || name == "eye-attributes") {
+            bits |= FGB_CAP_EYE_ATTRIBUTES;
         } else if (name == "gaze") {
             bits |= FGB_CAP_GAZE;
         } else if (name == "head") {

@@ -196,6 +196,10 @@ if(WIN32 AND FGB_BUILD_SAMPLE_MODULE)
         "${CMAKE_SOURCE_DIR}/samples/native-face/native_face.cpp" "fgb-sample-face")
     fgb_add_sample_module(fgb-sample-gaze
         "${CMAKE_SOURCE_DIR}/samples/native-gaze/native_gaze.cpp" "fgb-sample-gaze")
+    # ABI v2 属性掩码：只给 openness/pupil，不给 gaze
+    fgb_add_sample_module(fgb-sample-openness
+        "${CMAKE_SOURCE_DIR}/samples/native-openness/native_openness.cpp"
+        "fgb-sample-openness")
 endif()
 
 # ---- 发布包：用户双击就能跑 ----
@@ -239,6 +243,10 @@ if(WIN32)
         "${CMAKE_SOURCE_DIR}/samples/native-gaze/native_gaze.cpp"
         "${CMAKE_SOURCE_DIR}/samples/native-gaze/fgb-native.json"
         DESTINATION sdk/sample-native-gaze)
+    install(FILES
+        "${CMAKE_SOURCE_DIR}/samples/native-openness/native_openness.cpp"
+        "${CMAKE_SOURCE_DIR}/samples/native-openness/fgb-native.json"
+        DESTINATION sdk/sample-native-openness)
     # Unity 示例包：UPM package.json + Runtime/*.cs，可直接 Add package from disk
     install(DIRECTORY "${CMAKE_SOURCE_DIR}/samples/unity-face-gaze/"
         DESTINATION sdk/unity-face-gaze)
@@ -256,6 +264,11 @@ if(WIN32)
         install(TARGETS fgb-sample-gaze
             RUNTIME DESTINATION sdk/sample-native-gaze
             LIBRARY DESTINATION sdk/sample-native-gaze)
+    endif()
+    if(TARGET fgb-sample-openness)
+        install(TARGETS fgb-sample-openness
+            RUNTIME DESTINATION sdk/sample-native-openness
+            LIBRARY DESTINATION sdk/sample-native-openness)
     endif()
     install(FILES "${CMAKE_SOURCE_DIR}/packaging/README.txt" DESTINATION .)
     install(FILES

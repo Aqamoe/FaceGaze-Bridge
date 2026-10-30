@@ -1003,10 +1003,11 @@ const CAP_EYE = 0x1;
 const CAP_EXPRESSION = 0x2;
 const CAP_HEAD = 0x4;
 const CAP_GAZE = 0x8;
+const CAP_EYE_ATTRIBUTES = 0x10;
 const ROLE_KEYS = ["expression", "eyes", "gaze", "head"];
 const ROLE_CAPS = {
   expression: CAP_EXPRESSION,
-  eyes: CAP_EYE,
+  eyes: CAP_EYE | CAP_EYE_ATTRIBUTES,
   gaze: CAP_GAZE,
   head: CAP_HEAD,
 };
