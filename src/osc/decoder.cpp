@@ -197,4 +197,21 @@ bool MessageView::get_string(std::size_t index, std::string_view& out) const noe
     return true;
 }
 
+bool MessageView::get_bool(std::size_t index, bool& out) const noexcept {
+    char tag          = 0;
+    const std::size_t off = arg_offset(index, tag);
+    if (off == kInvalid) {
+        return false;
+    }
+    if (tag == 'T') {
+        out = true;
+        return true;
+    }
+    if (tag == 'F') {
+        out = false;
+        return true;
+    }
+    return false;
+}
+
 } // namespace fgb::osc

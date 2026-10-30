@@ -4,6 +4,7 @@
 #include "base/log.hpp"
 #include "engine/engine.hpp"
 #include "capture/capture_file.hpp"
+#include "config/osc_map.hpp"
 #include "config/outputs.hpp"
 #include "core/process/one_euro.hpp"
 #include "net/update_check.hpp"
@@ -18,7 +19,9 @@
 #include "sinks/vrchat_sink.hpp"
 #include "sinks/ws_json_sink.hpp"
 #include "capture/capture_file.hpp"
+#include "sources/livelink_source.hpp"
 #include "sources/native_source.hpp"
+#include "sources/osc_source.hpp"
 #include "sources/replay_source.hpp"
 #include "sources/vmc_source.hpp"
 #include "sources/vrcft_source.hpp"
@@ -81,7 +84,7 @@ void print_usage() {
                  "  fgb-cli version        显示版本\n"
                  "\n"
                  "run 选项:\n"
-                 "  --source <类型>         vmc | vrcft | replay，可重复；顺序即优先级 (默认 vmc)\n"
+                 "  --source <类型>         vmc | livelink | osc | vrcft | replay，可重复；顺序即优先级 (默认 vmc)\n"
                  "  --eye-source <名>       指定眼追来自哪个源（默认自动）\n"
                  "  --expression-source <名> 指定表情来自哪个源（默认自动）\n"
                  "  --head-source <名>      指定头姿来自哪个源（默认自动）\n"
@@ -98,6 +101,10 @@ void print_usage() {
                  "  --filter-cutoff <值>    滤波最小截止频率 (默认 1.0)\n"
                  "  --filter-beta <值>      滤波速度系数 (默认 0.5)\n"
                  "  --vmc-port <端口>        VMC 监听端口 (默认 39539)\n"
+                 "  --livelink-port <端口>  ARKit LiveLink 监听端口 (默认 11111)\n"
+                 "  --osc-in-port <端口>    通用 OSC 监听端口（默认读 osc_map.ini）\n"
+                 "  --osc-map <文件>        OSC 地址→形状映射表（默认 %%LOCALAPPDATA%%\\FaceGazeBridge\\osc_map.ini）\n"
+                 "  --osc-in-lan            通用 OSC 绑定所有网卡（默认只绑回环）\n"
                  "  --module-exe <路径>     VRCFaceTracking.ModuleProcess.exe 路径\n"
                  "  --module-dll <路径>     直接指定模块 DLL（跳过模块发现）\n"
                  "  --module-id <id>        按 id 或名字选模块，可重复（见 fgb-cli modules）\n"
@@ -266,6 +273,10 @@ std::string join_names(const std::vector<std::string>& names) {
 
 int cmd_run(int argc, char** argv) {
     fgb::VmcSourceConfig vmc_cfg;
+    fgb::LiveLinkSourceConfig livelink_cfg;
+    std::uint16_t osc_port_override = 0;
+    bool osc_lan                    = false;
+    std::filesystem::path osc_map_path = fgb::config::default_osc_map_path();
     fgb::ReplayConfig replay_cfg;
     std::string record_path;
     std::string calibration_path;
@@ -375,10 +386,10 @@ int cmd_run(int argc, char** argv) {
 
         if (arg == "--source") {
             const auto v = next_value(arg);
-            if (v == "vmc" || v == "vrcft" || v == "replay") {
+            if (v == "vmc" || v == "vrcft" || v == "replay" || v == "osc" || v == "livelink") {
                 source_kinds.push_back(std::string(v));
             } else {
-                std::fprintf(stderr, "未知的 source 类型\n");
+                std::fprintf(stderr, "未知的 source 类型（vmc | livelink | osc | vrcft | replay）\n");
                 return 2;
             }
         } else if (arg == "--eye-source") {
@@ -447,6 +458,25 @@ int cmd_run(int argc, char** argv) {
             if (v.empty() || !parse_uint16(v, vmc_cfg.port)) {
                 return 2;
             }
+        } else if (arg == "--livelink-port") {
+            const auto v = next_value(arg);
+            if (v.empty() || !parse_uint16(v, livelink_cfg.port)) {
+                return 2;
+            }
+        } else if (arg == "--osc-in-port") {
+            const auto v = next_value(arg);
+            if (v.empty() || !parse_uint16(v, osc_port_override)) {
+                return 2;
+            }
+        } else if (arg == "--osc-map") {
+            const auto v = next_value(arg);
+            if (v.empty()) {
+                std::fprintf(stderr, "--osc-map 需要一个文件路径\n");
+                return 2;
+            }
+            osc_map_path = std::string{v};
+        } else if (arg == "--osc-in-lan") {
+            osc_lan = true;
         } else if (arg == "--shm") {
             const auto v = next_value(arg);
             if (v.empty()) {
@@ -608,6 +638,35 @@ int cmd_run(int argc, char** argv) {
         source_kinds.emplace_back("vmc"); // 没写 --source 时的默认行为，与之前一致
     }
 
+    // 通用 OSC 输入的映射表只在真的选了该源时读取/生成；不选就不碰用户文件
+    fgb::OscSourceConfig osc_cfg;
+    if (std::find(source_kinds.begin(), source_kinds.end(), std::string{"osc"}) !=
+        source_kinds.end()) {
+        fgb::config::OscMapOptions map;
+        std::string map_error;
+        const bool loaded = fgb::config::load_osc_map(osc_map_path, map, map_error);
+        if (!loaded) {
+            std::error_code ec;
+            if (std::filesystem::exists(osc_map_path, ec)) {
+                std::fprintf(stderr, "OSC 映射表读取失败 (%s): %s\n", osc_map_path.string().c_str(),
+                             map_error.c_str());
+                return 2;
+            }
+            // 第一次用：生成一份空表，用户照着注释填；不生成的话连端口都不知道去哪儿改
+            map.port = osc_port_override != 0 ? osc_port_override : map.port;
+            if (!fgb::config::save_osc_map(osc_map_path, map, map_error)) {
+                std::fprintf(stderr, "无法创建 OSC 映射表 (%s): %s\n",
+                             osc_map_path.string().c_str(), map_error.c_str());
+                return 2;
+            }
+            FGB_WARN("osc", "已生成空的映射表 %s；填好「地址 = 形状」后重启引擎",
+                     osc_map_path.string().c_str());
+        }
+        osc_cfg.mappings      = std::move(map.mappings);
+        osc_cfg.port          = osc_port_override != 0 ? osc_port_override : map.port;
+        osc_cfg.any_interface = osc_lan;
+    }
+
     std::vector<std::string> source_names;
     source_names.reserve(source_kinds.size());
     std::size_t vrcft_seen = 0;
@@ -760,6 +819,12 @@ int cmd_run(int argc, char** argv) {
             }
             engine.add_source(std::make_unique<fgb::ReplaySource>(replay_cfg));
             source_names.emplace_back("replay");
+        } else if (kind == "livelink") {
+            engine.add_source(std::make_unique<fgb::LiveLinkSource>(livelink_cfg));
+            source_names.emplace_back("livelink");
+        } else if (kind == "osc") {
+            engine.add_source(std::make_unique<fgb::OscSource>(osc_cfg));
+            source_names.emplace_back("osc");
         } else {
             engine.add_source(std::make_unique<fgb::VmcSource>(vmc_cfg));
             source_names.emplace_back("vmc");

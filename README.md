@@ -39,6 +39,7 @@ VRCFT 解决的是「我的面捕硬件怎么驱动 VRChat 头像」。FGB 解�
 | VRCFT 模块兼容 | 自带精简模块宿主运行时，卸载 VRCFT 后仍可加载模块；支持导入本机模块、`.zip` 安装、启停 |
 | 原生 C ABI | 单导出符号、POD 结构、共享内存传帧；附带不需要硬件的示例模块 |
 | 多源合并 | 表情 / 眼追 / 头姿可分别选择提供者，支持 VMC、模块、抓包回放同时输入 |
+| 直连输入 | VMC、ARKit LiveLink（iPhone，UDP 11111）、通用 OSC 映射表（任意发送端） |
 | 多路输出 | VRChat OSC、VMC、命名共享内存、WebSocket JSON、UDP 二进制 |
 | 注视点服务 | `GET /api/gaze` 与 30 Hz WS 推送：注视方向、扫视/注视状态、聚散、头姿 |
 | 头像发现 | OSCQuery（mDNS）自动读取当前头像参数表，换头像自动重绑；可回退本地配置 |
@@ -55,6 +56,8 @@ VRCFT 解决的是「我的面捕硬件怎么驱动 VRChat 头像」。FGB 解�
 已知限制：
 
 - 真机只验证过 PICO + PICO Connect；Quest / iPhone 等模块缺硬件验证
+- ARKit LiveLink 直连已实现但未在 iPhone 真机验收（头姿单位/符号为推导值）
+- 通用 OSC 输入目前按 `osc_map.ini` 文件配置，界面表格编辑器待做
 - 3D 校准预览目前是程序化占位头模，正式美术资产待补
 - SteamVR 自启动的注册分支已实现，真实 SteamVR 环境验收待补
 - 8 小时长跑、休眠唤醒、设备热插拔仍属于发布前门禁
@@ -113,6 +116,10 @@ fgb-cli run --source vrcft --vrchat 127.0.0.1:9000 --panel 8787
 
 # 纯 VMC 输入（VSeeFace 等），同时再输出一路 VMC 给 Unity
 fgb-cli run --source vmc --vmc-out 127.0.0.1:9100
+
+# iPhone Live Link Face 直连，或任意 OSC 发送端（地址→形状映射表）
+fgb-cli run --source livelink --panel 8787
+fgb-cli run --source osc --osc-map .\osc_map.ini --panel 8787
 
 # 给网页/脚本的 WebSocket JSON，给串流软件的 UDP 二进制
 fgb-cli run --source vmc --ws-out 9101 --udp-out 127.0.0.1:9102
@@ -184,7 +191,7 @@ src/base      日志、时钟、崩溃与诊断
 src/core      数据模型、无锁容器、滤波/校准
 src/osc       OSC 编解码
 src/net       UDP/TCP/WebSocket 服务端、HTTP 下载
-src/sources   输入：VMC / VRCFT 模块 / 原生模块 / 回放
+src/sources   输入：VMC / ARKit LiveLink / 通用 OSC / VRCFT 模块 / 原生模块 / 回放
 src/sinks     输出：VRChat / VMC / 共享内存 / WS / UDP
 src/engine    合并、快照发布、扇出
 src/web       控制面 IPC 与静态页面

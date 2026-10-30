@@ -25,6 +25,8 @@ add_executable(fgb-tests
     test_shm.cpp
     test_merge.cpp
     test_vmc_out.cpp
+    test_osc_input.cpp
+    test_livelink.cpp
     test_steamvr.cpp)
 
 target_include_directories(fgb-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

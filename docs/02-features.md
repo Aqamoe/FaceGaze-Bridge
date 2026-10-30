@@ -175,11 +175,19 @@ OSCQuery 不可用时回退到"日志头像 ID + 本地 JSON"。状态页「参�
 
 ### 2.6 输入协议
 
-P0 只做三个，覆盖 80% 场景：
+P0 的三种输入均已实现（[ADR-0029](adr/0029-arkit-livelink-and-osc-input.md)）：
 
-1. **VMC**（UDP 39539）：`/VMC/Ext/Blend/Val` + `/VMC/Ext/Blend/Apply`，外加 `/VMC/Ext/Root/Pos`（头部位姿）
-2. **OSC 通用**：用户配置 `地址 → 形状` 映射（表格编辑器），支持缩放/偏移/反相
-3. **ARKit LiveLink**（UDP 11111）：52 blendshape + 头部姿态，iPhone 用户的主路径
+1. **VMC**（UDP 39539）：`/VMC/Ext/Blend/Val` + `/VMC/Ext/Blend/Apply`，外加
+   `/VMC/Ext/Root/Pos`（头部位姿）
+2. **OSC 通用**：`osc_map.ini` 里一行一条 `地址 = 形状[, scale=..][, offset=..][, invert]`，
+   目标支持 88 个统一形状名和 `EyeLidLeft/Right`、`EyeLeftX/Y`、`EyeRightX/Y`；
+   默认端口 9103、只绑回环，`--osc-in-lan` 才开放局域网
+3. **ARKit LiveLink**（UDP 11111）：UE Apple ARKit Live Source 的二进制帧，
+   52 blendshape + 头姿 + 眼姿；解析器容忍 4 字节长度前缀，只带 52 曲线时不声明头姿
+
+**限制**：LiveLink 未在 iPhone 真机验收；头姿单位/符号是按 UE→OpenXR 推导的
+（归一化 -1..1 → ±90°），实机若发现方向相反需要改常量。通用 OSC 目前是文件 + CLI，
+**界面里的表格编辑器尚未做**（文件字段已经按表格列设计）。
 
 ---
 

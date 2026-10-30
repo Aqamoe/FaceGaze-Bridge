@@ -81,7 +81,7 @@
 cmake -S . -B build/test -G "Visual Studio 16 2019" -A x64
 cmake --build build/test --config Debug --parallel
 
-# 单测（当前 159 个用例）
+# 单测（当前 170 个用例）
 ./build/test/bin/Debug/fgb-tests.exe
 # 或
 ctest --test-dir build/test -C Debug --output-on-failure

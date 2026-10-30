@@ -28,6 +28,8 @@ public:
     bool get_float(std::size_t index, float& out) const noexcept;
     bool get_int(std::size_t index, std::int32_t& out) const noexcept;
     bool get_string(std::size_t index, std::string_view& out) const noexcept;
+    // OSC 的 T/F 没有载荷；有些面捕软件只用它表示开关类参数
+    bool get_bool(std::size_t index, bool& out) const noexcept;
 
 private:
     // 返回第 index 个参数的字节偏移，失败返回 kInvalid

@@ -503,9 +503,9 @@ FGB_EXPORT const FgbModuleV1* fgb_module_query(uint32_t host_abi_version);
 
 | 协议 | 端口 | 典型来源 | 备注 |
 |---|---|---|---|
-| VMC | UDP 39539 | VSeeFace / Warudo / 自制 Unity | 双向，同时是输出格式 |
-| OSC（通用） | 可配 | 任意面捕 App | 需要可配置的地址→形状映射表 |
-| ARKit LiveLink | UDP 11111 | iPhone (Live Link Face) | 52 blendshape + 头部姿态 |
+| VMC | UDP 39539 | VSeeFace / Warudo / 自制 Unity | ✅ 双向，同时是输出格式 |
+| OSC（通用） | UDP 9103（可配） | 任意面捕 App | ✅ `osc_map.ini` 地址→形状/眼睛映射 |
+| ARKit LiveLink | UDP 11111 | iPhone (Live Link Face) | ✅ 61 曲线二进制：52 blendshape + 头姿 + 眼姿；未真机验收 |
 | MeowFace / iFacialMocap | UDP/HTTP | Android/iOS | 格式相近，需适配 |
 | ALVR | UDP（协商） | ALVR | 眼追 + 面捕 |
 | Virtual Desktop | UDP（协商） | Quest Pro/3 经 VD | 需逆向，注意版本 |
@@ -513,6 +513,7 @@ FGB_EXPORT const FgbModuleV1* fgb_module_query(uint32_t host_abi_version);
 | OpenXR 眼追 | 进程内 | 任意 OpenXR 应用 | `XR_EXT_eye_gaze_interaction` 只有合并视线 |
 
 **优先级建议**：VMC → OSC 通用 → ARKit LiveLink → OpenXR → ALVR/VD/PICO（涉及逆向，放后）。
+前三条已落地，细节见 [ADR-0029](adr/0029-arkit-livelink-and-osc-input.md)。
 
 ---
 

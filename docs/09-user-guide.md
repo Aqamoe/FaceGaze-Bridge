@@ -49,7 +49,65 @@ sdk\                   集成文档与示例
 | 日志 | 引擎与模块日志，级别过滤、自动滚动 |
 | 设置 | 滤波、引擎启停、诊断包、SteamVR 启动项、界面语言 |
 
-## 3. 输出
+## 3. 输入源
+
+默认是 VRCFT 模块（桌面入口）或 VMC（`fgb-cli` 默认）。另外两路直接用命令行开启：
+
+| 输入 | 命令 | 端口 | 说明 |
+|---|---|---|---|
+| VMC | `--source vmc` | 39539 | VSeeFace / Warudo；必须跟 `Apply` 才生效 |
+| ARKit LiveLink | `--source livelink` | 11111 | iPhone + Live Link Face（ARKit 模式） |
+| 通用 OSC | `--source osc --osc-map <文件>` | 9103 | 任意 OSC 发送端，按映射表翻译 |
+
+可重复 `--source` 做多源合并；`--eye-source` / `--expression-source` / `--head-source`
+用源名（`vmc` / `livelink` / `osc`）指定某一路由谁提供。桌面入口会把不认识的参数
+转给引擎，所以也可以先托盘「退出」，再运行
+`"FaceGaze Bridge.exe" --source livelink`。界面里暂时不能切换输入源或编辑映射表。
+
+### 3.1 ARKit LiveLink
+
+1. iPhone 装 Live Link Face，设置里的捕捉模式选 **ARKit**
+   （MetaHuman Animator 模式走 14785，不是这个协议）。
+2. 在 LiveLink 设置里添加电脑 IP，端口 11111；需要头姿时打开 Stream Head Rotation。
+3. 电脑上运行 `fgb-cli run --source livelink`。第一次会弹 Windows 防火墙，
+   只放行专用网络即可。
+
+日志出现 `livelink: 收到数据: subject=... curves=61` 就说明数据到了。
+没有数据时先确认手机和电脑在同一网段、端口没被 UE 占用。
+
+**注意**：LiveLink 直连**尚未在 iPhone 真机验收**。头姿把 -1..1 解释为 ±90°，
+实机若发现方向相反/幅度不对，需要调整 `kLiveLinkHeadMaxDeg` 与符号（ADR-0029）。
+
+### 3.2 通用 OSC
+
+映射表默认 `%LOCALAPPDATA%\FaceGazeBridge\osc_map.ini`；第一次用 `--source osc`
+时会自动生成一份空表。格式：
+
+```ini
+[input]
+port=9103
+
+[map]
+/avatar/parameters/JawOpen = JawOpen
+/avatar/parameters/EyeLidLeft = EyeLidLeft, invert
+/avatar/parameters/MouthSmileLeft = MouthSmileLeft, scale=0.8, offset=0.1
+```
+
+- 目标写统一形状名（`JawOpen`、`MouthSmileLeft`，大小写不敏感），或眼睛目标
+  `EyeLidLeft/Right`、`EyeLeftX/Y`、`EyeRightX/Y`；
+- `scale` / `offset`：`输出 = 原始值 × scale + offset`；
+- `invert`：0..1 目标用 `1 - 值`，视线轴直接取反；
+- 同一地址后写覆盖先写；不同地址映射到同一形状时相加；
+- 改完表要重启引擎（`--source osc` 只在启动时读一次）。
+
+默认只绑回环；发送端在另一台机器时加 `--osc-in-lan`。
+日志 `osc: 监听 UDP ... N 条映射` 的 N 应该等于表里的条数；目标名写错会逐条警告并跳过。
+
+```powershell
+fgb-cli run --source osc --osc-map .\osc_map.ini --panel 8787
+```
+
+## 4. 输出
 
 默认只开 VRChat OSC。其余输出要在「输出」页打开（或命令行显式给）：
 
@@ -71,7 +129,7 @@ WebSocket 与控制面只绑 `127.0.0.1`。
 - 预设文件在 `%LOCALAPPDATA%\FaceGazeBridge\outputs-profiles\*.ini`，可直接备份/复制；
 - 预设只包含输出设置，不含校准/滤波/模块选择。
 
-## 4. 校准
+## 5. 校准
 
 - 校准页每个形状有 lo/hi：把静止值设 lo、夸张值设 hi（或点「取当前」）；
 - 视线有 gain/center：可把当前视线设为中心；
@@ -80,7 +138,7 @@ WebSocket 与控制面只绑 `127.0.0.1`。
 - 没有模型映射的形状标「仅数值」，仍然可以调；
 - 5 点注视校准与漂移补偿仍未做（需要 VR 内校准界面）。
 
-## 5. 模块兼容性（实测范围）
+## 6. 模块兼容性（实测范围）
 
 VRCFT 协议层已真机跑通；**模块覆盖仍是当前最大缺口**（roadmap 2.10 要求 ≥5 个真实模块）。
 
@@ -96,7 +154,7 @@ VRCFT 协议层已真机跑通；**模块覆盖仍是当前最大缺口**（road
 
 加载失败时优先看「模块」页卡片里的原因，以及日志页。
 
-## 6. 性能与诊断
+## 7. 性能与诊断
 
 状态页「性能与资源」：
 
@@ -116,7 +174,7 @@ VRCFT 协议层已真机跑通；**模块覆盖仍是当前最大缺口**（road
 崩溃时会在 `%LOCALAPPDATA%\FaceGazeBridge\crashes\` 留 `.dmp` + `.txt`
 （版本、时间、异常码、模块路径），保留最近 20 份。
 
-## 7. 故障排查
+## 8. 故障排查
 
 | 现象 | 先查什么 |
 |---|---|
@@ -128,6 +186,8 @@ VRCFT 协议层已真机跑通；**模块覆盖仍是当前最大缺口**（road
 | 输出页保存了不生效 | 需要「保存并重启引擎」；`status.outputs` 是保存值，运行态看目标卡片 |
 | 90/30 Hz 实际只有 60/24 | 旧版本取整问题已由 `SinkThrottle` 修复；确认用的是当前版本 |
 | WS 连不上 | 只绑回环；端口是否被占，状态页会显示「未监听」 |
+| LiveLink 一直没有数据 | 手机捕捉模式是否为 ARKit；IP/端口 11111；防火墙；日志有没有 `收到数据` |
+| 通用 OSC 收到包但参数不动 | 是否 `--source osc`；映射目标名是否拼对；端口是否一致；跨机发送是否加了 `--osc-in-lan` |
 | 共享内存读不到 | 名称是否一致（非法字符会替换成 `_`）；引擎是否真的开了该输出 |
 | 3D 预览只剩 2D | WebGL2 不可用（远程桌面/老显卡）；校准功能仍可用 |
 | SteamVR 开关灰 | 卡片写原因：未安装 / 未运行。FGB 不会自动拉起 SteamVR |
@@ -141,9 +201,11 @@ VRCFT 协议层已真机跑通；**模块覆盖仍是当前最大缺口**（road
 fgb-cli run --source replay --replay golden.fgbrec --replay-loop --panel 8787
 # 纯 VMC 输入，脚本自己灌数据
 python tools/soak.py --duration 600
+# 两路新输入的端到端探针（自己拉起引擎、自己发包）
+python tools/probe_inputs.py --cli build/test/bin/Debug/fgb-cli.exe
 ```
 
-## 8. 隐私与安全
+## 9. 隐私与安全
 
 - 控制面与 WebSocket 只绑 `127.0.0.1`，不监听局域网；
 - VMC/模块 UDP 输入默认只绑回环（mDNS 例外，必须收网卡组播）；
@@ -152,7 +214,7 @@ python tools/soak.py --duration 600
 - 模块 DLL 属于可执行代码，只从自己的模块仓加载，安装前请确认来源；
 - 详细审查记录见 [10-security-review](10-security-review.md)。
 
-## 9. FAQ
+## 10. FAQ
 
 **Q：能和 VRCFT 同时开吗？**
 不能。模块沙箱端口独占，先完全退出 VRCFT。

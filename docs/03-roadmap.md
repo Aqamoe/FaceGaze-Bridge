@@ -208,6 +208,12 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > 见 [ADR-0011](adr/0011-module-management.md)；**3.13 已完成**（简中/英/日三语文案表 + 界面内切换，
 > 见 [ADR-0012](adr/0012-ui-localization.md)）。**3.10 里"多模块并发"没做**（引擎当前一次只跑
 > 一个模块进程），已并入 M4 的多输出工作。
+>
+> **输入协议补齐（2026-10-30）**：VMC 之外新增 **ARKit LiveLink**（UDP 11111，61 曲线二进制，
+> 52 blendshape + 头姿 + 眼姿）与 **通用 OSC**（`osc_map.ini` 地址→形状/眼睛映射，
+> scale/offset/invert）。两路都有单测与 `tools/probe_inputs.py` 端到端探针；
+> LiveLink **未在 iPhone 真机验收**，OSC 的界面表格编辑器尚未做。见
+> [ADR-0029](adr/0029-arkit-livelink-and-osc-input.md)。
 
 ### 验收标准
 
