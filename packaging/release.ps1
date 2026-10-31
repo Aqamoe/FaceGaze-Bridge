@@ -1,4 +1,5 @@
-﻿# 一键发布：构建 → 单测 → dist → VRCFT 运行时 → 安装包 → 校验和（可选 draft release）。
+﻿# 一键发布：构建 → 单测 → dist → VRCFT 运行时 → 安装包 → SDK 包 → 校验和
+# （可选 draft release）。
 #
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File packaging\release.ps1
@@ -89,6 +90,11 @@ if ($RuntimeZip) {
 $setup = Join-Path $OutputDir "FaceGazeBridge-Setup-$Version.exe"
 if (-not (Test-Path $setup)) { throw "找不到安装包：$setup" }
 
+& (Join-Path $PSScriptRoot "pack_sdk.ps1") `
+    -Version $Version -DistDir $DistDir -OutputDir $OutputDir
+$sdkZip = Join-Path $OutputDir "FaceGazeBridge-SDK-$Version.zip"
+if (-not (Test-Path $sdkZip)) { throw "找不到 SDK 包：$sdkZip" }
+
 # CI 没有 VRCFT 安装目录，把运行时压缩包作为 release 资产带出去，后续 tag
 # 构建就能直接复用（release.yml 会优先下载它）。
 $runtimeZipOut = Join-Path $OutputDir "vrcft-runtime.zip"
@@ -96,7 +102,7 @@ Compress-Archive -Path (Join-Path $runtimeDest "*") -DestinationPath $runtimeZip
 
 $sumFile = Join-Path $OutputDir "SHA256SUMS.txt"
 $lines = @()
-foreach ($file in @($setup, $runtimeZipOut)) {
+foreach ($file in @($setup, $runtimeZipOut, $sdkZip)) {
     $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
     $lines += "$hash  $([System.IO.Path]::GetFileName($file))"
 }
@@ -105,6 +111,7 @@ Set-Content -Path $sumFile -Value $lines -Encoding ascii
 Write-Host ""
 Write-Host "安装包：$setup（$([math]::Round((Get-Item $setup).Length / 1MB, 1)) MB）"
 Write-Host "运行时：$runtimeZipOut"
+Write-Host "SDK：$sdkZip"
 Write-Host "校验和：$sumFile"
 
 if ($Publish) {
@@ -122,7 +129,7 @@ FaceGaze Bridge $Version
         Set-Content -Path $notesPath -Value $notes -Encoding utf8
     }
 
-    $assets = @($setup, $runtimeZipOut, $sumFile)
+    $assets = @($setup, $runtimeZipOut, $sdkZip, $sumFile)
     & gh release view $tag --json tagName 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) {
         Write-Host "更新已有 release $tag（draft 状态不变）"

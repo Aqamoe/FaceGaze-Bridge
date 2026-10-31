@@ -29,7 +29,7 @@
   和脚本调试通常只关心在动的形状，减少 3/4 的文本体积。
 - 没有客户端时不做 JSON 编码；单个客户端出站缓冲超过 `WsServer` 的 512 KB 上限就断开，
   重连即可，不保留历史。
-- 格式见 [docs/07-streaming-outputs.md](../07-streaming-outputs.md) §1，与
+- 格式见 [sdk/docs/streaming-outputs.md](../../sdk/docs/streaming-outputs.md) §1，与
   [docs/02-features.md](../02-features.md) §3.3 的字段一致。
 
 ### 2. UDP 二进制：一个数据报一帧，小端固定布局

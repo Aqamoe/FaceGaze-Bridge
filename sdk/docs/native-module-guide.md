@@ -11,9 +11,9 @@
 [`samples/native-face`](../samples/native-face)（仅表情）、
 [`samples/native-gaze`](../samples/native-gaze)（仅独立注视，含 2D-only 模式）、
 [`samples/native-openness`](../samples/native-openness)（只给睁眼度/瞳孔）。
-都不需要硬件。头文件：[`sdk/fgb_module_api.h`](../sdk/fgb_module_api.h)。
+都不需要硬件。头文件：[`fgb_module_api.h`](../fgb_module_api.h)。
 
-> **ABI v1 已移除**（[ADR-0034](adr/0034-native-module-v2-only.md)）。
+> **ABI v1 已移除**（[ADR-0034](https://github.com/Aqamoe/FaceGaze-Bridge/blob/main/docs/adr/0034-native-module-v2-only.md)）。
 > `FgbFrameSlotV1` / `FgbEyeV1` / `FgbGazeV1` / `fgb_module_query` / `FGB_CAP_EYE` /
 > `FGB_GAZE_*` 都不再存在。用旧头编译的 DLL 会加载失败并提示重新编译。
 > 迁移对照见 §12。
@@ -293,7 +293,7 @@ slot->head_position[0] = px;  /* 米，HMD 局部 */
 
 ### 8.1 独立 CMake 工程（推荐）
 
-示例目录自带 [`CMakeLists.txt`](../samples/native-sine/CMakeLists.txt)：
+示例目录自带 [`CMakeLists.txt`](../samples/native-sine/CMakeLists.txt)。在 SDK 根目录执行：
 
 ```powershell
 cmake -S samples/native-sine -B build/native-sample -G "Visual Studio 17 2022" -A x64
@@ -306,7 +306,7 @@ cmake --build build/native-sample --config Release
 ### 8.2 直接命令行（MSVC）
 
 ```bat
-cl /nologo /LD /O2 /EHsc /std:c++20 /I sdk MyModule.cpp /Fe:MyModule.dll
+cl /nologo /LD /O2 /EHsc /std:c++20 /I . MyModule.cpp /Fe:MyModule.dll
 ```
 
 注意：
@@ -424,12 +424,12 @@ fgb-cli run --source vrcft --native-host-exe "D:\FGB\fgb-host-native.exe"
 - 宿主模式暂不支持 `--record`；模块日志经共享内存 ring 回传引擎日志，同时写到
   `%LOCALAPPDATA%\FaceGazeBridge\logs\native-host-*.log`。
 - 发布包需要 `fgb-host-native.exe` 与主程序放在一起；缺失时自动回退进程内。
-  协议布局见 [`sdk/fgb_native_host_shm.h`](../sdk/fgb_native_host_shm.h)。
+  协议布局见 [`fgb_native_host_shm.h`](../fgb_native_host_shm.h)。
 - 崩溃隔离是**进程级**的，不是沙箱：模块仍以当前用户身份运行，读写文件不改权限。
 
 ## 12. 从 v1 迁移
 
-v1 的结构和符号全部删除（[ADR-0034](adr/0034-native-module-v2-only.md)）。对照：
+v1 的结构和符号全部删除（[ADR-0034](https://github.com/Aqamoe/FaceGaze-Bridge/blob/main/docs/adr/0034-native-module-v2-only.md)）。对照：
 
 | v1 | v2 |
 |---|---|
@@ -470,7 +470,7 @@ v1 的结构和符号全部删除（[ADR-0034](adr/0034-native-module-v2-only.md
 |---|---|
 | 模块列表里没有 | `fgb-native.json` 缺失或 `ModuleId` 为空；或在错误的目录层级 |
 | 列表里标「不兼容」 | 清单 `AbiVersion` 不是 2，或 `MinHostVersion` 高于当前宿主 |
-| 加载失败“用的是已移除的 ABI v1” | 用旧 SDK 头编译过；换当前 `sdk/fgb_module_api.h` 重新编译 |
+| 加载失败“用的是已移除的 ABI v1” | 用旧 SDK 头编译过；换当前 `fgb_module_api.h` 重新编译 |
 | 加载失败“没有导出 fgb_module_query_v2” | 忘记 `extern "C" __declspec(dllexport)`，或编译成了 C++ 修饰名 |
 | ABI 版本不兼容 | 模块返回了框架外的 `abi_version`；重新用当前 SDK 头编译 |
 | 卡片显示故障 | 看模块 `report_status(ERROR, ...)` / 日志里的具体原因；初始化返回 0 也会显示 |

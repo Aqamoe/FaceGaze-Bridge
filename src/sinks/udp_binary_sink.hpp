@@ -6,7 +6,7 @@
 //   UDP binary 给"每帧都要、不想解析 JSON"的消费者（注视点编码、自研引擎）
 //
 // 一个数据报 = 一帧，布局固定且小端；不发名字表，形状顺序与共享内存一致。
-// 协议见 sdk/fgb_udp_frame.h 与 docs/07-streaming-outputs.md。
+// 协议见 sdk/fgb_udp_frame.h 与 sdk/docs/streaming-outputs.md。
 #pragma once
 
 #include "net/udp_socket.hpp"

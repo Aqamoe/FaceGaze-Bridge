@@ -1,7 +1,7 @@
 # 07 · 流式输出（WebSocket JSON / UDP 二进制）
 
 > 面向：网页/脚本开发者、串流工具作者、自研引擎集成者。
-> 共享内存输出另见 [06-shared-memory.md](06-shared-memory.md)；VRChat/VMC 输出见 README。
+> 共享内存输出另见 [shared-memory.md](shared-memory.md)；VRChat/VMC 输出见 README。
 
 FGB 的同一帧可以同时送给多个消费者。除 VRChat OSC、VMC、共享内存外，还有两种
 "给程序读"的流式输出，默认都不开启，必须显式给参数：
@@ -26,7 +26,7 @@ WS 默认只发有效且 > 0.01 的形状）。接收端不需要维护上一帧
 `%LOCALAPPDATA%\FaceGazeBridge\outputs.ini`，点「保存并重启引擎」生效。
 优先级是 **命令行参数 > outputs.ini > 默认值**；某次启动想忽略保存值就加
 `--no-saved-outputs`，想用另一份文件就加 `--outputs-config <路径>`。
-详见 [ADR-0025](adr/0025-output-settings-persistence.md)。
+详见 [ADR-0025](https://github.com/Aqamoe/FaceGaze-Bridge/blob/main/docs/adr/0025-output-settings-persistence.md)。
 
 ---
 
@@ -119,7 +119,7 @@ asyncio.run(main())
 
 ### 布局
 
-C 定义在 [`sdk/fgb_udp_frame.h`](../sdk/fgb_udp_frame.h)，安装包在 `sdk/fgb_udp_frame.h`。
+C 定义在 [`fgb_udp_frame.h`](../fgb_udp_frame.h)，安装包在 `sdk/fgb_udp_frame.h`。
 字段偏移：
 
 | 偏移 | 类型 | 字段 |

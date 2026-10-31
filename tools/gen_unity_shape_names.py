@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SHAPE_HPP = ROOT / "src" / "core" / "model" / "shape.hpp"
-OUT = ROOT / "samples" / "unity-face-gaze" / "Runtime" / "FaceGazeShapeNames.cs"
+OUT = ROOT / "sdk" / "samples" / "unity-face-gaze" / "Runtime" / "FaceGazeShapeNames.cs"
 
 
 def load_names():

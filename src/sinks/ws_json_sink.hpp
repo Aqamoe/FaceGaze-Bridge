@@ -6,7 +6,7 @@
 //   WS JSON   浏览器/Node/Python 直接连，代价是文本编码和 ~30 Hz 的节流
 //
 // 只绑 127.0.0.1，无鉴权——它是本机数据口，不是公网服务。
-// 协议格式见 docs/07-streaming-outputs.md（与 docs/02-features.md §3.3 对齐）。
+// 协议格式见 sdk/docs/streaming-outputs.md（与 docs/02-features.md §3.3 对齐）。
 #pragma once
 
 #include "net/ws_server.hpp"

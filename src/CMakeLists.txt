@@ -201,15 +201,15 @@ if(WIN32 AND FGB_BUILD_SAMPLE_MODULE)
 
     # native-sine 保留为 v1 兼容性基准（旧模块不写 gaze 字段）
     fgb_add_sample_module(fgb-sample-native
-        "${CMAKE_SOURCE_DIR}/samples/native-sine/native_sine.cpp" "fgb-sample-native")
+        "${CMAKE_SOURCE_DIR}/sdk/samples/native-sine/native_sine.cpp" "fgb-sample-native")
     # ADR-0030 验证用：面捕与独立注视各一个模块
     fgb_add_sample_module(fgb-sample-face
-        "${CMAKE_SOURCE_DIR}/samples/native-face/native_face.cpp" "fgb-sample-face")
+        "${CMAKE_SOURCE_DIR}/sdk/samples/native-face/native_face.cpp" "fgb-sample-face")
     fgb_add_sample_module(fgb-sample-gaze
-        "${CMAKE_SOURCE_DIR}/samples/native-gaze/native_gaze.cpp" "fgb-sample-gaze")
+        "${CMAKE_SOURCE_DIR}/sdk/samples/native-gaze/native_gaze.cpp" "fgb-sample-gaze")
     # ABI v2 属性掩码：只给 openness/pupil，不给 gaze
     fgb_add_sample_module(fgb-sample-openness
-        "${CMAKE_SOURCE_DIR}/samples/native-openness/native_openness.cpp"
+        "${CMAKE_SOURCE_DIR}/sdk/samples/native-openness/native_openness.cpp"
         "fgb-sample-openness")
 endif()
 
@@ -231,63 +231,32 @@ if(WIN32)
         install(TARGETS fgb-ui RUNTIME DESTINATION .)
     endif()
     install(DIRECTORY "${CMAKE_SOURCE_DIR}/ui/" DESTINATION ui)
+    # SDK 整目录发布：头文件、文档、示例的源码布局与仓库 sdk/ 完全一致，
+    # 模块开发者可以直接把 dist/sdk 或仓库 sdk/ 交给 CMake。
+    install(DIRECTORY "${CMAKE_SOURCE_DIR}/sdk/" DESTINATION sdk)
     install(FILES
-        "${CMAKE_SOURCE_DIR}/sdk/fgb_module_api.h"
-        "${CMAKE_SOURCE_DIR}/sdk/fgb_shared_frame.h"
-        "${CMAKE_SOURCE_DIR}/sdk/fgb_udp_frame.h"
-        "${CMAKE_SOURCE_DIR}/sdk/fgb_native_host_shm.h"
+        "${CMAKE_SOURCE_DIR}/LICENSE"
+        "${CMAKE_SOURCE_DIR}/NOTICE"
         DESTINATION sdk)
-    install(FILES "${CMAKE_SOURCE_DIR}/docs/05-native-module-guide.md"
-        DESTINATION sdk RENAME NATIVE-MODULE-GUIDE.md)
-    install(FILES "${CMAKE_SOURCE_DIR}/docs/06-shared-memory.md"
-        DESTINATION sdk RENAME SHARED-MEMORY.md)
-    install(FILES "${CMAKE_SOURCE_DIR}/docs/07-streaming-outputs.md"
-        DESTINATION sdk RENAME STREAMING-OUTPUTS.md)
-    install(FILES "${CMAKE_SOURCE_DIR}/docs/08-gaze-service.md"
-        DESTINATION sdk RENAME GAZE-SERVICE.md)
-    install(FILES
-        "${CMAKE_SOURCE_DIR}/samples/native-sine/native_sine.cpp"
-        "${CMAKE_SOURCE_DIR}/samples/native-sine/fgb-native.json"
-        "${CMAKE_SOURCE_DIR}/samples/native-sine/icon.svg"
-        "${CMAKE_SOURCE_DIR}/samples/native-sine/CMakeLists.txt"
-        DESTINATION sdk/sample-native-sine)
-    install(FILES
-        "${CMAKE_SOURCE_DIR}/samples/native-face/native_face.cpp"
-        "${CMAKE_SOURCE_DIR}/samples/native-face/fgb-native.json"
-        "${CMAKE_SOURCE_DIR}/samples/native-face/icon.svg"
-        DESTINATION sdk/sample-native-face)
-    install(FILES
-        "${CMAKE_SOURCE_DIR}/samples/native-gaze/native_gaze.cpp"
-        "${CMAKE_SOURCE_DIR}/samples/native-gaze/fgb-native.json"
-        "${CMAKE_SOURCE_DIR}/samples/native-gaze/icon.svg"
-        DESTINATION sdk/sample-native-gaze)
-    install(FILES
-        "${CMAKE_SOURCE_DIR}/samples/native-openness/native_openness.cpp"
-        "${CMAKE_SOURCE_DIR}/samples/native-openness/fgb-native.json"
-        "${CMAKE_SOURCE_DIR}/samples/native-openness/icon.svg"
-        DESTINATION sdk/sample-native-openness)
-    # Unity 示例包：UPM package.json + Runtime/*.cs，可直接 Add package from disk
-    install(DIRECTORY "${CMAKE_SOURCE_DIR}/samples/unity-face-gaze/"
-        DESTINATION sdk/unity-face-gaze)
     if(TARGET fgb-sample-native)
         install(TARGETS fgb-sample-native
-            RUNTIME DESTINATION sdk/sample-native-sine
-            LIBRARY DESTINATION sdk/sample-native-sine)
+            RUNTIME DESTINATION sdk/samples/native-sine
+            LIBRARY DESTINATION sdk/samples/native-sine)
     endif()
     if(TARGET fgb-sample-face)
         install(TARGETS fgb-sample-face
-            RUNTIME DESTINATION sdk/sample-native-face
-            LIBRARY DESTINATION sdk/sample-native-face)
+            RUNTIME DESTINATION sdk/samples/native-face
+            LIBRARY DESTINATION sdk/samples/native-face)
     endif()
     if(TARGET fgb-sample-gaze)
         install(TARGETS fgb-sample-gaze
-            RUNTIME DESTINATION sdk/sample-native-gaze
-            LIBRARY DESTINATION sdk/sample-native-gaze)
+            RUNTIME DESTINATION sdk/samples/native-gaze
+            LIBRARY DESTINATION sdk/samples/native-gaze)
     endif()
     if(TARGET fgb-sample-openness)
         install(TARGETS fgb-sample-openness
-            RUNTIME DESTINATION sdk/sample-native-openness
-            LIBRARY DESTINATION sdk/sample-native-openness)
+            RUNTIME DESTINATION sdk/samples/native-openness
+            LIBRARY DESTINATION sdk/samples/native-openness)
     endif()
     install(FILES "${CMAKE_SOURCE_DIR}/packaging/README.txt" DESTINATION .)
     install(FILES

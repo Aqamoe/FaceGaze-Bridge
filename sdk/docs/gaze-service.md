@@ -1,7 +1,7 @@
 # 08 · 注视点服务（`/api/gaze` 与 WS `gaze`）
 
 > 面向：脚本/研究工具/串流软件/自研客户端。
-> 设计取舍见 [ADR-0026](adr/0026-gaze-estimator-and-api.md)。
+> 设计取舍见 [ADR-0026](https://github.com/Aqamoe/FaceGaze-Bridge/blob/main/docs/adr/0026-gaze-estimator-and-api.md)。
 
 FGB 优先使用独立注视通道（`GAZE`），没有时把左右眼合并成一条 HMD 局部视线，
 并在引擎里判断"扫视 / 注视"。头像驱动不使用这份数据，只有渲染/foveation 消费端用。
@@ -70,7 +70,7 @@ curl http://127.0.0.1:8787/api/gaze
 | `left_pitch_deg` / `left_yaw_deg` / `right_pitch_deg` / `right_yaw_deg` | 逐眼俯仰/偏航（与 `dir_local` 同一约定）；无效眼为 0，先看 `left_valid` / `right_valid` |
 | `left_point_valid` / `right_point_valid` | 逐眼 2D 点是否有效（与方向有效**无关**；2D-only 源只有这个为真） |
 | `point_space` | 点所在坐标系：`"viewport"` = 该眼视口归一化（可用于 foveation）；`"source"` = 来源自己的原始坐标，只能展示/看趋势 |
-| `point2d_valid` / `left_point_2d` / `right_point_2d` | 该眼视口归一化坐标（[ADR-0033](adr/0033-gaze-point-2d-space.md)）：`[0,1]`、左上原点、畸变前、逐眼独立；`point2d_valid` 是"左右眼都有点"的兼容字段 |
+| `point2d_valid` / `left_point_2d` / `right_point_2d` | 该眼视口归一化坐标（[ADR-0033](https://github.com/Aqamoe/FaceGaze-Bridge/blob/main/docs/adr/0033-gaze-point-2d-space.md)）：`[0,1]`、左上原点、畸变前、逐眼独立；`point2d_valid` 是"左右眼都有点"的兼容字段 |
 | `source` / `source_age_ms` / `source_id` / `source_mask` | 来源实例名、数据年龄、源序号、通道位掩码 |
 | `left_source` / `right_source` | 逐眼来源序号（左右注视可来自不同源） |
 | `left_capture_ts_ns` / `right_capture_ts_ns` | 逐眼捕获时刻 |

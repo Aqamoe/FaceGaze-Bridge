@@ -102,7 +102,7 @@ cmake --build --preset windows-vs2022 --parallel
 ctest --test-dir build/windows-vs2022 -C Debug --output-on-failure
 ```
 
-原生模块示例（`samples/native-sine`）由 `-DFGB_BUILD_SAMPLE_MODULE=ON` 构建（默认开），
+原生模块示例（`sdk/samples/native-sine`）由 `-DFGB_BUILD_SAMPLE_MODULE=ON` 构建（默认开），
 产物 `fgb-sample-native.dll` 在 bin 目录；它不依赖硬件，单测和 `--source vrcft`
 （模块仓里选它）都能直接跑。
 
@@ -159,8 +159,7 @@ dist/fgb-cli.exe           引擎（命令行用；外壳启动时会调用它�
                            免得在资源管理器里被当成第二个启动入口
 dist/fgb-host-native.exe   原生模块跨进程宿主（--native-host 时使用）
 dist/runtime/vrcft/        精简 VRCFT 宿主运行时（约 106 MB，卸载 VRCFT 也能跑模块）
-dist/sdk/fgb_module_api.h  原生模块 ABI 头（给模块开发者）
-dist/sdk/fgb_native_host_shm.h 跨进程宿主共享内存布局
+dist/sdk/                  原生模块 SDK：ABI 头、docs/、samples/（与仓库 sdk/ 一致）
 dist/ui/                   页面资源（index.html / app.js / face.js / style.css / i18n.js / logo.png）
 dist/ui/face/              3D 模型与形状映射（head_v1.fgbface / face_map.json）
 dist/app.vrmanifest        SteamVR 启动项注册清单（与入口 exe 同目录）
@@ -175,6 +174,10 @@ dist/README.txt            怎么用、日志在哪
 ```powershell
 python tools/build_vrcft_runtime.py --dest dist/runtime/vrcft
 ```
+
+发布时 `packaging/pack_sdk.ps1` 会把 `dist/sdk/` 打成
+`dist-installer/FaceGazeBridge-SDK-<version>.zip`（`release.ps1` 与 CI 自动调用）；
+解压后根目录就是 SDK，可直接作为模块工程的 submodule/FetchContent 目录。
 
 入口只有一个（[ADR-0016](docs/adr/0016-single-entry-desktop-app.md)）：
 外壳探到 8787 没有引擎就隐藏启动 `fgb-cli run --source vrcft --panel 8787`，
@@ -320,12 +323,12 @@ src/engine/    合并、快照发布、扇出
 src/openvr/    SteamVR 启动项：运行库定位、openvr_api.dll 动态加载、IVRApplications 注册
 src/web/       控制面 IPC（WS 消息 + 静态页面）
 src/ui/        FaceGaze Bridge.exe：WebView2 窗口 + 托盘 + 拉起/回收引擎（无业务逻辑）
-sdk/           公开 ABI 头（模块 fgb_module_api.h、共享内存 fgb_shared_frame.h、UDP 帧 fgb_udp_frame.h）
-samples/       native-sine：无硬件的原生模块示例；unity-face-gaze：Unity 共享内存读取/驱动示例
+sdk/           原生模块 SDK：ABI 头（模块 / 共享内存 / UDP / 宿主共享内存）、
+               docs/（集成文档）、samples/（无硬件示例与 Unity 包）
 ui/            页面资源（无构建步骤；face.js 是 WebGL2 渲染器，face/ 是模型与映射表）
 tools/         抓包、冒烟、探针，以及 build_vrcft_runtime.py（出精简运行时）、
                gen_face_model.py / check_face_model.py（3D 资产生成与校验）
-docs/          方案、ADR、路线图、原生模块指南（05）、共享内存（06）、流式输出（07）、注视服务（08）
+docs/          方案、ADR、路线图、用户手册；SDK 集成文档在 sdk/docs/
 ```
 
 ## 7. IPC 协议速查（`ws://127.0.0.1:<port>/ws`）

@@ -185,7 +185,7 @@ void NativeModuleSource::check_capabilities(std::uint64_t attributes) {
                              ": 写了 " + missing +
                              " 属性但没有在 capabilities 里声明；"
                              "数据仍会被采用，但模块列表/角色选择看不到这一路。"
-                             "见 docs/05-native-module-guide.md §5";
+                             "见 sdk/docs/native-module-guide.md §5";
     FGB_WARN(kTag, "%s", text.c_str());
     if (config_.log_sink) {
         config_.log_sink(FGB_LOG_WARN, text.c_str());
@@ -201,7 +201,7 @@ void NativeModuleSource::check_gaze_diagnostics(const FaceFrame& frame) {
               config_.display_name +
                   ": 注视方向恒为 (0,0,-1) 却声明了方向属性，同时带 2D 点；"
                   "没有方向模型的模块应只置 FGB_ATTR_LEFT/RIGHT_POINT，"
-                  "否则 valid/fixation 会一直为真（见 docs/05-native-module-guide.md §6.2）");
+                  "否则 valid/fixation 会一直为真（见 sdk/docs/native-module-guide.md §6.2）");
     warn_once(native::gaze_point_out_of_viewport(frame.gaze), range_frames_, range_warned_,
               config_.display_name +
                   ": 2D 注视点持续越界（远在 [0,1] 之外），坐标空间可能不是视口归一化；"

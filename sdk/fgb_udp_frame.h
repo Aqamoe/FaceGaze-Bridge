@@ -10,7 +10,7 @@
  *   - 所有字段小端；结构体 1 字节对齐（见 FGB_UDP_FRAME_SIZE）
  *   - 坐标系与 shared memory / 模块 ABI 一致：右手系，+Y 上，-Z 前，单位米
  *   - shapes 的顺序就是 core/model/shape.hpp 的 kShapeNames 顺序（与共享内存一致）
- *   - 没有名字表：消费者按固定顺序读，或参照 docs/07-streaming-outputs.md
+ *   - 没有名字表：消费者按固定顺序读，或参照 sdk/docs/streaming-outputs.md
  *
  * 读法：
  *   recvfrom() 收到正好 FGB_UDP_FRAME_SIZE 字节 → memcpy 到 FgbUdpFrameV1

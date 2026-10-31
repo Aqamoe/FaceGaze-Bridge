@@ -269,7 +269,7 @@ if (header->sequence != seq) return;      // 期间被改写，丢弃
 
 **已实现（2026-10-30）**：`--ws-out <端口>` 在回环上广播上述 JSON，默认 30 Hz，
 支持多客户端；`--ws-out-rate` / `--ws-out-all` 可调节频率与形状集合。
-完整字段、背压和客户端示例见 [07-streaming-outputs.md](07-streaming-outputs.md) §1。
+完整字段、背压和客户端示例见 [流式输出](../sdk/docs/streaming-outputs.md) §1。
 
 ### 3.4 UDP 二进制
 
@@ -283,7 +283,7 @@ if (header->sequence != seq) return;      // 期间被改写，丢弃
 
 `--udp-out <host:port>` 显式开启，默认每个 tick 发送；`--udp-out-rate` 可限速。
 C 定义在 `sdk/fgb_udp_frame.h`，偏移表与 Python/C# 读取示例见
-[07-streaming-outputs.md](07-streaming-outputs.md) §2。
+[流式输出](../sdk/docs/streaming-outputs.md) §2。
 
 ---
 
@@ -321,7 +321,7 @@ GET /api/gaze
 **2D 点坐标（2026-10-31）**：定为该眼显示视口的归一化坐标（`[0,1]`、左上原点、畸变前），
 见 [ADR-0033](adr/0033-gaze-point-2d-space.md)；
 `GazeEstimator` 用角速度判断扫视/注视（30°/s 入口、80°/s 退出、80 ms 停留、0.5 s 断档复位）。
-字段见 [08-gaze-service.md](08-gaze-service.md) 与 [ADR-0026](adr/0026-gaze-estimator-and-api.md)。
+字段见 [注视服务](../sdk/docs/gaze-service.md) 与 [ADR-0026](adr/0026-gaze-estimator-and-api.md)。
 当前返回 HMD **局部**方向和头姿，不返回世界坐标；预测与 OpenXR 注入仍未做。
 
 ### 4.2 为什么这个能力有市场

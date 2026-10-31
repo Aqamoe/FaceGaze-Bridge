@@ -1,7 +1,7 @@
 # 09 · 用户手册（v1.0.x）
 
 > 面向最终用户与排障人员。开发/集成请看 [README](../README.md)、
-> [05-native-module-guide](05-native-module-guide.md)、[07-streaming-outputs](07-streaming-outputs.md)。
+> [原生模块开发指南](../sdk/docs/native-module-guide.md)、[流式输出](../sdk/docs/streaming-outputs.md)。
 
 ## 1. 安装与启动
 
@@ -156,9 +156,9 @@ fgb-cli run --source osc --osc-map .\osc_map.ini --panel 8787
 |---|---|---|
 | VRChat OSC | 始终开启 | `/avatar/parameters/*`，地址来自头像参数表 |
 | VMC | 输出页「启用 VMC」或 `--vmc-out host:port` | `/VMC/Ext/Blend/Val` + `Apply` |
-| 共享内存 | 「启用共享内存」或 `--shm <name>` | `Local\FGB_Shm_<name>`，见 [06](06-shared-memory.md) |
-| WebSocket JSON | 「启用 WebSocket JSON」或 `--ws-out <port>` | 见 [07](07-streaming-outputs.md) |
-| UDP 二进制 | 「启用 UDP 二进制」或 `--udp-out host:port` | 656 字节固定帧，见 [07](07-streaming-outputs.md) |
+| 共享内存 | 「启用共享内存」或 `--shm <name>` | `Local\FGB_Shm_<name>`，见 [共享内存](../sdk/docs/shared-memory.md) |
+| WebSocket JSON | 「启用 WebSocket JSON」或 `--ws-out <port>` | 见 [流式输出](../sdk/docs/streaming-outputs.md) |
+| UDP 二进制 | 「启用 UDP 二进制」或 `--udp-out host:port` | 656 字节固定帧，见 [流式输出](../sdk/docs/streaming-outputs.md) |
 
 保存后要点「保存并重启引擎」才生效；命令行参数永远覆盖保存值。
 WebSocket 与控制面只绑 `127.0.0.1`。
@@ -186,7 +186,7 @@ VRCFT 协议层已真机跑通；**模块覆盖仍是当前最大缺口**（road
 | 模块 | 硬件/来源 | 状态 | 备注 |
 |---|---|---|---|
 | `VRCFTPicoModule` v0.1.11 | PICO + PICO Connect | ✅ 真机验收（2026-10-29） | 先退出 VRCFT；真实面捕数据 |
-| 只报 2D 点的原生模块（`samples/native-gaze` 的 POINTS_ONLY 模式） | 无 | ✅ 单测 + ABI 端到端（2026-10-31） | 只置 `FGB_ATTR_LEFT/RIGHT_POINT`：`valid=false`、点正常透传；未标定就只显示 `2D~`，标定后再加 `FGB_ATTR_POINT_VIEWPORT` 才是 `2D` |
+| 只报 2D 点的原生模块（`sdk/samples/native-gaze` 的 POINTS_ONLY 模式） | 无 | ✅ 单测 + ABI 端到端（2026-10-31） | 只置 `FGB_ATTR_LEFT/RIGHT_POINT`：`valid=false`、点正常透传；未标定就只显示 `2D~`，标定后再加 `FGB_ATTR_POINT_VIEWPORT` 才是 `2D` |
 | `native-sine` 示例 | 无 | ✅ 单测 + 端到端 | 无硬件验证链路 |
 | 回放（`.fgbrec`） | 无 | ✅ 单测 + 探针 | 金样为真实 PICO 抓包 |
 | VMC 输入 | VSeeFace 等 | ✅ 协议冒烟 | 必须跟 `Apply` 才生效 |
@@ -269,7 +269,7 @@ python tools/probe_inputs.py --cli build/windows-vs2022/bin/Debug/fgb-cli.exe
 取决于 VRCFT 模块。当前实测只有 PICO；Quest/iPhone 等需要对应模块与真机验证。
 
 **Q：能驱动 Unity 角色吗？**
-可以：开共享内存后用 [samples/unity-face-gaze](../samples/unity-face-gaze/README.md)
+可以：开共享内存后用 [sdk/samples/unity-face-gaze](../sdk/samples/unity-face-gaze/README.md)
 （Unity 2021.3+，Windows），或开 VMC 输出给认 VMC 的软件。
 
 **Q：眼追能喂给游戏吗？**

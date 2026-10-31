@@ -263,12 +263,13 @@ jobs:
 ### 6.1 实际发布流水线
 
 - **本地一键**：`packaging/release.ps1` 做完整链路——构建、单测、`cmake --install` 到
-  `dist/`、抽取/解压 VRCFT 运行时、部署 VC 运行库、编译 Setup、生成
+  `dist/`、抽取/解压 VRCFT 运行时、部署 VC 运行库、编译 Setup、生成 SDK 压缩包、
   `SHA256SUMS.txt` 与 `vrcft-runtime.zip`。加 `-Publish`（需 `gh auth login`）创建或
   更新 **draft** Release，不自动公开。
 - **CI**：`.github/workflows/release.yml` 由 tag `v*` 触发，先校验 tag 与
-  `CMakeLists.txt` 版本一致，再执行同样的构建/测试/打包，上传 workflow artifact 并
-  创建 draft Release。
+  `CMakeLists.txt` 版本一致，再执行同样的构建/测试/打包（含
+  `packaging/pack_sdk.ps1` 产出的 `FaceGazeBridge-SDK-<version>.zip`），上传 workflow
+  artifact 并创建 draft Release。
 - **CI 的 VRCFT 运行时**：runner 上没有 VRCFT。工作流优先读仓库变量
   `VRCFT_RUNTIME_URL`，否则从最近一个**已发布** Release 下载同名资产。仓库是私有的，
   该变量要填 Release 资产的 **API 地址**
@@ -401,7 +402,7 @@ diagnostic-20261028-2310/
 | R15 | **3D 预览拖慢界面或引擎** | 中 | 中 | 开校准页后 tick 抖动上升、UI 掉帧 | preview 只在校准页可见时 30 Hz；独立 RAF；CPU/GPU 预算；WebGL2 不可用时降级 |
 | R16 | **托盘改变"关窗即停"的预期** | 中 | 中 | 用户关窗后以为追踪已停，实际还在输出 | 首次收进托盘给明确提示；托盘菜单显示运行状态；文档写清"托盘退出才停引擎" |
 | R17 | **OSCQuery 端口发现依赖 mDNS/Bonjour**（ADR-0023） | 中 | 低 | 启动落回本地 JSON、换头像不自动 | 150 ms 收集窗口避开别的 `_oscjson` 服务；5353 被占时退回临时端口；失败逐级回退本地 JSON；`tools/probe_oscquery.py` 可直接排障 |
-| R18 | **流式输出成为外部契约**（ADR-0024） | 中 | 中 | 第三方按旧偏移读取，字段/形状顺序变更后错位 | WS JSON 只看键名；UDP 固定小端布局 + magic/version，新增字段只追加；形状顺序变更必须升 version；`docs/07` 与 `sdk/fgb_udp_frame.h` 同步；两个探针用于手工验收（CI 只跑单测与 VMC 冒烟） |
+| R18 | **流式输出成为外部契约**（ADR-0024） | 中 | 中 | 第三方按旧偏移读取，字段/形状顺序变更后错位 | WS JSON 只看键名；UDP 固定小端布局 + magic/version，新增字段只追加；形状顺序变更必须升 version；`sdk/docs/streaming-outputs.md` 与 `sdk/fgb_udp_frame.h` 同步；两个探针用于手工验收（CI 只跑单测与 VMC 冒烟） |
 
 ### 重点风险详解
 

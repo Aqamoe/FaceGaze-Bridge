@@ -37,7 +37,7 @@ VRCFT 解决的是「我的面捕硬件怎么驱动 VRChat 头像」。FGB 解�
 | 能力 | 说明 |
 |---|---|
 | VRCFT 模块兼容 | 自带精简模块宿主运行时，卸载 VRCFT 后仍可加载模块；支持导入本机模块、`.zip` 安装、启停 |
-| 原生 C ABI | 单一 ABI（`fgb_module_query_v2`）、POD 属性帧、能力位分通道；附带不需要硬件的示例模块，见 [docs/05](docs/05-native-module-guide.md) |
+| 原生 C ABI | 单一 ABI（`fgb_module_query_v2`）、POD 属性帧、能力位分通道；附带不需要硬件的示例模块，见 [SDK 开发指南](sdk/docs/native-module-guide.md) |
 | 多源合并 | 表情 / 眼睛 / 渲染注视 / 头姿可分别选择提供者，支持 VMC、模块、抓包回放同时输入；可组合多个原生模块，左右眼/左右注视分源，模块可只给 openness 或单眼属性，`--attr-source` 支持逐属性有序源；`--native-host` 可把原生模块放进独立宿主进程，崩溃自动重启 |
 | 直连输入 | VMC、ARKit LiveLink（iPhone，UDP 11111）、通用 OSC 映射表（任意发送端） |
 | 多路输出 | VRChat OSC、VMC、命名共享内存、WebSocket JSON、UDP 二进制 |
@@ -105,7 +105,8 @@ NOTICE, LICENSE        许可证与第三方声明
 3. 到「输出」页确认 VRChat OSC / VMC / 共享内存等目标
 4. 关窗只是收进托盘，追踪继续；托盘菜单「退出」才停止引擎
 
-安装包的 SHA256 在 Release 的 `SHA256SUMS.txt` 中。
+安装包与 SDK 包（`FaceGazeBridge-SDK-<版本>.zip`）的 SHA256 在 Release 的
+`SHA256SUMS.txt` 中。
 
 ## 快速开始
 
@@ -140,13 +141,15 @@ fgb-cli modules use VRCFTPicoModule
 |---|---|---|
 | VRChat OSC | 开 | `/avatar/parameters/*`，地址来自当前头像参数表 |
 | VMC | 关 | `/VMC/Ext/Blend/Val` + `Apply`，`--vmc-out host:port` |
-| 共享内存 | 关 | `Local\FGB_Shm_<name>`，[docs/06](docs/06-shared-memory.md) |
-| WebSocket JSON | 关 | `ws://127.0.0.1:<port>/ws`，[docs/07](docs/07-streaming-outputs.md) |
-| UDP 二进制 | 关 | 固定 656 字节帧，[docs/07](docs/07-streaming-outputs.md) |
-| 注视点 | 开 | `GET /api/gaze` + WS `gaze`，[docs/08](docs/08-gaze-service.md) |
+| 共享内存 | 关 | `Local\FGB_Shm_<name>`，[SDK · 共享内存](sdk/docs/shared-memory.md) |
+| WebSocket JSON | 关 | `ws://127.0.0.1:<port>/ws`，[SDK · 流式输出](sdk/docs/streaming-outputs.md) |
+| UDP 二进制 | 关 | 固定 656 字节帧，[SDK · 流式输出](sdk/docs/streaming-outputs.md) |
+| 注视点 | 开 | `GET /api/gaze` + WS `gaze`，[SDK · 注视服务](sdk/docs/gaze-service.md) |
 
-原生模块接口见 [docs/05](docs/05-native-module-guide.md)，
-Unity 读取示例见 [samples/unity-face-gaze](samples/unity-face-gaze)。
+原生模块接口见 [SDK 开发指南](sdk/docs/native-module-guide.md)，
+Unity 读取示例见 [sdk/samples/unity-face-gaze](sdk/samples/unity-face-gaze)。
+`sdk/` 目录自包含（头文件 + 文档 + 示例），模块工程可直接按
+[SDK README](sdk/README.md) 引用。
 
 ## 从源码构建
 
@@ -202,8 +205,7 @@ src/web       控制面 IPC 与静态页面
 src/ui        FaceGaze Bridge.exe（WebView2 外壳 + 引擎生命周期）
 src/cli       fgb-cli
 ui/           界面资源（无构建步骤）
-sdk/          原生模块 ABI 与集成文档
-samples/      原生模块与 Unity 示例
+sdk/          原生模块 SDK（ABI 头、集成文档、示例，可被模块工程直接引用）
 packaging/    安装包、发布脚本、Windows 资源
 tools/        冒烟、探针、运行时抽取等辅助脚本
 docs/         架构、ADR、路线图、用户手册、安全审查
@@ -219,8 +221,8 @@ tests/        单元测试与金样测试
 | [功能规格](docs/02-features.md) | 对等功能与增值能力边界 |
 | [路线图](docs/03-roadmap.md) | 里程碑、验收标准、发布门禁 |
 | [工程手册](docs/04-engineering.md) | 构建、测试、CI、发布、许可证合规 |
-| [原生模块](docs/05-native-module-guide.md) | C ABI 生命周期与打包 |
-| [共享内存](docs/06-shared-memory.md) / [流式输出](docs/07-streaming-outputs.md) / [注视服务](docs/08-gaze-service.md) | 集成协议 |
+| [原生模块](sdk/docs/native-module-guide.md) | C ABI 生命周期与打包 |
+| [共享内存](sdk/docs/shared-memory.md) / [流式输出](sdk/docs/streaming-outputs.md) / [注视服务](sdk/docs/gaze-service.md) | 集成协议 |
 | [安全审查](docs/10-security-review.md) | 控制面、模块、配置的威胁模型 |
 | [ADR](docs/adr/) | 关键决策记录 |
 

@@ -99,16 +99,19 @@ VRCFT 运行时
   FaceGaze Bridge.exe   唯一入口：界面窗口 + 启动引擎
   fgb-cli.exe           引擎与命令行工具（modules / run / params …）
   fgb-host-native.exe   原生模块跨进程宿主（--native-host 时使用，可选）
-  sdk/fgb_module_api.h  原生模块 ABI 头（给模块开发者，普通用户不用管）
-  sdk/fgb_native_host_shm.h 跨进程宿主共享内存布局（排查/二次开发用）
-  sdk/fgb_shared_frame.h 共享内存输出布局（给 Unity/UE 集成开发）
-  sdk/fgb_udp_frame.h    UDP 二进制输出布局（656 字节固定帧）
-  sdk/SHARED-MEMORY.md   共享内存读取指南
-  sdk/STREAMING-OUTPUTS.md  WebSocket JSON / UDP 二进制协议与读取示例
-  sdk/GAZE-SERVICE.md    /api/gaze 与 WS gaze 的字段和边界
-  sdk/NATIVE-MODULE-GUIDE.md  原生模块开发指南（含示例工程）
-  sdk/sample-native-sine/     可运行的示例模块（正弦波，无硬件）
-  sdk/unity-face-gaze/        Unity 示例包（UPM package.json + 共享内存驱动组件）
+  sdk\                  原生模块 SDK（ABI 头 + 文档 + 示例，普通用户不用管）
+                        （Release 页面另附 FaceGazeBridge-SDK-<版本>.zip，内容与此目录一致）
+    fgb_module_api.h      原生模块 ABI 头（给模块开发者）
+    fgb_native_host_shm.h 跨进程宿主共享内存布局（排查/二次开发用）
+    fgb_shared_frame.h    共享内存输出布局（给 Unity/UE 集成开发）
+    fgb_udp_frame.h       UDP 二进制输出布局（656 字节固定帧）
+    README.md             SDK 索引与模块工程引用方式
+    docs\native-module-guide.md  原生模块开发指南（含示例工程）
+    docs\shared-memory.md        共享内存读取指南
+    docs\streaming-outputs.md    WebSocket JSON / UDP 二进制协议与读取示例
+    docs\gaze-service.md         /api/gaze 与 WS gaze 的字段和边界
+    samples\native-sine\         可运行的示例模块（正弦波，无硬件）
+    samples\unity-face-gaze\     Unity 示例包（UPM package.json + 共享内存驱动组件）
   runtime\vrcft\        VRCFT 模块宿主运行时（Apache-2.0，含 LICENSE/NOTICE）
   ui\                   页面资源（含 uiace 模型与映射表）。换页面不用重编 exe
   app.vrmanifest        SteamVR 注册清单（只借用 dashboard overlay 的自启动机制）

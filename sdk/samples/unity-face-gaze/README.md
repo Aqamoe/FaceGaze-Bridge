@@ -78,7 +78,7 @@ ARKit/VRM 的 lowerCamelCase（`jawOpen`、`mouthSmileLeft`…）。默认规则
 
 ## 6. 数据布局（排查用）
 
-与 [`sdk/fgb_shared_frame.h`](../../sdk/fgb_shared_frame.h) 一致：
+与 [`fgb_shared_frame.h`](../../fgb_shared_frame.h) 一致：
 
 | 偏移 | 内容 |
 |---|---|

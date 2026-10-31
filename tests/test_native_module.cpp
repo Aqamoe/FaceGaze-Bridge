@@ -28,19 +28,19 @@ fs::path exe_dir() {
 
 fs::path sample_dll() { return exe_dir() / "fgb-sample-native.dll"; }
 fs::path sample_manifest() {
-    return fs::path{FGB_SOURCE_DIR} / "samples" / "native-sine" / "fgb-native.json";
+    return fs::path{FGB_SOURCE_DIR} / "sdk" / "samples" / "native-sine" / "fgb-native.json";
 }
 fs::path sample_face_dll() { return exe_dir() / "fgb-sample-face.dll"; }
 fs::path sample_gaze_dll() { return exe_dir() / "fgb-sample-gaze.dll"; }
 fs::path sample_openness_dll() { return exe_dir() / "fgb-sample-openness.dll"; }
 fs::path sample_openness_manifest() {
-    return fs::path{FGB_SOURCE_DIR} / "samples" / "native-openness" / "fgb-native.json";
+    return fs::path{FGB_SOURCE_DIR} / "sdk" / "samples" / "native-openness" / "fgb-native.json";
 }
 fs::path sample_face_manifest() {
-    return fs::path{FGB_SOURCE_DIR} / "samples" / "native-face" / "fgb-native.json";
+    return fs::path{FGB_SOURCE_DIR} / "sdk" / "samples" / "native-face" / "fgb-native.json";
 }
 fs::path sample_gaze_manifest() {
-    return fs::path{FGB_SOURCE_DIR} / "samples" / "native-gaze" / "fgb-native.json";
+    return fs::path{FGB_SOURCE_DIR} / "sdk" / "samples" / "native-gaze" / "fgb-native.json";
 }
 
 struct TempDir {

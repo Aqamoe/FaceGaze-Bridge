@@ -220,7 +220,7 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > **模块卡片详情（2026-10-31）**：模块库与模块页的卡片可点击展开，显示完整描述、
 > 使用说明（`UsageInstructions`）与模块页；链接经 `open_module_page` 校验后交给系统
 > 默认浏览器。已安装模块重新扫描时读取 `module.json` 的同名字段；原生清单
-> `fgb-native.json` 同步支持（docs/05）。卡片标题旁显示 `ModuleIcon`（或 `icon.*`），
+> `fgb-native.json` 同步支持（sdk/docs/native-module-guide.md）。卡片标题旁显示 `ModuleIcon`（或 `icon.*`），
 > 由 `/module-icon/<id>` 提供；没有图片文件时先取 DLL 的 Win32 图标资源（ICO），
 > 再找 .NET 资源里 16–512 见方的内嵌 PNG，仍没有才用首字母头像兜底，
 > VRCFT 兼容模块因此也能显示图标。
@@ -260,10 +260,10 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > 4.9 五 Sink 并发压测（单测 5 路 @ 90 Hz 扇出 Debug ~30 µs/帧；
 > `tools/probe_sinks_stress.py` 实测各帧率达标、late_ticks=0，五路相对基线的
 > **引擎 tick P95 增量约 +115 µs**（< 500 µs；UDP 端到端只作参考，受 Python 调度抖动影响））；
-> 4.3 Unity 示例包 `samples/unity-face-gaze/`（UPM + 共享内存驱动，C# 已用 Roslyn 桩编译，
+> 4.3 Unity 示例包 `sdk/samples/unity-face-gaze/`（UPM + 共享内存驱动，C# 已用 Roslyn 桩编译，
 > 并用 .NET 读取端对真实引擎验证过 88 形状与延迟；**未在 Unity 编辑器内实机验收**）。
 > 流式输出格式与取舍见 [ADR-0024](adr/0024-streaming-outputs.md) 和
-> [07-streaming-outputs.md](07-streaming-outputs.md)。
+> [流式输出](../sdk/docs/streaming-outputs.md)。
 
 > **v1.1 已实施（2026-10-30）**：原生模块的独立注视通道、多模块角色组合见
 > [ADR-0030](adr/0030-native-module-v2-composition.md)，覆盖“面捕 A + 整眼 B”
@@ -325,7 +325,7 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > 同日收口 ADR-0030 的「2D 点坐标约定」开放问题 → [ADR-0033](adr/0033-gaze-point-2d-space.md)：
 > 该眼显示视口归一化 `[0,1]`／左上原点／畸变前／逐眼独立／越界保留／NaN 逐眼否掉，
 > 映射责任在模块，宿主只做合法性校验与越界告警（连续 30 帧）。
-> 见 [ADR-0026](adr/0026-gaze-estimator-and-api.md)、[08-gaze-service.md](08-gaze-service.md)。
+> 见 [ADR-0026](adr/0026-gaze-estimator-and-api.md)、[注视服务](../sdk/docs/gaze-service.md)。
 
 **验收**：在 1 个原本不支持眼追的 Unity OpenXR 游戏里，`XR_EXT_eye_gaze_interaction` 能返回 FGB 的注视数据且延迟 < 30 ms。
 

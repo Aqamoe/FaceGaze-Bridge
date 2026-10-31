@@ -1,8 +1,8 @@
 # 共享内存输出现场指南
 
 FaceGaze Bridge 可以把每一帧同时写进一块命名共享内存，给同机的 Unity / UE / 自研工具读取。
-协议头：[`sdk/fgb_shared_frame.h`](../sdk/fgb_shared_frame.h)；设计取舍见
-[ADR-0019](adr/0019-shared-memory-output.md)。
+协议头：[`fgb_shared_frame.h`](../fgb_shared_frame.h)；设计取舍见
+[ADR-0019](https://github.com/Aqamoe/FaceGaze-Bridge/blob/main/docs/adr/0019-shared-memory-output.md)。
 
 ## 开启
 
