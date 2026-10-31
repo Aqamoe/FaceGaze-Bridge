@@ -184,6 +184,12 @@ bool same_options(const Options& options) {
 }
 
 int run(const Options& options) {
+    // Windows 10 2004 起 timeBeginPeriod 只对调用进程生效：宿主不自己提升，
+    // 120 Hz 循环会被默认 15.6 ms 粒度拖到 ~65 Hz（主进程的提升不管用）。
+    struct TimerResolution {
+        TimerResolution() { fgb::clock::raise_timer_resolution(); }
+        ~TimerResolution() { fgb::clock::restore_timer_resolution(); }
+    } timer_resolution;
 #ifdef _WIN32
     if (options.log_path.empty()) {
         return 3;
