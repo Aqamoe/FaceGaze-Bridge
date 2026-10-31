@@ -380,6 +380,36 @@ FGB_TEST(calibration_eyelid_lo_removes_closed_offset) {
     FGB_CHECK_NEAR(frame.eyes.left.openness, 0.6889f, 2e-3f);
 }
 
+FGB_TEST(calibration_eyelid_sep_restores_the_wink_difference) {
+    // 实测模块在 wink 时把 0.76/0.10 压成 0.48/0.30，差异只剩 27%
+    CalibrationProfile profile;
+    profile.eyelid_sep = 3.7f;
+
+    CalibrationApplier applier{profile};
+    FaceFrame frame;
+    frame.eyes.left.openness  = 0.48f;
+    frame.eyes.right.openness = 0.30f;
+    applier.process(frame);
+
+    // mid = 0.39, half = 0.09 × 3.7 = 0.333
+    FGB_CHECK_NEAR(frame.eyes.left.openness, 0.723f, 2e-3f);
+    FGB_CHECK_NEAR(frame.eyes.right.openness, 0.057f, 2e-3f);
+}
+
+FGB_TEST(calibration_eyelid_sep_leaves_symmetric_input_alone) {
+    // 正常睁眼、普通眯眼都是左右对称的，分离系数必须完全不碰它们
+    CalibrationProfile profile;
+    profile.eyelid_sep = 4.0f;
+
+    CalibrationApplier applier{profile};
+    FaceFrame frame;
+    frame.eyes.left.openness  = 0.70f;
+    frame.eyes.right.openness = 0.70f;
+    applier.process(frame);
+    FGB_CHECK_NEAR(frame.eyes.left.openness, 0.70f, 1e-6f);
+    FGB_CHECK_NEAR(frame.eyes.right.openness, 0.70f, 1e-6f);
+}
+
 FGB_TEST(calibration_eyelid_gain_roundtrips_and_marks_dirty) {
     const std::string path = temp_path("eyelid_gain.ini");
     std::error_code ec;
@@ -388,12 +418,14 @@ FGB_TEST(calibration_eyelid_gain_roundtrips_and_marks_dirty) {
     CalibrationProfile profile;
     profile.eyelid_gain = 1.37f;
     profile.eyelid_lo   = 0.10f;
+    profile.eyelid_sep  = 3.7f;
     FGB_CHECK(save_profile(path, profile));
 
     CalibrationProfile loaded;
     FGB_CHECK(load_profile(path, loaded));
     FGB_CHECK_NEAR(loaded.eyelid_gain, 1.37f, 1e-3f);
     FGB_CHECK_NEAR(loaded.eyelid_lo, 0.10f, 1e-3f);
+    FGB_CHECK_NEAR(loaded.eyelid_sep, 3.7f, 1e-2f);
 
     // 只改眼睑增益也要能触发"未保存"提示
     loaded.eyelid_gain = 1.2f;

@@ -108,6 +108,12 @@ struct CalibrationProfile {
     // 先减基线、按剩余范围归一化，再乘增益——这样 gain 的量级仍从 1.0 起算。
     float eyelid_lo     = 0.0f;
 
+    // 左右分离：不是每个模块都真正独立地估计两只眼的开合。实测某模块在 wink 时
+    // 把睁着的那只从 0.76 压到 0.48、闭着的那只从 0.10 抬到 0.30——差异只剩 27%。
+    // 这个系数把左右差重新放大：L' = mid + (L-R)/2 × sep，R' = mid - (L-R)/2 × sep。
+    // 1.0 = 不处理；差异小的场合（正常睁眼、眯眼）几乎不受影响，只有 wink 才明显。
+    float eyelid_sep    = 1.0f;
+
     std::size_t active_shape_count() const noexcept;
 };
 

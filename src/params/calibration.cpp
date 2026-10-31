@@ -295,7 +295,8 @@ bool operator==(const CalibrationProfile& a, const CalibrationProfile& b) noexce
         return false;
     }
     // 眼睑参数与视线无关，单独比：只调它不该被 has_eye 的开关掩盖
-    if (a.eyelid_gain != b.eyelid_gain || a.eyelid_lo != b.eyelid_lo) {
+    if (a.eyelid_gain != b.eyelid_gain || a.eyelid_lo != b.eyelid_lo ||
+        a.eyelid_sep != b.eyelid_sep) {
         return false;
     }
     if (a.has_eye && (a.eye_gain_x != b.eye_gain_x || a.eye_gain_y != b.eye_gain_y ||
@@ -405,6 +406,7 @@ bool save_profile(const std::string& path, const CalibrationProfile& profile) {
     // 与视线各存各的：只调眼睑不该被迫打开视线校准
     writer.kv("eyelid_gain", static_cast<double>(profile.eyelid_gain), 4);
     writer.kv("eyelid_lo", static_cast<double>(profile.eyelid_lo), 4);
+    writer.kv("eyelid_sep", static_cast<double>(profile.eyelid_sep), 3);
 
     writer.section("shapes");
     for (std::size_t i = 0; i < kShapeCount; ++i) {
@@ -467,6 +469,9 @@ bool load_profile(const std::string& path, CalibrationProfile& profile) {
             } else if (entry.key == "eyelid_lo") {
                 // 基线超过 0.5 就等于"眼睛大部分时间都是闭的"，一定是填错了
                 profile.eyelid_lo = std::clamp(config::parse_float(entry.value, 0.0f), 0.0f, 0.5f);
+            } else if (entry.key == "eyelid_sep") {
+                // 上限 8：再大就是把 0.02 的噪声当 wink 放大成满闭
+                profile.eyelid_sep = std::clamp(config::parse_float(entry.value, 1.0f), 1.0f, 8.0f);
             }
             saw_any = true;
             return;
@@ -620,6 +625,17 @@ void CalibrationApplier::process(FaceFrame& frame) noexcept {
         const float t = clamp01((frame.shapes[i] - range.lo) / span);
         frame.shapes[i] = apply_curve(profile.custom_curves.data(), profile.custom_curves.size(),
                                       range.curve, range.curve_param, t);
+    }
+
+    // 左右分离要在扣基线之前：它作用的是两只眼的"原始"相对关系，
+    // 先扣基线会让两边的差同步缩小，再放大就等价不回来了。
+    if (profile.eyelid_sep != 1.0f) {
+        const float left  = frame.eyes.left.openness;
+        const float right = frame.eyes.right.openness;
+        const float mid   = (left + right) * 0.5f;
+        const float half  = (left - right) * 0.5f * std::clamp(profile.eyelid_sep, 1.0f, 8.0f);
+        frame.eyes.left.openness  = clamp01(mid + half);
+        frame.eyes.right.openness = clamp01(mid - half);
     }
 
     // 眼睑开合：先扣掉模块在闭眼时报的底噪，按剩余范围归一化，再放大。

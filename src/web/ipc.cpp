@@ -968,6 +968,7 @@ void IpcServer::build_calibration(std::string& out) {
     // 眼睑两项：不依赖 has_eye（视线校准开关），只调它们也能立刻见效
     writer.key("eyelid_gain").num(static_cast<double>(profile.eyelid_gain), 3);
     writer.key("eyelid_lo").num(static_cast<double>(profile.eyelid_lo), 3);
+    writer.key("eyelid_sep").num(static_cast<double>(profile.eyelid_sep), 2);
     writer.obj_end();
 
     writer.obj_end();
@@ -1853,6 +1854,9 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             }
             if (json::field_number(text, "eyelid_lo", value)) {
                 profile.eyelid_lo = static_cast<float>(std::clamp(value, 0.0, 0.5));
+            }
+            if (json::field_number(text, "eyelid_sep", value)) {
+                profile.eyelid_sep = static_cast<float>(std::clamp(value, 1.0, 8.0));
             }
             bool active = profile.has_eye;
             if (json::field_bool(text, "active", active)) {
