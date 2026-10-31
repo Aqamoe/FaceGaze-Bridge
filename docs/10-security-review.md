@@ -74,7 +74,16 @@
 - 更新检查（M6.5）只 GET GitHub Releases 的 latest，返回 tag/name/html_url；
   **不下载、不落盘、不执行**。界面「打开下载页」只允许
   `https://github.com/Aqamoe/FaceGaze-Bridge/` 前缀，经 ShellExecute 交给默认浏览器。
-- 真正的自动下载/替换仍未实现；若将来做，必须校验 HTTPS、哈希与签名/发布者。
+- 自动更新已实现（[ADR-0036](adr/0036-auto-update.md)），信任锚点是
+  **HTTPS + 本项目 GitHub Release + 发布脚本生成的 SHA-256**：
+  - 只从 `api.github.com/repos/Aqamoe/FaceGaze-Bridge/releases/latest` 取资产地址，
+    不读用户可改的配置指向别处（界面只能传检查地址，用于本机探针）；
+  - 下载必须过校验（资产 `digest` → `SHA256SUMS.txt`），拿不到哈希就不下载、不执行；
+  - 安装包未签名，因此**不做** `WinVerifyTrust`，也不声称有发布者签名校验；
+  - 只对安装器装的副本自动安装（HKCU 卸载项的 `InstallLocation` 必须等于 exe 目录），
+    避免把绿色版搬进 `%LOCALAPPDATA%\Programs`；
+  - 安装器以 `CREATE_BREAKAWAY_FROM_JOB` 启动。这是唯一豁免 Job 生命周期的地方，
+    编码在 `update::launch_installer()` 一处，外壳与引擎本身照旧随外壳退出。
 
 ## 7. 建议（非阻塞）
 
@@ -93,4 +102,4 @@
 | 控制面不暴露局域网 | ✅ |
 | 输入口默认回环 | ✅（本次修复） |
 | 静态文件不能越出 ui 目录 | ✅（本次修复前缀比较） |
-| 更新链路可校验 | ⏳ 未实现（6.5） |
+| 更新链路可校验 | ✅（哈希校验 + 只认官方 release 资产，ADR-0036） |

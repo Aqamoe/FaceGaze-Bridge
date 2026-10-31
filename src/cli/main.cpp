@@ -56,7 +56,10 @@ namespace {
 std::atomic<bool> g_stop{false};
 // 桌面入口据此重启引擎（退出码 3），而不是把窗口一起关掉
 std::atomic<bool> g_restart{false};
+// 更新安装器已经起来了（退出码 4）：外壳要安静退出，别重启引擎、别报"启动失败"
+std::atomic<bool> g_apply_update{false};
 constexpr int kExitRestartEngine = 3;
+constexpr int kExitApplyUpdate   = 4;
 
 #ifdef _WIN32
 BOOL WINAPI console_handler(DWORD type) {
@@ -115,6 +118,8 @@ void print_usage() {
                  "  --panel <端口>          启动控制面 IPC（ws://127.0.0.1:<端口>/ws）\n"
                  "  --ui                    启动时拉起 FaceGaze Bridge 窗口（隐含 --panel 8787）\n"
                  "  --ui-dir <目录>         页面资源目录（默认 <exe>/ui）\n"
+                 "  --no-update-check       不自动检查更新（探针/离线环境）\n"
+                 "  --update-assume-installed  更新探针用：假装当前是安装版\n"
                  "  --calibration <文件>    应用校准档案（默认读 %%LOCALAPPDATA%%\\FaceGazeBridge\\calibration.ini）\n"
                  "  --filter <on|off>       一欧元滤波（默认 off，与 VRCFT 一致）\n"
                  "  --filter-cutoff <值>    滤波最小截止频率 (默认 1.0)\n"
@@ -411,6 +416,10 @@ int cmd_run(int argc, char** argv) {
     int tick_hz      = 120;
     int duration_sec = 0;
     bool verbose     = false;
+    // 探针/离线环境用 --no-update-check 关掉启动自检（ADR-0036）
+    bool auto_update_check = true;
+    // 探针专用：假设当前是安装版，好让"下载 + 校验 + 安装"这条链路能被验证
+    bool update_assume_installed = false;
 
     // 输出设置先于命令行加载：命令行永远覆盖保存值。--no-saved-outputs 需要
     // 在正式解析前就知道，所以这里先扫一遍（值只用于这两个开关）。
@@ -769,6 +778,11 @@ int cmd_run(int argc, char** argv) {
             duration_sec = sec;
         } else if (arg == "--verbose") {
             verbose = true;
+        } else if (arg == "--no-update-check") {
+            // 启动自检会访问 GitHub；探针与离线环境必须能关掉
+            auto_update_check = false;
+        } else if (arg == "--update-assume-installed") {
+            update_assume_installed = true;
         } else if (arg == "--help" || arg == "-h") {
             print_usage();
             return 0;
@@ -1315,6 +1329,9 @@ int cmd_run(int argc, char** argv) {
         ctx.exe_dir     = executable_dir();
         ctx.quit        = &g_stop;
         ctx.restart_engine = &g_restart;
+        ctx.apply_update   = &g_apply_update;
+        ctx.auto_update    = auto_update_check;
+        ctx.update_assume_installed = update_assume_installed;
         ctx.preview     = preview_raw;
         ctx.calib       = calibration_raw;
         ctx.calib_path  = calibration_save_path;
@@ -1399,6 +1416,11 @@ int cmd_run(int argc, char** argv) {
                  static_cast<unsigned long long>(st.ticks),
                  static_cast<unsigned long long>(st.frames_in),
                  static_cast<unsigned long long>(st.late_ticks));
+    if (g_apply_update.load(std::memory_order_acquire)) {
+        // 安装器已经脱离本进程独立运行，这里退出只是"让出被占用的 exe/DLL"
+        FGB_INFO("cli", "按界面请求安装更新（退出码 %d）", kExitApplyUpdate);
+        return kExitApplyUpdate;
+    }
     if (g_restart.load(std::memory_order_acquire)) {
         FGB_INFO("cli", "按界面请求重启引擎（退出码 %d）", kExitRestartEngine);
         return kExitRestartEngine;

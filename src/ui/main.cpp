@@ -54,6 +54,8 @@ constexpr UINT kLoadingTickMs     = 400;
 constexpr int kIconResource       = 101;
 // 引擎在收到 restart_engine 时用这个退出码结束，外壳据此原地重启而不是关窗
 constexpr DWORD kEngineRestartExit = 3;
+// 引擎启动了更新安装器并主动让路（ADR-0036）：外壳要安静退出，不重启、不报错
+constexpr DWORD kEngineApplyUpdateExit = 4;
 
 // 托盘：图标回调消息与菜单项 id
 constexpr UINT kTrayCallback = WM_APP + 21;
@@ -905,7 +907,11 @@ bool spawn_engine(const std::wstring& source) {
         const HANDLE job = ::CreateJobObjectW(nullptr, nullptr);
         if (job != nullptr) {
             JOBOBJECT_EXTENDED_LIMIT_INFORMATION info{};
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            // BREAKAWAY_OK 只为一件事存在：更新安装器要活过外壳退出（ADR-0036 §4）。
+            // 没有它，安装器随 Job 一起被杀，表现为"点了安装没反应"。
+            // 引擎自身不带 CREATE_BREAKAWAY_FROM_JOB，照旧随外壳退出（ADR-0022）。
+            info.BasicLimitInformation.LimitFlags =
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
             ::SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info, sizeof(info));
             g_host.engine_job = job;
         }
@@ -960,6 +966,14 @@ void on_engine_exit(DWORD exit_code) {
         (g_host.engine_started_ms != 0 &&
          ::GetTickCount64() - g_host.engine_started_ms > 3000);
     g_host.stop_requested = false;
+
+    // 更新安装：安装器已经脱离 Job 独立运行，外壳退出只是把 exe/DLL 让出来。
+    // 装完由 Inno 的 [Run]（/RELAUNCH=1）把新版本拉起来，这里不要重启引擎。
+    if (exit_code == kEngineApplyUpdateExit) {
+        trace_startup(L"引擎退出：正在安装更新");
+        quit_app();
+        return;
+    }
 
     // 界面里改了模块配置：原地拉起新引擎，窗口不动
     if (exit_code == kEngineRestartExit && g_host.engine_owned) {

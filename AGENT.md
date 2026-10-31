@@ -243,6 +243,9 @@ python tools/soak.py --duration 600
 
 # 更新检查（探针内置本地 HTTP 服务，不走 GitHub）
 python tools/probe_ipc.py 8787
+# 自动更新全链路：检查→静默下载→sha256 校验→忽略版本→安装失败要报错
+# （--ui 额外用 CDP 验证顶部提示条；安装包是假字节，永远不会真的安装）
+python tools/probe_update.py --ui
 # 安装包（需要 Inno Setup 6；先 cmake --install 到 dist）
 powershell -ExecutionPolicy Bypass -File packaginguild_installer.ps1
 ```
@@ -290,6 +293,8 @@ gh run watch <id> --exit-status
 | 页面连不上 `ws://` | https 页面被 mixed-content/PNA 拦 | 页面必须由引擎的 `http://127.0.0.1:<port>/` 提供（同源同端口） |
 | 模块 sandbox socket | 模块报 `SocketException (10048)` | 上一个模块进程/VRCFT 本体占着端口；先关掉再试 |
 | 后台进程 | 命令返回后进程被杀 | 启动→验证→收尾写在**同一条命令**里 |
+| 自动更新"点了没反应" | 安装器跑到一半消失，日志里没有任何失败 | 引擎/外壳在 `KILL_ON_JOB_CLOSE` 的 Job 里，子进程会被连带杀掉。安装器必须 `CREATE_BREAKAWAY_FROM_JOB`，且 Job 要带 `JOB_OBJECT_LIMIT_BREAKAWAY_OK`（[ADR-0036](docs/adr/0036-auto-update.md)）。这是唯一的豁免口，别把它当成"顺手放开 Job" |
+| 更新探针拿到 `eligible=false` | 页面能连上、提示条也在，但状态是"不是安装器装的" | 探针的第二台引擎没绑上 VMC 端口（默认 39539 被前一台占着）就退出了，外壳又拉起一台**不带** `--update-assume-installed` 的引擎。给探针引擎单独 `--vmc-port` |
 | 端口探测 | 首次启动要多等 2–3 s | 有的机器（防火墙/安全软件）对未监听端口的 SYN 静默丢弃，逐个 `/healthz` 会等满超时。先用 bind 判断有没有人监听，只对有人听的端口做健康检查 |
 | 截图偏移/尺寸不对 | 截出来的窗口错位 | PowerShell 先 `SetProcessDpiAwarenessContext(-4)` 再量窗口 |
 | `fgb.ini` 写盘 | 整份重写 | 加新键时必须**先读再写**，否则盖掉用户手改的内容 |
@@ -330,7 +335,8 @@ src/base/      日志（含订阅回调）、时钟、极简 JSON（一层标量
                文件摘要（SHA-256/MD5）、进程资源、崩溃转储、诊断包
 src/core/      数据模型（含 GazeState）、无锁容器、滤波、校准与 GazeEstimator
 src/osc/       OSC 编解码（零分配写入器）
-src/net/       UDP / TCP / WebSocket 服务端（自写 RFC 6455 子集）、WinHTTP 下载、更新检查、mDNS 发现
+src/net/       UDP / TCP / WebSocket 服务端（自写 RFC 6455 子集）、WinHTTP 下载、
+               更新检查与自动更新（update_manager：节流/下载/校验/启动安装器）、mDNS 发现
 src/config/    INI 与输出设置（outputs.ini + outputs-profiles/ 命名预设；命令行可覆盖）
 src/vrcft/     VRCFT 协议、沙箱、模块进程托管、模块仓（module_registry）、
                VRCFT 模块库（module_library）、原生模块库（native_library，fgb-registry）
@@ -366,7 +372,7 @@ docs/          方案、ADR、路线图、用户手册；SDK 集成文档在 sdk
 | →UI | `steamvr`（状态/原因/路径/registered/autolaunch/busy） | 连接时快照；每次检测/开关/移除完成后 |
 | →UI | `outputs_profiles`（预设名列表/active/dir） | 连接时 / 任何预设或保存值变更后 |
 | →UI | `diagnostics`（导出结果/路径/错误） | 后台打包完成后 |
-| →UI | `update`（current/latest/tag/name/url/available/error） | 更新检查完成后 |
+| →UI | `update`（state=idle/checking/available/downloading/ready/installing/failed、current/latest/tag/name/url/available/eligible/skipped/progress/staged/error） | 状态变化时；连接时补发一次 |
 | →UI | `notice`（level=info/error + message）：模块删除/安装/更新的最终结果 | 安装落盘结束、删除完成时（异步动作的唯一权威反馈） |
 | →UI | `log`（级别/tag/正文；连接时补发最近 120 行） | 有日志时 |
 | UI→ | `set_filter` / `set_outputs` / `set_module` / `set_module_enabled` / `scan_modules` / `reload_avatar` / `set_log_level` / `quit` | 按操作 |
@@ -377,11 +383,12 @@ docs/          方案、ADR、路线图、用户手册；SDK 集成文档在 sdk
 | UI→ | `refresh_steamvr` / `set_steamvr_autolaunch` / `remove_steamvr_manifest` | SteamVR（后台线程执行，完成后推 `steamvr`） |
 | UI→ | `save_output_profile` / `apply_output_profile` / `delete_output_profile` | 命名输出预设（应用会写 outputs.ini，界面随后重启引擎） |
 | UI→ | `export_diagnostics`（可选 `out` 路径） | 后台导出诊断包，完成后推 `diagnostics` |
-| UI→ | `check_updates`（可选 `url`，探针用）/ `open_update_page` | 只读检查 GitHub Releases；只允许打开本项目 GitHub 页 |
+| UI→ | `check_updates`（可选 `url`，探针用）/ `install_update` / `skip_update_version` / `open_update_page` | 手动检查绕过节流；安装会启动安装器并让引擎以退出码 4 结束 |
 | →UI | `ack`（命令、ok、error） | 每条命令 |
 
 HTTP（同一端口，只绑回环）：`/healthz`、`/api/status`、`/api/params`、
-`/api/calibration`、`/api/preview`、`/api/gaze`、`/api/steamvr`、`/module-icon/<id>` 只读；
+`/api/calibration`、`/api/preview`、`/api/gaze`、`/api/steamvr`、`/api/update`、
+`/module-icon/<id>` 只读；
 `/api/quit`、`/api/restart`
 是控制动作，只给托盘外壳与排障用（外壳不实现 WebSocket 客户端，见 ADR-0022 §5）。
 

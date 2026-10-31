@@ -1,6 +1,7 @@
 #include "net/update_check.hpp"
 
 #include "base/json.hpp"
+#include "base/json_value.hpp"
 #include "net/http_client.hpp"
 
 #include <cctype>
@@ -36,6 +37,34 @@ unsigned long numeric_component(std::string_view part) noexcept {
         value = value * 10 + static_cast<unsigned long>(c - '0');
     }
     return value;
+}
+
+bool equals_ci(std::string_view a, std::string_view b) noexcept {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ends_with_ci(std::string_view text, std::string_view suffix) noexcept {
+    if (text.size() < suffix.size()) {
+        return false;
+    }
+    const std::size_t offset = text.size() - suffix.size();
+    for (std::size_t i = 0; i < suffix.size(); ++i) {
+        const auto left  = static_cast<unsigned char>(text[offset + i]);
+        const auto right = static_cast<unsigned char>(suffix[i]);
+        if (std::tolower(left) != std::tolower(right)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -76,13 +105,40 @@ bool parse_release_json(std::string_view body, ReleaseInfo& out) noexcept {
     if (body.empty()) {
         return false;
     }
-    json::field_string(body, "tag_name", out.tag);
+    // 以前用"一层标量"读，assets[] 读不到；现在唯一需要深结构的地方是资产列表，
+    // 用 base/json_value 那棵树，避免再写一套专用解析器。
+    json::Value root;
+    std::string error;
+    if (!json::parse(body, root, error) || !root.is_object()) {
+        return false;
+    }
+    out.tag = root.string_at("tag_name");
     if (out.tag.empty()) {
         return false;
     }
-    json::field_string(body, "name", out.name);
-    json::field_string(body, "html_url", out.url);
-    json::field_string(body, "body", out.notes);
+    out.name  = root.string_at("name");
+    out.url   = root.string_at("html_url");
+    out.notes = root.string_at("body");
+
+    if (const json::Value* assets = root.find("assets"); assets != nullptr && assets->is_array()) {
+        out.assets.reserve(assets->array.size());
+        for (const json::Value& item : assets->array) {
+            if (!item.is_object()) {
+                continue;
+            }
+            ReleaseAsset asset;
+            asset.name   = item.string_at("name");
+            asset.url    = item.string_at("browser_download_url");
+            asset.digest = item.string_at("digest");
+            const double size = item.number_at("size", 0.0);
+            asset.size = size > 0.0 ? static_cast<std::uint64_t>(size) : 0U;
+            // 名称或地址缺一个就没法下，直接跳过而不是留半条记录
+            if (asset.name.empty() || asset.url.empty()) {
+                continue;
+            }
+            out.assets.push_back(std::move(asset));
+        }
+    }
     return true;
 }
 
@@ -106,6 +162,111 @@ bool check_latest(std::string_view api_url, ReleaseInfo& out, std::string& error
         return false;
     }
     return true;
+}
+
+const ReleaseAsset* find_installer_asset(const ReleaseInfo& info) noexcept {
+    std::string_view version = trim(info.tag);
+    if (!version.empty() && (version.front() == 'v' || version.front() == 'V')) {
+        version.remove_prefix(1);
+    }
+    const std::string preferred = "FaceGazeBridge-Setup-" + std::string{version} + ".exe";
+
+    const ReleaseAsset* fallback = nullptr;
+    for (const ReleaseAsset& asset : info.assets) {
+        if (!ends_with_ci(asset.name, ".exe")) {
+            continue;
+        }
+        if (asset.name.rfind("FaceGazeBridge-Setup-", 0) != 0) {
+            continue;
+        }
+        if (asset.name == preferred) {
+            return &asset;
+        }
+        if (fallback == nullptr) {
+            fallback = &asset;
+        }
+    }
+    return fallback;
+}
+
+const ReleaseAsset* find_sums_asset(const ReleaseInfo& info) noexcept {
+    for (const ReleaseAsset& asset : info.assets) {
+        if (equals_ci(asset.name, "SHA256SUMS.txt")) {
+            return &asset;
+        }
+    }
+    return nullptr;
+}
+
+std::string digest_hex(std::string_view digest) noexcept {
+    const std::string_view prefix = "sha256:";
+    if (digest.size() <= prefix.size()) {
+        return {};
+    }
+    for (std::size_t i = 0; i < prefix.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(digest[i])) != prefix[i]) {
+            return {};
+        }
+    }
+    std::string hex;
+    hex.reserve(digest.size() - prefix.size());
+    for (std::size_t i = prefix.size(); i < digest.size(); ++i) {
+        const auto c = static_cast<unsigned char>(digest[i]);
+        if (std::isxdigit(c) == 0) {
+            return {};
+        }
+        hex.push_back(static_cast<char>(std::tolower(c)));
+    }
+    return hex;
+}
+
+bool checksum_for(std::string_view sums, std::string_view filename, std::string& out) noexcept {
+    out.clear();
+    if (sums.empty() || filename.empty()) {
+        return false;
+    }
+    std::size_t pos = 0;
+    while (pos <= sums.size()) {
+        const std::size_t end = sums.find('\n', pos);
+        const std::string_view line =
+            end == std::string_view::npos ? sums.substr(pos) : sums.substr(pos, end - pos);
+        pos = end == std::string_view::npos ? sums.size() + 1 : end + 1;
+
+        const std::string_view trimmed = trim(line);
+        const std::size_t split        = trimmed.find_first_of(" \t");
+        if (split == std::string_view::npos) {
+            continue;
+        }
+        const std::string_view hash = trimmed.substr(0, split);
+        if (hash.size() != 64) {
+            continue;
+        }
+        bool hex_only = true;
+        for (const char c : hash) {
+            if (std::isxdigit(static_cast<unsigned char>(c)) == 0) {
+                hex_only = false;
+                break;
+            }
+        }
+        if (!hex_only) {
+            continue;
+        }
+        // 星号标记二进制模式（sha256sum -b），文件名部分可能带前导空格或 '*'
+        std::string_view name = trim(trimmed.substr(split));
+        if (!name.empty() && name.front() == '*') {
+            name.remove_prefix(1);
+            name = trim(name);
+        }
+        if (name != filename) {
+            continue;
+        }
+        out.assign(hash.data(), hash.size());
+        for (char& c : out) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return true;
+    }
+    return false;
 }
 
 } // namespace fgb::update

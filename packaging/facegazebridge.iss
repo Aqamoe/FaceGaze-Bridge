@@ -58,13 +58,24 @@ Name: "{autoprograms}\FaceGaze Bridge"; Filename: "{app}\FaceGaze Bridge.exe"
 Name: "{autodesktop}\FaceGaze Bridge"; Filename: "{app}\FaceGaze Bridge.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\FaceGaze Bridge.exe"; Description: "{cm:LaunchProgram,FaceGaze Bridge}"; Flags: nowait postinstall skipifsilent
+; 自动更新（引擎用 /RELAUNCH=1 调起，ADR-0036）：静默安装完把新版本拉起来。
+; 单独一条而不是给下面那条去掉 skipifsilent：交互式安装的"启动"复选框在静默模式下没有
+; 意义，CI 里的 /VERYSILENT 也不该顺手弹一个窗口。
+Filename: "{app}\FaceGaze Bridge.exe"; Flags: nowait; Check: UpdateRelaunch
+Filename: "{app}\FaceGaze Bridge.exe"; Description: "{cm:LaunchProgram,FaceGaze Bridge}"; Flags: nowait postinstall skipifsilent; Check: not UpdateRelaunch
 
 [UninstallRun]
 ; 先解掉 SteamVR 启动项；SteamVR 没运行时这一步会失败，但不阻塞卸载
 Filename: "{app}\fgb-cli.exe"; Parameters: "steamvr remove"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveSteamVR"
 
 [Code]
+// 自动更新走 /SILENT /RELAUNCH=1：装完必须把程序重新拉起来，
+// 否则用户看到的是"更新安装完成后什么都没发生"（ADR-0036）。
+function UpdateRelaunch: Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
+
 // 用户数据（校准/预设/模块/日志/崩溃转储）不自动删除：
 //  - 卸载后重装可以继续用；
 //  - 静默卸载（/VERYSILENT）不会误删自动化环境里的数据。

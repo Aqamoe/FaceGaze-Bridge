@@ -73,6 +73,17 @@
       </div>
     </header>
 
+    <!-- 更新提示条：只在"有新版本/下载中/可安装/安装中"出现（其余时候 hidden）。
+         放顶部而不是只放设置页，是因为自动检查和静默下载都发生在用户没打开设置的时候。 -->
+    <div class="update-bar" id="update-bar" hidden>
+      <span class="chip warn" id="ub-badge">—</span>
+      <span class="grow" id="ub-text">—</span>
+      <div class="progress" id="ub-progress" hidden><i id="ub-progress-fill"></i></div>
+      <button class="btn" id="ub-primary">—</button>
+      <button class="btn ghost" id="ub-skip" hidden data-i18n="update.action.skip">忽略此版本</button>
+      <button class="btn ghost" id="ub-later" data-i18n="update.action.later">稍后</button>
+    </div>
+
     <div class="content">
       <!-- 状态 -->
       <section class="page active" data-page="status">
@@ -649,13 +660,16 @@
             <h2 data-i18n="settings.update.title">版本更新</h2>
             <div class="kv"><span data-i18n="settings.update.current">当前版本</span><b class="mono" id="u-current">—</b></div>
             <div class="kv"><span data-i18n="settings.update.latest">最新版本</span><b class="mono" id="u-latest">—</b></div>
+            <div class="progress" id="u-progress" hidden style="margin-top:10px"><i id="u-progress-fill"></i></div>
             <div class="toolbar" style="margin-top:10px">
               <button class="btn" id="u-check" data-i18n="settings.update.check">检查更新</button>
+              <button class="btn" id="u-install" hidden data-i18n="update.action.install">立即安装</button>
               <button class="btn ghost" id="u-open" data-i18n="settings.update.open" disabled>打开下载页</button>
+              <button class="btn ghost" id="u-skip" hidden data-i18n="update.action.skip">忽略此版本</button>
               <span class="spinner" id="u-busy" hidden></span>
             </div>
             <p class="hint" id="u-status">—</p>
-            <p class="hint" data-i18n="settings.update.hint">只检查 GitHub Releases，不会自动下载或替换程序。</p>
+            <p class="hint" data-i18n="settings.update.hint">启动后自动检查更新；安装版会在后台静默下载并校验，装不装由你决定。</p>
           </article>
 
           <article class="card">

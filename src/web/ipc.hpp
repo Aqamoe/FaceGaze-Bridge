@@ -20,6 +20,7 @@
 #include "config/outputs.hpp"
 #include "core/process/one_euro.hpp"
 #include "engine/engine.hpp"
+#include "net/update_manager.hpp"
 #include "net/ws_server.hpp"
 #include "openvr/steamvr.hpp"
 #include "params/calibration.hpp"
@@ -88,10 +89,19 @@ struct IpcContext {
     std::filesystem::path ui_dir;    // 静态页面根目录，空表示不发页面
     std::filesystem::path exe_dir;   // 产品 exe 所在目录；app.vrmanifest 在它旁边
 
+    // 启动后自动查一次更新（默认开）。探针/回放/离线环境用 --no-update-check 关掉，
+    // 免得每次跑测试都去访问 GitHub。
+    bool auto_update = true;
+    // 只给探针：假装自己是安装版，才能验证下载与安装路径（见 update::Manager 构造）
+    bool update_assume_installed = false;
+
     // 模块管理：非 vrcft 输入时为空。列表是"磁盘上有什么"，运行态在每个实例那边。
     vrcft::ModuleRegistry* modules = nullptr;
     // restart_engine 命令：置位后引擎以退出码 3 结束，桌面入口据此重新拉起
     std::atomic<bool>* restart_engine = nullptr;
+    // install_update 命令：置位后引擎以退出码 4 结束，桌面入口据此安静退出，
+    // 让已经启动的安装器接管（ADR-0036）；与 restart_engine 互斥
+    std::atomic<bool>* apply_update = nullptr;
     std::vector<RunningModule> running_modules;
     std::string active_module_id; // 注册表里"下次启动加载"的那个，与运行态不是一回事
 
@@ -139,7 +149,10 @@ private:
     void build_output_profiles(std::string& out) const;
     void broadcast_output_profiles();
     void start_diagnostics_export(const std::filesystem::path& output = {});
-    void start_update_check(std::string url);
+    // 更新状态的唯一出口：快照 → update 消息。晚连上的界面靠 on_open 里补发一次。
+    void build_update(std::string& out) const;
+    void broadcast_update();
+    void tick_auto_update();
     // 校准档案变了就广播：多个页面/探针连上来时各自显示一致的状态
     void broadcast_calibration();
     // per-instance 运行态；state/error 都来自对应的 VrcftSource
@@ -218,11 +231,10 @@ private:
     std::string diag_result_;
     bool diag_result_pending_ = false;
 
-    std::thread update_thread_;
-    std::atomic<bool> update_running_{false};
-    std::mutex update_mutex_;
-    std::string update_result_;
-    bool update_result_pending_ = false;
+    // 自动更新在后台线程跑（检查 + 下载）；引擎主循环只取快照并广播
+    std::unique_ptr<update::Manager> updater_;
+    std::chrono::steady_clock::time_point auto_update_due_{};
+    bool auto_update_kicked_ = false;
 
     // DLL 内嵌图标提取一次就够：按 DLL 路径/大小/修改时间做戳，模块升级后自动失效
     struct IconCacheEntry {

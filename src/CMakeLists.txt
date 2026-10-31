@@ -31,10 +31,12 @@ add_library(fgb_net STATIC
     net/ws_server.cpp
     net/http_client.cpp
     net/update_check.cpp
+    net/update_manager.cpp
     net/mdns.cpp)
-target_link_libraries(fgb_net PUBLIC fgb_base)
+target_link_libraries(fgb_net PUBLIC fgb_base PRIVATE fgb_config)
 if(WIN32)
-    target_link_libraries(fgb_net PRIVATE ws2_32 winhttp)
+    # advapi32：更新管理器要读 HKCU 卸载项判断"是不是安装器装的副本"
+    target_link_libraries(fgb_net PRIVATE ws2_32 winhttp advapi32)
 endif()
 
 # VRCFT 模块兼容层：协议编解码 + 数据转换 + 沙箱服务 + 进程管理 + 模块发现

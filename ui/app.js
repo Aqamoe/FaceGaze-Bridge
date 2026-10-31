@@ -176,6 +176,8 @@ function set_lang(code) {
   if (select) {
     select.value = code;
   }
+  // 提示条的按钮文案是 JS 填的（随状态变），data-i18n 管不到，得重画一次
+  render_update();
 }
 
 const state = {
@@ -212,6 +214,10 @@ const state = {
   output_profiles: { profiles: [], active: "", dir: "" },
   profile_pending: null, // {action, name}：ack 回来时用本地化文案提示
   update_info: null,
+  update: null,              // 最近一次 update 快照（引擎是唯一事实来源）
+  update_manual: false,      // 这次检查是用户点的：失败要说话，自动检查失败就安静
+  update_dismissed: false,   // 点了「稍后」：本次会话不再显示提示条
+  update_tag_seen: "",       // 换到新版本后要重新提醒一次
   status: null,
   gaze: null,
   source_rows: [],
@@ -385,20 +391,7 @@ function handle(message) {
       render_output_profiles();
       break;
     case "update":
-      $("u-busy").hidden = true;
-      $("u-check").disabled = false;
-      if (!message.ok) {
-        $("u-status").textContent = t("settings.update.failed", { error: message.error || "?" });
-        show_toast($("u-status").textContent, "error");
-        $("u-open").disabled = true;
-        break;
-      }
-      state.update_info = message;
-      $("u-latest").textContent = message.latest || "—";
-      $("u-status").textContent = message.available
-        ? t("settings.update.available", { latest: message.latest || "" })
-        : t("settings.update.latest_state");
-      $("u-open").disabled = !(message.available && message.url);
+      apply_update(message);
       break;
     case "diagnostics":
       $("diag-busy").hidden = true;
@@ -3263,12 +3256,23 @@ function wire() {
     $("u-busy").hidden = false;
     $("u-check").disabled = true;
     $("u-open").disabled = true;
+    state.update_manual = true;
     $("u-status").textContent = t("settings.update.checking");
     send({ type: "check_updates" });
   });
+  $("ub-primary").addEventListener("click", () => update_primary_action());
+  $("ub-later").addEventListener("click", () => {
+    // 只是"这次别烦我"：下载/安装状态照旧，引擎那边不受影响
+    state.update_dismissed = true;
+    render_update();
+  });
+  $("ub-skip").addEventListener("click", () => skip_update_version());
+  $("u-skip").addEventListener("click", () => skip_update_version());
+  $("u-install").addEventListener("click", () => install_update());
   $("u-open").addEventListener("click", () => {
-    if (state.update_info && state.update_info.url) {
-      send({ type: "open_update_page", url: state.update_info.url });
+    const info = state.update || state.update_info;
+    if (info && info.url) {
+      send({ type: "open_update_page", url: info.url });
     }
   });
   // 关于卡片的外链：引擎侧只放行作者的 GitHub 页面，外部站点不会被内嵌打开
@@ -3403,6 +3407,165 @@ function wire() {
       state.socket.close();
     }
   });
+}
+
+// ---------- 自动更新（ADR-0036）----------
+// 状态只由引擎给（idle/checking/available/downloading/ready/installing/failed），
+// 页面不猜"该不该提示"：它只把快照画出来，并把用户的选择发回引擎。
+function update_percent(info) {
+  const total = (info && info.progress && info.progress.total) || 0;
+  const got = (info && info.progress && info.progress.received) || 0;
+  if (!total || total <= 0) {
+    return null;
+  }
+  return Math.max(0, Math.min(100, Math.round((got / total) * 100)));
+}
+
+function apply_update(info) {
+  const stage = (info && info.state) || "idle";
+  // 换了新版本：上次点过的「稍后」不再作数
+  if (info && info.latest && info.latest !== state.update_tag_seen) {
+    state.update_tag_seen = info.latest;
+    state.update_dismissed = false;
+  }
+  const previous = state.update ? state.update.state : "";
+  state.update = info;
+
+  if (stage === "failed" && state.update_manual) {
+    show_toast(t("settings.update.failed", { error: (info && info.error) || "?" }), "error");
+  }
+  if (stage === "ready" && previous !== "ready") {
+    show_toast(t("update.ready_toast", { latest: (info && info.latest) || "" }));
+  }
+  if (stage === "installing" && previous !== "installing") {
+    show_toast(t("update.installing_toast"));
+  }
+  if (stage !== "checking") {
+    state.update_manual = false;
+  }
+  render_update();
+}
+
+function render_update() {
+  const info = state.update;
+  const stage = (info && info.state) || "idle";
+  const percent = update_percent(info);
+
+  // ---- 设置页 ----
+  $("u-current").textContent = (info && info.current) || "—";
+  $("u-latest").textContent = (info && info.latest) || "—";
+  $("u-busy").hidden = stage !== "checking";
+  $("u-check").disabled = stage === "checking" || stage === "downloading";
+  $("u-progress").hidden = stage !== "downloading";
+  if (stage === "downloading" && percent !== null) {
+    $("u-progress-fill").style.setProperty("--p", `${percent}%`);
+  }
+  $("u-install").hidden = stage !== "ready";
+  $("u-skip").hidden = !(info && info.available && stage !== "installing");
+  $("u-open").disabled = !(info && info.url && info.available);
+
+  let status = "—";
+  if (stage === "checking") {
+    status = t("settings.update.checking");
+  } else if (stage === "downloading") {
+    status = t("settings.update.downloading", { percent: percent === null ? "?" : percent });
+  } else if (stage === "ready") {
+    status = t("settings.update.ready", { latest: (info && info.latest) || "" });
+  } else if (stage === "installing") {
+    status = t("update.text.installing");
+  } else if (stage === "failed") {
+    status = t("settings.update.failed", { error: (info && info.error) || "?" });
+  } else if (stage === "available" || (info && info.available)) {
+    status = t("settings.update.available", { latest: (info && info.latest) || "" });
+    if (info && info.error) {
+      status += ` · ${info.error}`;
+    }
+  } else if (info && info.latest) {
+    status = t("settings.update.latest_state");
+  }
+  $("u-status").textContent = status;
+
+  // ---- 顶部提示条 ----
+  // checking/failed/idle 不打扰：失败只写进设置页（自动检查失败时弹条会很烦人）
+  const show_bar = !!info &&
+    ["available", "downloading", "ready", "installing"].includes(stage) &&
+    (stage === "installing" || !state.update_dismissed);
+  $("update-bar").hidden = !show_bar;
+  if (!show_bar) {
+    return;
+  }
+
+  const latest = (info && info.latest) || "";
+  $("ub-badge").textContent = t(`update.badge.${stage}`);
+  let text = "";
+  if (stage === "available") {
+    text = t("update.text.available", { latest });
+    if (info.error) {
+      text += ` · ${info.error}`;
+    }
+  } else if (stage === "downloading") {
+    text = t("update.text.downloading", {
+      latest,
+      percent: percent === null ? "…" : percent,
+    });
+  } else if (stage === "ready") {
+    text = t("update.text.ready", { latest });
+  } else if (stage === "installing") {
+    text = t("update.text.installing");
+  }
+  $("ub-text").textContent = text;
+
+  $("ub-progress").hidden = stage !== "downloading";
+  if (stage === "downloading" && percent !== null) {
+    $("ub-progress-fill").style.setProperty("--p", `${percent}%`);
+  }
+
+  const primary = $("ub-primary");
+  primary.hidden = !(stage === "ready" || stage === "available");
+  primary.dataset.action = stage === "ready" ? "install" : "page";
+  primary.textContent = stage === "ready" ? t("update.action.install") : t("update.action.download");
+  $("ub-skip").hidden = stage !== "ready" && stage !== "available";
+  $("ub-later").hidden = stage === "installing";
+}
+
+function update_primary_action() {
+  const action = $("ub-primary").dataset.action;
+  if (action === "install") {
+    install_update();
+    return;
+  }
+  const info = state.update;
+  if (info && info.url) {
+    send({ type: "open_update_page", url: info.url });
+  }
+}
+
+async function install_update() {
+  const info = state.update;
+  if (!info) {
+    return;
+  }
+  const confirmed = await ask_confirm({
+    title: t("update.action.install"),
+    message: t("update.install_confirm", { latest: info.latest || "" }),
+    confirmText: t("update.action.install"),
+    danger: false,
+  });
+  if (!confirmed) {
+    return;
+  }
+  send({ type: "install_update" });
+}
+
+function skip_update_version() {
+  const info = state.update;
+  if (!info) {
+    return;
+  }
+  send({ type: "skip_update_version" });
+  show_toast(t("update.skipped_toast", { latest: info.latest || "" }));
+  state.update_dismissed = true;
+  render_update();
 }
 
 function fmt_int(value) {

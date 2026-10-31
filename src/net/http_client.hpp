@@ -7,6 +7,7 @@
 // 不引 libcurl：发布包不想多一个 DLL，也不需要它那套多协议/异步能力。
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -32,9 +33,13 @@ bool http_get(const std::string& url, std::string& body, std::string& error,
               std::size_t max_bytes = kDefaultTextLimit, int timeout_ms = 0);
 
 // 下载到文件（先写 .part，成功后再改名，避免半截文件被当成模块包）
+//
+// cancel 非空时每收一块就查一次：置位后立刻返回 false 并删掉 .part。
+// 自动更新用它——用户在下载 100 MB 安装包的中途退出程序，不能让他等下载跑完。
 bool http_download(const std::string& url, const std::filesystem::path& destination,
                    std::string& error,
                    const std::function<void(const HttpProgress&)>& progress = {},
-                   std::size_t max_bytes = kDefaultFileLimit);
+                   std::size_t max_bytes = kDefaultFileLimit,
+                   const std::atomic<bool>* cancel = nullptr);
 
 } // namespace fgb::net

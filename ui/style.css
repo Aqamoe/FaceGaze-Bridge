@@ -166,6 +166,26 @@ body {
 
 .topbar-right { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 
+/* 更新提示条：在 .main 的纵向 flex 里占固定一行，不随 .content 滚动 */
+.update-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 10px 30px;
+  border-bottom: 1px solid var(--line);
+  background: rgb(59 130 246 / .10);
+}
+.update-bar .grow {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.update-bar .progress { max-width: 180px; }
+
 .pill {
   display: inline-flex;
   align-items: center;

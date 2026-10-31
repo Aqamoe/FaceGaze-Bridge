@@ -370,6 +370,15 @@ IpcServer::IpcServer(IpcContext context) : ctx_(std::move(context)) {
         steamvr_ = std::make_unique<steamvr::Service>(ctx_.exe_dir);
     }
 
+    // 自动更新（ADR-0036）：数据目录取不到就整个功能不启用，界面显示不可用，
+    // 而不是让人对着"检查更新"一直转圈。
+    if (const std::filesystem::path data_dir = update::default_data_dir(); !data_dir.empty()) {
+        updater_ = std::make_unique<update::Manager>(data_dir, ctx_.exe_dir, FGB_VERSION,
+                                                     ctx_.update_assume_installed);
+        // 启动 10 秒后再查：模块握手与首帧远比"有没有新版本"重要
+        auto_update_due_ = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    }
+
     // 启动时读到的档案就是"磁盘上的版本"：界面据此判断哪些改动还没保存
     if (ctx_.calib != nullptr) {
         saved_profile_ = ctx_.calib->profile();
@@ -405,6 +414,9 @@ IpcServer::IpcServer(IpcContext context) : ctx_(std::move(context)) {
         server_.send_text(conn, message);
         build_steamvr(message);
         server_.send_text(conn, message);
+        // 更新状态也补发一次：用户可能"下载完就关窗口"，再打开时要看到"可安装"
+        build_update(message);
+        server_.send_text(conn, message);
         build_output_profiles(message);
         server_.send_text(conn, message);
         send_backlog(conn);
@@ -435,9 +447,7 @@ IpcServer::~IpcServer() {
     if (diag_thread_.joinable()) {
         diag_thread_.join(); // 先等后台打包结束，避免它和 stop() 抢 server_
     }
-    if (update_thread_.joinable()) {
-        update_thread_.join();
-    }
+    updater_.reset(); // 更新线程：析构里 join，别让它在 server_ 停掉后还往外发
     stop();
 }
 
@@ -1042,45 +1052,70 @@ void IpcServer::broadcast_output_profiles() {
     server_.broadcast(message);
 }
 
-void IpcServer::start_update_check(std::string url) {
-    if (update_running_.exchange(true, std::memory_order_acq_rel)) {
+void IpcServer::build_update(std::string& out) const {
+    out.clear();
+    JsonWriter writer{out};
+    writer.obj_begin();
+    writer.key("type").str("update");
+    if (updater_ == nullptr) {
+        // 没有用户数据目录（LOCALAPPDATA 缺失）：明确说不可用，别让界面一直转圈
+        writer.key("state").str("idle");
+        writer.key("ok").boolean(false);
+        writer.key("current").str(FGB_VERSION);
+        writer.key("available").boolean(false);
+        writer.key("eligible").boolean(false);
+        writer.key("error").str("更新不可用（没有用户数据目录）");
+        writer.obj_end();
         return;
     }
-    if (update_thread_.joinable()) {
-        update_thread_.join();
-    }
-
-    update_thread_ = std::thread([this, url = std::move(url)] {
-        update::ReleaseInfo release;
-        std::string error;
-        const bool ok = update::check_latest(url, release, error);
-        const bool available =
-            ok && update::compare_versions(release.tag, FGB_VERSION) > 0;
-
-        std::string message;
-        JsonWriter writer{message};
-        writer.obj_begin();
-        writer.key("type").str("update");
-        writer.key("ok").boolean(ok);
-        writer.key("current").str(FGB_VERSION);
-        writer.key("tag").str(release.tag);
-        writer.key("latest").str(release.tag);
-        writer.key("name").str(release.name);
-        writer.key("url").str(release.url);
-        writer.key("available").boolean(available);
-        if (!error.empty()) {
-            writer.key("error").str(error);
-        }
+    const update::Snapshot snap = updater_->snapshot();
+    writer.key("state").str(update::stage_name(snap.stage));
+    // ok 保留给老界面（它只看 ok/available）：只有"检查失败"才叫不 ok
+    writer.key("ok").boolean(snap.stage != update::Stage::failed);
+    writer.key("current").str(snap.current.empty() ? FGB_VERSION : snap.current);
+    writer.key("tag").str(snap.tag);
+    writer.key("latest").str(snap.latest);
+    writer.key("name").str(snap.name);
+    writer.key("url").str(snap.page_url);
+    writer.key("available").boolean(snap.available);
+    writer.key("eligible").boolean(snap.eligible);
+    writer.key("skipped").boolean(snap.skipped);
+    writer.key("progress").obj_begin();
+    writer.key("received").integer(static_cast<long long>(snap.received));
+    writer.key("total").integer(static_cast<long long>(snap.total));
+    writer.obj_end();
+    if (snap.staged.valid) {
+        writer.key("staged").obj_begin();
+        writer.key("version").str(snap.staged.version);
+        writer.key("size").integer(static_cast<long long>(snap.staged.size));
         writer.obj_end();
+    }
+    if (!snap.error.empty()) {
+        writer.key("error").str(snap.error);
+    }
+    writer.obj_end();
+}
 
-        {
-            std::lock_guard<std::mutex> lock(update_mutex_);
-            update_result_         = std::move(message);
-            update_result_pending_ = true;
-        }
-        update_running_.store(false, std::memory_order_release);
-        FGB_INFO(kTag, "更新检查：%s", ok ? (available ? "有新版本" : "已是最新") : error.c_str());
-    });
+void IpcServer::broadcast_update() {
+    std::string message;
+    build_update(message);
+    server_.broadcast(message);
+}
+
+void IpcServer::tick_auto_update() {
+    if (updater_ == nullptr) {
+        return;
+    }
+    if (!auto_update_kicked_ && ctx_.auto_update &&
+        std::chrono::steady_clock::now() >= auto_update_due_) {
+        auto_update_kicked_ = true;
+        // manual=false：管理器自己按 update.ini 的 next_check_at 判断该不该查
+        updater_->start_check(update::kDefaultUpdateUrl, false);
+    }
+    update::Snapshot snapshot;
+    if (updater_->take(snapshot)) {
+        broadcast_update();
+    }
 }
 
 void IpcServer::start_diagnostics_export(const std::filesystem::path& output) {
@@ -1551,6 +1586,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     std::string modules_message;
     std::string ack_message;
     bool engine_restarting = false;
+    bool update_installing = false;
 
     const bool has_type = json::field_string(text, "type", type);
     FGB_DEBUG(kTag, "命令：%.*s", static_cast<int>(text.size()), text.data());
@@ -2372,15 +2408,34 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     } else if (has_type && type == "check_updates") {
         std::string url;
         json::field_string(text, "url", url);
-        if (url.empty()) {
-            url = update::kDefaultUpdateUrl;
-        }
-        if (update_running_.load(std::memory_order_acquire)) {
-            error = "更新检查正在进行";
+        if (updater_ == nullptr) {
+            error = "更新不可用（没有用户数据目录）";
+        } else if (updater_->busy()) {
+            error = "更新检查或下载正在进行";
         } else {
-            start_update_check(url);
+            // 手动检查一律绕过节流；skipped_version 也不拦（用户可能想反悔）
+            updater_->start_check(url.empty() ? update::kDefaultUpdateUrl : url, true);
             ok          = true;
             ack_message = "正在检查更新…";
+        }
+    } else if (has_type && type == "install_update") {
+        std::string install_error;
+        if (updater_ == nullptr) {
+            error = "更新不可用（没有用户数据目录）";
+        } else if (!updater_->start_install(install_error)) {
+            error = install_error;
+        } else {
+            ok                = true;
+            ack_message       = "正在安装，程序即将重启";
+            update_installing = true;
+        }
+    } else if (has_type && type == "skip_update_version") {
+        if (updater_ == nullptr) {
+            error = "更新不可用（没有用户数据目录）";
+        } else {
+            updater_->skip_current_version();
+            ok          = true;
+            ack_message = "已忽略这个版本";
         }
     } else if (has_type && type == "open_update_page") {
         std::string url;
@@ -2458,6 +2513,30 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     }
     writer.obj_end();
     server_.send_text(conn, reply);
+
+    if (update_installing) {
+        // 顺序很重要：先把"正在安装"推出去并真的发一帧，再让引擎退出（退出码 4）。
+        // 反过来的话界面一个字都收不到，用户只会觉得"点了没反应"。
+        std::string message;
+        build_update(message);
+        server_.broadcast(message);
+        server_.poll(0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        server_.poll(0);
+        if (ctx_.apply_update != nullptr) {
+            ctx_.apply_update->store(true, std::memory_order_release);
+        }
+        if (ctx_.quit != nullptr) {
+            ctx_.quit->store(true, std::memory_order_release);
+        }
+        FGB_INFO(kTag, "安装器已启动，引擎退出以覆盖安装");
+        return;
+    }
+
+    // 忽略某个版本后立刻推一次：多开页面时各自状态要一致
+    if (ok && type == "skip_update_version") {
+        broadcast_update();
+    }
 
     if (modules_touched) {
         after_module_change(ok, ok ? modules_message : error);
@@ -2550,6 +2629,12 @@ bool IpcServer::handle_http(const net::ws::HttpHead& head, std::string& body,
     // SteamVR 状态快照：和 WS 的 steamvr 消息同源；动作只能走 WS 命令
     if (head.path == "/api/steamvr") {
         build_steamvr(body);
+        return true;
+    }
+
+    // 更新状态快照：探针用 curl 就能断言"下载到哪一步"，不必先起 WebSocket
+    if (head.path == "/api/update") {
+        build_update(body);
         return true;
     }
 
@@ -3023,14 +3108,7 @@ void IpcServer::pump(int timeout_ms) {
             diag_result_pending_ = false;
         }
     }
-    {
-        std::lock_guard<std::mutex> lock(update_mutex_);
-        if (update_result_pending_) {
-            server_.broadcast(update_result_);
-            update_result_.clear();
-            update_result_pending_ = false;
-        }
-    }
+    tick_auto_update();
 
     // SteamVR 操作在后台线程：完成的这一刻由主循环统一广播，避免跨线程 send
     if (steamvr_ != nullptr) {

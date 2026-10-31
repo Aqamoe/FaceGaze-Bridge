@@ -217,7 +217,7 @@ bool http_get(const std::string& url, std::string& body, std::string& error,
 bool http_download(const std::string& url, const std::filesystem::path& destination,
                    std::string& error,
                    const std::function<void(const HttpProgress&)>& progress,
-                   std::size_t max_bytes) {
+                   std::size_t max_bytes, const std::atomic<bool>* cancel) {
     std::filesystem::path part = destination;
     part += L".part";
 
@@ -239,6 +239,9 @@ bool http_download(const std::string& url, const std::filesystem::path& destinat
     const bool ok = read_body(
         request.request, max_bytes,
         [&](const char* data, std::size_t size) {
+            if (cancel != nullptr && cancel->load(std::memory_order_relaxed)) {
+                return false; // 上层要退出：别把 100 MB 下完才放人
+            }
             out.write(data, static_cast<std::streamsize>(size));
             state.received += size;
             if (progress) {
@@ -251,6 +254,9 @@ bool http_download(const std::string& url, const std::filesystem::path& destinat
     if (!ok) {
         std::error_code ec;
         std::filesystem::remove(part, ec);
+        if (cancel != nullptr && cancel->load(std::memory_order_relaxed)) {
+            error = "已取消下载";
+        }
         return false;
     }
 
