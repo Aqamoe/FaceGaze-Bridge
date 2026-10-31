@@ -709,6 +709,11 @@ out = curve(t)                              曲线：中间这段怎么分配
 
 完整取舍见 [ADR-0037](adr/0037-calibration-curve-dual-slider-and-labels.md)。
 
+眼睑开合**不在这 88 个形状里**——它是 `EyeState.openness`，由模块的两个独立 float 给出。
+v2 的 `EyeLid = openness × 0.75 + EyeWide × 0.25` 会把它压到 0.55 左右，而且硬件在闭眼时
+往往报 0.10 而不是 0，所以单独有一对参数：`eyelid_lo`（扣掉闭眼底噪）+ `eyelid_gain`
+（再放大），见 [ADR-0038](adr/0038-eyelid-openness-gain.md)。
+
 ---
 
 ## 11. 配置与状态
