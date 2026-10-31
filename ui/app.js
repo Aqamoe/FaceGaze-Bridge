@@ -204,6 +204,7 @@ const state = {
   face_selected: null,
   import_selection: new Set(),
   expanded_modules: new Set(),
+  expanded_library: new Set(),
   library_tab: "vrcft",
   restarting: false,
   outputs_dirty: false,
@@ -1186,6 +1187,54 @@ function render_modules() {
   render_importable((data && data.importable) || []);
 }
 
+function library_chevron() {
+  const chevron = el("span", "chevron");
+  chevron.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>';
+  return chevron;
+}
+
+function toggle_expanded(card, set, id, event) {
+  if (event.type === "click" && event.target.closest("button, input, a, select, label")) {
+    return;
+  }
+  if (event.type === "keydown" && event.key !== "Enter" && event.key !== " ") {
+    return;
+  }
+  event.preventDefault();
+  const open = !card.classList.contains("expanded");
+  card.classList.toggle("expanded", open);
+  if (open) {
+    set.add(id);
+  } else {
+    set.delete(id);
+  }
+}
+
+// 使用说明与模块页：链接不能写成 <a href>，否则 WebView2 会自己导航走、界面直接丢，
+// 统一交给引擎用系统默认浏览器打开。
+function module_details_block(usage, page) {
+  const fragment = document.createDocumentFragment();
+  if (usage) {
+    const section = el("div", "module-detail");
+    section.append(el("div", "module-detail-label", t("modules.usage")));
+    section.append(el("p", "module-detail-text", usage));
+    fragment.append(section);
+  }
+  if (page) {
+    const section = el("div", "module-detail");
+    section.append(el("div", "module-detail-label", t("modules.page")));
+    const link = el("button", "module-page-link", page);
+    link.title = t("modules.page_open");
+    link.addEventListener("click", (event) => {
+      event.stopPropagation();
+      send({ type: "open_module_page", url: page });
+    });
+    section.append(link);
+    fragment.append(section);
+  }
+  return fragment;
+}
+
 function fmt_mb(bytes) {
   if (!bytes) {
     return "—";
@@ -1284,6 +1333,7 @@ function installed_card(item) {
     meta.append(el("span", "", item.dll));
   }
   details.append(meta);
+  details.append(module_details_block(item.usage, item.page));
 
   const error = el("div", "module-error");
   error.dataset.role = "error";
@@ -1349,22 +1399,7 @@ function installed_card(item) {
   actions.append(buttons);
   card.append(actions);
 
-  const toggle_card = (event) => {
-    if (event.type === "click" && event.target.closest("button, input, label, a, select")) {
-      return;
-    }
-    if (event.type === "keydown" && event.key !== "Enter" && event.key !== " ") {
-      return;
-    }
-    event.preventDefault();
-    const open = !card.classList.contains("expanded");
-    card.classList.toggle("expanded", open);
-    if (open) {
-      state.expanded_modules.add(item.id);
-    } else {
-      state.expanded_modules.delete(item.id);
-    }
-  };
+  const toggle_card = (event) => toggle_expanded(card, state.expanded_modules, item.id, event);
   card.addEventListener("click", toggle_card);
   card.addEventListener("keydown", toggle_card);
   return card;
@@ -1491,6 +1526,10 @@ function rating_stars(value) {
 function library_card(item, installed, status) {
   const card = el("article", "lib-card");
   card.dataset.id = item.id;
+  card.tabIndex = 0;
+  if (state.expanded_library.has(item.id)) {
+    card.classList.add("expanded");
+  }
 
   const head = el("div", "module-head");
   head.append(el("strong", "", item.name || item.id));
@@ -1504,6 +1543,7 @@ function library_card(item, installed, status) {
       relation === "update" ? t("modules.library.update_available") : t("modules.library.installed"));
     head.append(tag);
   }
+  head.append(library_chevron());
   card.append(head);
 
   if (item.description) {
@@ -1517,6 +1557,10 @@ function library_card(item, installed, status) {
     meta.append(el("span", "", item.updated.slice(0, 10)));
   }
   card.append(meta);
+
+  const details = el("div", "lib-details");
+  details.append(module_details_block(item.usage, item.page));
+  card.append(details);
 
   const actions = el("div", "lib-actions");
   const installing = status && status.install_id === item.id &&
@@ -1548,6 +1592,10 @@ function library_card(item, installed, status) {
   }
   card.append(actions);
   update_library_card_progress(card, status, item.id);
+
+  const toggle_card = (event) => toggle_expanded(card, state.expanded_library, item.id, event);
+  card.addEventListener("click", toggle_card);
+  card.addEventListener("keydown", toggle_card);
   return card;
 }
 
@@ -1597,6 +1645,11 @@ function render_native_library() {
     .map((entry) => [entry.module_id, entry]));
   for (const item of items) {
     const card = el("article", "lib-card");
+    card.dataset.id = item.id;
+    card.tabIndex = 0;
+    if (state.expanded_library.has(item.id)) {
+      card.classList.add("expanded");
+    }
     const head = el("div", "module-head");
     head.append(el("strong", "", item.name || item.id));
     if (item.version) {
@@ -1610,7 +1663,7 @@ function render_native_library() {
       ? { text: t("state.broken"), cls: "err" }
       : (runtime_entry ? format_state(runtime_entry.state) : module_chip(item));
     const chip = el("span", `chip ${chip_state.cls}`.trim(), chip_state.text);
-    head.append(chip);
+    head.append(chip, library_chevron());
     card.append(head);
 
     if (item.description) {
@@ -1622,11 +1675,19 @@ function render_native_library() {
     meta.append(el("span", "", `${t("modules.size")} ${fmt_mb(item.bytes)}`));
     card.append(meta);
 
+    const details = el("div", "lib-details");
+    details.append(module_details_block(item.usage, item.page));
+    card.append(details);
+
     const actions = el("div", "lib-actions");
     const manage = el("button", "btn small", t("modules.library.open_modules"));
     manage.addEventListener("click", () => switch_page("modules"));
     actions.append(manage);
     card.append(actions);
+
+    const toggle_card = (event) => toggle_expanded(card, state.expanded_library, item.id, event);
+    card.addEventListener("click", toggle_card);
+    card.addEventListener("keydown", toggle_card);
     list.append(card);
   }
 }

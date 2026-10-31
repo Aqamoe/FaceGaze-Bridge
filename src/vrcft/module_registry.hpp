@@ -35,6 +35,7 @@ struct ModuleInfo {
     std::string author;
     std::string version;
     std::string description;
+    std::string usage; // UsageInstructions：模块库/清单给的使用说明
     std::string page_url;
 
     std::filesystem::path directory;
@@ -84,6 +85,7 @@ struct ModuleMetadataOverride {
     std::string author;
     std::string version;
     std::string description;
+    std::string usage;
     std::string page;
     std::string download_url;
 };

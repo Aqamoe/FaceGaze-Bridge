@@ -54,6 +54,53 @@ std::string instance_missing_error(const vrcft::ModuleRegistry* registry,
     return "未知实例：" + name;
 }
 
+// 模块页链接来自 registry 或 module.json，界面只负责展示。这里再回查一遍元数据，
+// 避免页面脚本被改坏后把一条 ws 命令变成"用默认浏览器打开任意 URL"。
+bool known_module_page(const vrcft::ModuleRegistry* registry, const vrcft::ModuleLibrary* library,
+                       std::string_view url) {
+    if (url.empty() || url.size() > 2048) {
+        return false;
+    }
+    if (url.rfind("https://", 0) != 0 && url.rfind("http://", 0) != 0) {
+        return false;
+    }
+    const auto matches = [url](const std::string& candidate) {
+        return !candidate.empty() && candidate == url;
+    };
+    if (registry != nullptr) {
+        for (const vrcft::ModuleInfo& module : registry->modules()) {
+            if (matches(module.page_url)) {
+                return true;
+            }
+        }
+    }
+    if (library != nullptr) {
+        const vrcft::LibrarySnapshot snapshot = library->snapshot();
+        for (const vrcft::LibraryEntry& entry : snapshot.entries) {
+            if (matches(entry.page)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool open_in_browser(std::string_view url) {
+#ifdef _WIN32
+    const int length =
+        ::MultiByteToWideChar(CP_UTF8, 0, url.data(), static_cast<int>(url.size()), nullptr, 0);
+    std::wstring wide(static_cast<std::size_t>(length), L'\0');
+    ::MultiByteToWideChar(CP_UTF8, 0, url.data(), static_cast<int>(url.size()), wide.data(),
+                          length);
+    const auto result = reinterpret_cast<INT_PTR>(
+        ::ShellExecuteW(nullptr, L"open", wide.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
+    return result > 32;
+#else
+    (void)url;
+    return false;
+#endif
+}
+
 // 推送节奏。10 Hz 对人眼足够（热力图看不出 100 ms 的台阶），
 // 又远低于引擎 120 Hz，不会把主循环的时间预算吃掉。
 constexpr auto kStatusPeriod = std::chrono::milliseconds(100);
@@ -1145,6 +1192,7 @@ void IpcServer::build_modules(std::string& out) {
             writer.key("author").str(module.author);
             writer.key("version").str(module.version);
             writer.key("description").str(module.description);
+            writer.key("usage").str(module.usage);
             writer.key("page").str(module.page_url);
             writer.key("dir").str(module.directory.string());
             writer.key("dll").str(module.dll.string());
@@ -2041,6 +2089,16 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             } else {
                 ok = true;
             }
+        }
+    } else if (has_type && type == "open_module_page") {
+        std::string url;
+        json::field_string(text, "url", url);
+        if (!known_module_page(ctx_.modules, library_.get(), url)) {
+            error = "链接不在已安装模块或模块库的元数据里";
+        } else if (!open_in_browser(url)) {
+            error = "无法打开浏览器";
+        } else {
+            ok = true;
         }
     } else if (has_type && type == "set_log_level") {
         std::string level_text;

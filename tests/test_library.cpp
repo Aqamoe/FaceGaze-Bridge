@@ -34,6 +34,8 @@ FGB_TEST(library_json_parses_real_shape) {
         FGB_CHECK(entries[0].rating > 4.42 && entries[0].rating < 4.44);
         FGB_CHECK(entries[0].description.find("\"eye\"") != std::string::npos);
         FGB_CHECK(entries[0].description.find("brace }") != std::string::npos);
+        FGB_CHECK(entries[0].usage == "See the page");
+        FGB_CHECK(entries[0].page == "https://github.com/lorow/ETVRTrackingModule");
         FGB_CHECK(entries[0].file_hash.empty());
         FGB_CHECK(entries[1].name == "日本語");
     }

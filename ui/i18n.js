@@ -276,6 +276,9 @@ window.FGB_I18N = {
     "modules.library.install_ok": "「{name}」安装完成",
     "modules.library.install_failed": "「{name}」安装失败：{error}",
     "modules.library.downloading": "下载中 {percent}%（{received}/{total} MB）",
+    "modules.usage": "使用说明",
+    "modules.page": "模块页",
+    "modules.page_open": "在浏览器中打开",
     "state.disabled": "已停用",
     "state.selected": "启动时加载",
 
@@ -723,6 +726,9 @@ window.FGB_I18N = {
     "modules.library.install_ok": "\"{name}\" installed",
     "modules.library.install_failed": "\"{name}\" install failed: {error}",
     "modules.library.downloading": "Downloading {percent}% ({received}/{total} MB)",
+    "modules.usage": "Usage instructions",
+    "modules.page": "Module page",
+    "modules.page_open": "Open in browser",
     "state.disabled": "Disabled",
     "state.selected": "Startup",
 
@@ -1169,6 +1175,9 @@ window.FGB_I18N = {
     "modules.library.install_ok": "「{name}」をインストールしました",
     "modules.library.install_failed": "「{name}」のインストールに失敗しました：{error}",
     "modules.library.downloading": "ダウンロード中 {percent}%（{received}/{total} MB）",
+    "modules.usage": "使用方法",
+    "modules.page": "モジュールページ",
+    "modules.page_open": "ブラウザで開く",
     "state.disabled": "無効",
     "state.selected": "起動時に読み込み",
 

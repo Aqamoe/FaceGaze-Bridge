@@ -758,6 +758,7 @@ LibraryEvents ModuleLibrary::poll() {
         metadata.author       = install_entry.author;
         metadata.version      = install_entry.version;
         metadata.description  = install_entry.description;
+        metadata.usage        = install_entry.usage;
         metadata.page         = install_entry.page;
         metadata.download_url = install_entry.download_url;
         std::string error;

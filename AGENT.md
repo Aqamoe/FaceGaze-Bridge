@@ -343,7 +343,7 @@ docs/          方案、ADR、路线图、原生模块指南（05）、共享内
 | →UI | `update`（current/latest/tag/name/url/available/error） | 更新检查完成后 |
 | →UI | `log`（级别/tag/正文；连接时补发最近 120 行） | 有日志时 |
 | UI→ | `set_filter` / `set_outputs` / `set_module` / `set_module_enabled` / `scan_modules` / `reload_avatar` / `set_log_level` / `quit` | 按操作 |
-| UI→ | `import_module` / `import_modules`（逗号分隔 id）/ `import_all` / `install_module_archive` / `delete_module` / `open_modules_dir` | 模块管理 |
+| UI→ | `import_module` / `import_modules`（逗号分隔 id）/ `import_all` / `install_module_archive` / `delete_module` / `open_modules_dir` / `open_module_page`（只允许已安装模块或模块库条目登记的 `http(s)` 页面） | 模块管理 |
 | UI→ | `refresh_library` / `install_library` / `restart_engine` | 模块库与重启（退出码 3） |
 | UI→ | `set_preview` / `set_calibration_shape` / `set_calibration_eye` / `capture_calibration` / `save_calibration` / `reload_calibration` / `reset_calibration` | 校准（实时生效，显式保存） |
 | UI→ | `refresh_steamvr` / `set_steamvr_autolaunch` / `remove_steamvr_manifest` | SteamVR（后台线程执行，完成后推 `steamvr`） |

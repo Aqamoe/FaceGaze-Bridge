@@ -196,6 +196,19 @@ FGB_TEST(metadata_parse_real_vrcft_file) {
     FGB_CHECK(info.dll == fs::path{"C:/somewhere/f3df57d5"} / "VRCFTPicoModule.dll");
 }
 
+// 模块库安装时会把库条目的使用说明/模块页写进 module.json；重新扫描要能读回来，
+// 否则展开卡片只剩描述，"使用说明"永远为空。
+FGB_TEST(metadata_parse_usage_and_page) {
+    ModuleInfo info;
+    FGB_CHECK(parse_module_metadata(
+        R"({"ModuleId":"com.example.mod","ModuleName":"Example","Version":"1.0.0",
+            "ModuleDescription":"desc","UsageInstructions":"Enable eye tracking first.",
+            "ModulePageUrl":"https://example.com/mod","DllFileName":"Example.dll"})",
+        info));
+    FGB_CHECK(info.usage == "Enable eye tracking first.");
+    FGB_CHECK(info.page_url == "https://example.com/mod");
+}
+
 FGB_TEST(install_directory_and_state_persist) {
     TempDir root;
     const fs::path src = root.path / "source" / "pico";
@@ -244,6 +257,33 @@ FGB_TEST(install_loose_dll_synthesizes_metadata) {
     if (module != nullptr) {
         FGB_CHECK(module->name == "LooseModule");
         FGB_CHECK(fs::exists(module->directory / "module.json"));
+    }
+}
+
+// 模块库只发 DLL 时，条目里的使用说明/模块页必须跟着兜底元数据落盘，
+// 之后重新扫描才能让「模块」页展开卡片显示详情。
+FGB_TEST(install_loose_dll_keeps_library_usage) {
+    TempDir root;
+    const fs::path dll = root.path / "LibOnly.dll";
+    write_file(dll, "not a real dll");
+
+    ModuleMetadataOverride metadata;
+    metadata.id          = "lib-only";
+    metadata.name        = "Lib Only";
+    metadata.author      = "Tester";
+    metadata.version     = "2.1.0";
+    metadata.description = "desc";
+    metadata.usage       = "Follow the module page to finish setup.";
+    metadata.page        = "https://example.com/lib-only";
+
+    ModuleRegistry registry{root.path / "modules.ini", root.path / "store"};
+    std::string error;
+    FGB_CHECK(registry.install_path(dll, error, "registry", true, &metadata));
+    const ModuleInfo* module = registry.find("lib-only");
+    FGB_CHECK(module != nullptr);
+    if (module != nullptr) {
+        FGB_CHECK(module->usage == "Follow the module page to finish setup.");
+        FGB_CHECK(module->page_url == "https://example.com/lib-only");
     }
 }
 

@@ -296,6 +296,9 @@ bool parse_module_metadata(std::string_view text, ModuleInfo& out) {
     if (fgb::json::field_string(text, "ModuleDescription", value)) {
         out.description = value;
     }
+    if (fgb::json::field_string(text, "UsageInstructions", value)) {
+        out.usage = value;
+    }
     if (fgb::json::field_string(text, "ModulePageUrl", value)) {
         out.page_url = value;
     }
@@ -984,6 +987,7 @@ bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
         info.author      = metadata->author;
         info.version     = metadata->version;
         info.description = metadata->description;
+        info.usage       = metadata->usage;
         info.page_url    = metadata->page;
     }
 
@@ -1038,6 +1042,7 @@ bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
         writer.key("AuthorName").str(info.author);
         writer.key("Version").str(info.version.empty() ? "local" : info.version);
         writer.key("ModuleDescription").str(info.description);
+        writer.key("UsageInstructions").str(info.usage);
         writer.key("ModulePageUrl").str(info.page_url);
         writer.key("DllFileName").str(info.dll.filename().string());
         if (metadata != nullptr && !metadata->download_url.empty()) {

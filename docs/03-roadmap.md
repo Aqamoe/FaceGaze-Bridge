@@ -216,6 +216,11 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > scale/offset/invert）。两路都有单测与 `tools/probe_inputs.py` 端到端探针；
 > LiveLink **未在 iPhone 真机验收**，OSC 的界面表格编辑器尚未做。见
 > [ADR-0029](adr/0029-arkit-livelink-and-osc-input.md)。
+>
+> **模块卡片详情（2026-10-31）**：模块库与模块页的卡片可点击展开，显示完整描述、
+> 使用说明（`UsageInstructions`）与模块页；链接经 `open_module_page` 校验后交给系统
+> 默认浏览器。已安装模块重新扫描时读取 `module.json` 的同名字段；原生清单
+> `fgb-native.json` 同步支持（docs/05）。
 
 ### 验收标准
 

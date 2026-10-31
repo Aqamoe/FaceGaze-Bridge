@@ -44,6 +44,7 @@ my-module/
   "AuthorName": "Your Name",
   "Version": "1.0.0",
   "ModuleDescription": "Face tracking for ...",
+  "UsageInstructions": "Install the vendor runtime, then enable eye tracking in its settings.",
   "ModulePageUrl": "https://github.com/you/my-module",
   "DllFileName": "MyModule.dll",
 
@@ -58,6 +59,8 @@ my-module/
 |---|---|---|
 | `ModuleId` | 是 | 反向域名或 GUID；安装后模块仓目录就是它 |
 | `DllFileName` | 是 | 必须与实际 DLL 文件名一致 |
+| `UsageInstructions` | 可选 | 使用说明。模块卡展开后原样显示，写清"装完还要做什么"（驱动、串流设置、重启顺序） |
+| `ModulePageUrl` | 可选 | 模块主页（`https://`）。展开卡片时显示为链接，由系统默认浏览器打开 |
 | `AbiVersion` | 建议 | 只接受 `2`。写 1 或更低的模块在列表里直接标成不兼容 |
 | `Capabilities` | 建议 | `expression` / `eyes` / `gaze` / `head`；运行时以模块自报为准 |
 | `RoleHint` | 可选 | 界面默认建议的角色，不改变实际加载 |
@@ -65,6 +68,11 @@ my-module/
 
 宿主只在加载前用清单做列表/兼容性提示；加载后一律以 `fgb_module_query_v2`
 返回的 `capabilities` 为准，两者不一致会告警。
+
+`ModuleDescription` / `UsageInstructions` / `ModulePageUrl` 也会出现在界面上：
+「模块」页和「模块库 → 原生模块」的卡片点开后显示完整描述、使用说明和模块页链接。
+没写 `UsageInstructions` 时不显示该段；链接只接受元数据里登记过的 `http(s)` 地址，
+由引擎用系统默认浏览器打开，不会让 WebView2 自己导航走。
 
 ## 3. ABI 生命周期
 
