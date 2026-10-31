@@ -14,6 +14,10 @@
 #include <string_view>
 #include <vector>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace fs = std::filesystem;
 using namespace fgb::vrcft;
 
@@ -207,6 +211,124 @@ FGB_TEST(metadata_parse_usage_and_page) {
         info));
     FGB_CHECK(info.usage == "Enable eye tracking first.");
     FGB_CHECK(info.page_url == "https://example.com/mod");
+}
+
+FGB_TEST(metadata_parse_module_icon) {
+    ModuleInfo info;
+    FGB_CHECK(parse_module_metadata(
+        R"({"ModuleId":"com.example.mod","ModuleName":"Example",
+            "ModuleIcon":"art/icon.svg","DllFileName":"Example.dll"})",
+        info));
+    FGB_CHECK(info.icon_name == "art/icon.svg");
+}
+
+// 清单指定的图标要跟着模块目录走；没写 ModuleIcon 时认识根目录的 icon.*。
+FGB_TEST(install_keeps_declared_and_default_icons) {
+    TempDir root;
+    const fs::path declared = root.path / "declared";
+    write_file(declared / "module.json",
+               R"({"ModuleId":"icon-declared","ModuleName":"Declared",
+                   "DllFileName":"Mod.dll","ModuleIcon":"art/icon.svg"})");
+    write_file(declared / "Mod.dll", "not a real dll");
+    write_file(declared / "art/icon.svg", "<svg/>");
+
+    const fs::path implicit = root.path / "implicit";
+    make_module_dir(implicit, "icon-implicit", "Implicit");
+    write_file(implicit / "icon.png", "png-bytes");
+
+    ModuleRegistry registry{root.path / "modules.ini", root.path / "store"};
+    std::string error;
+    FGB_CHECK(registry.install_path(declared, error, "test"));
+    FGB_CHECK(registry.install_path(implicit, error, "test"));
+
+    const ModuleInfo* first = registry.find("icon-declared");
+    FGB_CHECK(first != nullptr);
+    if (first != nullptr) {
+        FGB_CHECK(!first->icon.empty());
+        FGB_CHECK(fs::exists(first->icon));
+    }
+    const ModuleInfo* second = registry.find("icon-implicit");
+    FGB_CHECK(second != nullptr);
+    if (second != nullptr) {
+        FGB_CHECK(!second->icon.empty());
+        FGB_CHECK(fs::exists(second->icon));
+    }
+}
+
+// ModuleIcon 指到模块目录外（../）时必须拒绝，哪怕文件真的存在。
+// PE 图标资源 → ICO：用带产品图标的界面 exe 验证头部与目录项。
+// FGB_BUILD_UI=OFF 时没有这个 exe，跳过（不是失败）。
+FGB_TEST(dll_icon_extracts_embedded_icon) {
+#ifdef _WIN32
+    wchar_t buffer[MAX_PATH]{};
+    const DWORD length = ::GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+    const fs::path exe =
+        length > 0 ? fs::path{buffer}.parent_path() / "FaceGaze Bridge.exe" : fs::path{};
+    if (exe.empty() || !fs::exists(exe)) {
+        FGB_CHECK(true);
+        return;
+    }
+    std::string ico;
+    std::string mime;
+    FGB_CHECK(read_dll_icon(exe, ico, mime));
+    FGB_CHECK(mime == "image/x-icon");
+    FGB_CHECK(ico.size() > 22);
+    if (ico.size() > 22) {
+        const auto byte = [&ico](std::size_t index) {
+            return static_cast<unsigned>(static_cast<unsigned char>(ico[index]));
+        };
+        const unsigned count = byte(4) | (byte(5) << 8);
+        FGB_CHECK(byte(0) == 0 && byte(1) == 0);
+        FGB_CHECK(byte(2) == 1 && byte(3) == 0); // ICO type
+        FGB_CHECK(count >= 1 && count <= 64);
+        FGB_CHECK(ico.size() >= 6u + 16u * count);
+    }
+#else
+    FGB_CHECK(true);
+#endif
+}
+
+// .NET 程序集把 logo 当 PNG 托管资源嵌在 PE 里；扫描时要取最大且尺寸合理的那个。
+FGB_TEST(embedded_png_extraction) {
+    std::ifstream input(fs::path{FGB_SOURCE_DIR} / "ui" / "logo.png", std::ios::binary);
+    const std::string data{std::istreambuf_iterator<char>(input),
+                           std::istreambuf_iterator<char>()};
+    FGB_CHECK(!data.empty());
+
+    std::string png;
+    FGB_CHECK(find_embedded_png(data, png));
+    FGB_CHECK(png.size() == data.size());
+    FGB_CHECK(png.rfind("\x89PNG\r\n\x1a\n", 0) == 0);
+
+    // 把 IHDR 宽度改成 10000：尺寸不合理，应被跳过
+    std::string huge = data;
+    huge[16] = 0;
+    huge[17] = 0;
+    huge[18] = 0x27;
+    huge[19] = 0x10;
+    std::string none;
+    FGB_CHECK(!find_embedded_png(huge, none));
+}
+
+FGB_TEST(icon_outside_module_dir_is_rejected) {
+    TempDir root;
+    const fs::path src = root.path / "src";
+    write_file(src / "module.json",
+               R"({"ModuleId":"icon-outside","ModuleName":"Outside",
+                   "DllFileName":"Mod.dll","ModuleIcon":"../secret.png"})");
+    write_file(src / "Mod.dll", "not a real dll");
+
+    ModuleRegistry registry{root.path / "modules.ini", root.path / "store"};
+    std::string error;
+    FGB_CHECK(registry.install_path(src, error, "test"));
+    write_file(root.path / "store" / "secret.png", "png-bytes");
+    registry.rescan();
+
+    const ModuleInfo* module = registry.find("icon-outside");
+    FGB_CHECK(module != nullptr);
+    if (module != nullptr) {
+        FGB_CHECK(module->icon.empty());
+    }
 }
 
 FGB_TEST(install_directory_and_state_persist) {

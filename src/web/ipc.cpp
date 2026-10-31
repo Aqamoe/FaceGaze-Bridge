@@ -85,6 +85,40 @@ bool known_module_page(const vrcft::ModuleRegistry* registry, const vrcft::Modul
     return false;
 }
 
+bool percent_decode(std::string_view text, std::string& out) {
+    out.clear();
+    out.reserve(text.size());
+    const auto hex = [](char ch) -> int {
+        if (ch >= '0' && ch <= '9') {
+            return ch - '0';
+        }
+        if (ch >= 'a' && ch <= 'f') {
+            return ch - 'a' + 10;
+        }
+        if (ch >= 'A' && ch <= 'F') {
+            return ch - 'A' + 10;
+        }
+        return -1;
+    };
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (text[i] != '%') {
+            out.push_back(text[i]);
+            continue;
+        }
+        if (i + 2 >= text.size()) {
+            return false;
+        }
+        const int high = hex(text[i + 1]);
+        const int low  = hex(text[i + 2]);
+        if (high < 0 || low < 0) {
+            return false;
+        }
+        out.push_back(static_cast<char>((high << 4) | low));
+        i += 2;
+    }
+    return true;
+}
+
 bool open_in_browser(std::string_view url) {
 #ifdef _WIN32
     const int length =
@@ -169,6 +203,12 @@ std::string_view mime_type(std::string_view extension) noexcept {
     }
     if (extension == ".png") {
         return "image/png";
+    }
+    if (extension == ".jpg" || extension == ".jpeg") {
+        return "image/jpeg";
+    }
+    if (extension == ".webp") {
+        return "image/webp";
     }
     if (extension == ".woff2") {
         return "font/woff2";
@@ -1194,6 +1234,8 @@ void IpcServer::build_modules(std::string& out) {
             writer.key("description").str(module.description);
             writer.key("usage").str(module.usage);
             writer.key("page").str(module.page_url);
+            // 没有图标文件也可能从 DLL 资源里取；让界面先请求，404 时自然回退头像
+            writer.key("icon").boolean(!module.icon.empty() || !module.dll.empty());
             writer.key("dir").str(module.directory.string());
             writer.key("dll").str(module.dll.string());
             writer.key("metadata").boolean(module.metadata_ok);
@@ -2187,6 +2229,16 @@ bool IpcServer::handle_http(const net::ws::HttpHead& head, std::string& body,
         return false;
     }
 
+    constexpr std::string_view kIconPrefix = "/module-icon/";
+    if (head.path.rfind(kIconPrefix, 0) == 0) {
+        std::string_view id = std::string_view{head.path}.substr(kIconPrefix.size());
+        const std::size_t query = id.find('?');
+        if (query != std::string_view::npos) {
+            id = id.substr(0, query);
+        }
+        return serve_module_icon(id, body, content_type);
+    }
+
     if (head.path == "/api/quit" || head.path == "/api/restart") {
         // 托盘外壳据此实现「停止引擎 / 重启引擎」，不需要理解 WebSocket 协议
         if (ctx_.quit == nullptr) {
@@ -2316,6 +2368,105 @@ bool IpcServer::serve_static(std::string_view path, std::string& body,
         return false;
     }
 
+    std::ifstream input(target, std::ios::binary);
+    if (!input) {
+        return false;
+    }
+    body.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    content_type = std::string{mime};
+    return true;
+}
+
+bool IpcServer::serve_module_icon(std::string_view encoded_id, std::string& body,
+                                  std::string& content_type) const {
+    if (ctx_.modules == nullptr) {
+        return false;
+    }
+    std::string id;
+    if (!percent_decode(encoded_id, id) || id.empty() || id.size() > 256) {
+        return false;
+    }
+    for (const char ch : id) {
+        const auto byte = static_cast<unsigned char>(ch);
+        if (byte < 0x20 || byte == 0x7F || ch == '/' || ch == '\\') {
+            return false;
+        }
+    }
+
+    const vrcft::ModuleInfo* module = ctx_.modules->find(id);
+    if (module == nullptr) {
+        return false;
+    }
+
+    if (module->icon.empty()) {
+        // 模块没带图标文件时，从 DLL 的 Win32 图标资源取（VRCFT 模块常见）
+        if (module->dll.empty()) {
+            return false;
+        }
+        std::error_code stamp_ec;
+        const std::uintmax_t dll_size = std::filesystem::file_size(module->dll, stamp_ec);
+        const auto modified = std::filesystem::last_write_time(module->dll, stamp_ec);
+        const std::string stamp = module->dll.string() + "|" + std::to_string(dll_size) + "|" +
+                                  std::to_string(modified.time_since_epoch().count());
+        const auto cached = icon_cache_.find(module->id);
+        if (cached != icon_cache_.end() && cached->second.stamp == stamp) {
+            if (cached->second.bytes.empty()) {
+                return false; // 上次提取失败（DLL 没图标），别每次刷新都重新 LoadLibrary
+            }
+            body = cached->second.bytes;
+            content_type = cached->second.content_type;
+            return true;
+        }
+        std::string icon;
+        std::string mime;
+        if (!vrcft::read_dll_icon(module->dll, icon, mime) || icon.empty() ||
+            icon.size() > 1024 * 1024) {
+            icon_cache_[module->id] = IconCacheEntry{stamp, {}, {}};
+            return false;
+        }
+        IconCacheEntry entry;
+        entry.stamp        = stamp;
+        entry.content_type = std::move(mime);
+        entry.bytes        = std::move(icon);
+        auto inserted = icon_cache_.insert_or_assign(module->id, std::move(entry));
+        body = inserted.first->second.bytes;
+        content_type = inserted.first->second.content_type;
+        return true;
+    }
+
+    std::error_code ec;
+    const std::filesystem::path root = std::filesystem::weakly_canonical(module->directory, ec);
+    if (ec) {
+        return false;
+    }
+    const std::filesystem::path target = std::filesystem::weakly_canonical(module->icon, ec);
+    if (ec) {
+        return false;
+    }
+    // 扫描时已经校验过，这里再挡一次：图标路径被替换/软链接后也不能读出模块目录
+    const std::wstring root_text   = root.wstring();
+    const std::wstring target_text = target.wstring();
+    if (target_text.size() <= root_text.size() ||
+        target_text.compare(0, root_text.size(), root_text) != 0) {
+        return false;
+    }
+    const wchar_t next = target_text[root_text.size()];
+    if (next != L'\\' && next != L'/') {
+        return false;
+    }
+
+    std::string extension = target.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    const std::string_view mime = mime_type(extension);
+    if (mime.rfind("image/", 0) != 0) {
+        return false;
+    }
+    const std::uintmax_t size = std::filesystem::file_size(target, ec);
+    if (ec || size == 0 || size > 1024 * 1024) {
+        return false;
+    }
     std::ifstream input(target, std::ios::binary);
     if (!input) {
         return false;

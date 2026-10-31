@@ -6,6 +6,7 @@
   "ModuleDescription": "Attribute module that only provides openness/pupil (no gaze).",
   "UsageInstructions": "Assign it to the eyes role and check per-eye openness on the status page; it does not provide gaze.",
   "ModulePageUrl": "https://github.com/Aqamoe/FaceGaze-Bridge",
+  "ModuleIcon": "icon.svg",
   "DllFileName": "fgb-sample-openness.dll",
   "AbiVersion": 2,
   "Capabilities": ["eyes"],

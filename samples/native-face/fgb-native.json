@@ -6,6 +6,7 @@
   "ModuleDescription": "Synthetic expression-only module for ADR-0030 composition tests.",
   "UsageInstructions": "Add it as a startup instance, assign it to the expression role, then restart the engine.",
   "ModulePageUrl": "https://github.com/Aqamoe/FaceGaze-Bridge",
+  "ModuleIcon": "icon.svg",
   "DllFileName": "fgb-sample-face.dll",
   "AbiVersion": 2,
   "Capabilities": ["expression"],

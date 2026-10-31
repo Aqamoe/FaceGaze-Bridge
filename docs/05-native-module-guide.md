@@ -32,6 +32,7 @@
 my-module/
   fgb-native.json        ← 身份清单（宿主不加载 DLL 就能列出模块）
   MyModule.dll           ← 实现
+  icon.svg               ← 可选图标（png/jpg/svg/ico/webp，≤1 MB）
   （可选）其它依赖 DLL / config.ini
 ```
 
@@ -46,6 +47,7 @@ my-module/
   "ModuleDescription": "Face tracking for ...",
   "UsageInstructions": "Install the vendor runtime, then enable eye tracking in its settings.",
   "ModulePageUrl": "https://github.com/you/my-module",
+  "ModuleIcon": "icon.svg",
   "DllFileName": "MyModule.dll",
 
   "AbiVersion": 2,
@@ -61,6 +63,7 @@ my-module/
 | `DllFileName` | 是 | 必须与实际 DLL 文件名一致 |
 | `UsageInstructions` | 可选 | 使用说明。模块卡展开后原样显示，写清"装完还要做什么"（驱动、串流设置、重启顺序） |
 | `ModulePageUrl` | 可选 | 模块主页（`https://`）。展开卡片时显示为链接，由系统默认浏览器打开 |
+| `ModuleIcon` | 可选 | 模块图标，相对模块目录的路径。支持 png/jpg/jpeg/svg/ico/webp，单文件 ≤1 MB；不写时自动找根目录的 `icon.png` / `icon.jpg` / `icon.svg` / `icon.ico` / `icon.webp`，再没有就从 DLL 提取（先 Win32 图标资源，再找 .NET 托管资源里 16–512 见方的 PNG）。图标文件必须留在模块目录内（`..` 和绝对路径会被拒绝） |
 | `AbiVersion` | 建议 | 只接受 `2`。写 1 或更低的模块在列表里直接标成不兼容 |
 | `Capabilities` | 建议 | `expression` / `eyes` / `gaze` / `head`；运行时以模块自报为准 |
 | `RoleHint` | 可选 | 界面默认建议的角色，不改变实际加载 |
@@ -69,8 +72,12 @@ my-module/
 宿主只在加载前用清单做列表/兼容性提示；加载后一律以 `fgb_module_query_v2`
 返回的 `capabilities` 为准，两者不一致会告警。
 
-`ModuleDescription` / `UsageInstructions` / `ModulePageUrl` 也会出现在界面上：
-「模块」页和「模块库 → 原生模块」的卡片点开后显示完整描述、使用说明和模块页链接。
+`ModuleDescription` / `UsageInstructions` / `ModulePageUrl` / `ModuleIcon` 也会出现在界面上：
+「模块」页和「模块库 → 原生模块」的卡片点开后显示完整描述、使用说明和模块页链接，
+标题旁显示图标。图标优先用清单/目录里的图片文件；VRCFT 兼容模块（以及没有图片文件的
+原生模块）会从 DLL 提取：先拼 `RT_GROUP_ICON` 资源，再找 .NET 托管资源里尺寸合理的
+PNG（不少模块把 logo 直接嵌在程序集里）。两者都是只读解析，不执行 DllMain；
+仍没有就用模块名首字母生成彩色头像，不会留空。
 没写 `UsageInstructions` 时不显示该段；链接只接受元数据里登记过的 `http(s)` 地址，
 由引擎用系统默认浏览器打开，不会让 WebView2 自己导航走。
 
@@ -294,7 +301,7 @@ cmake --build build/native-sample --config Release
 ```
 
 产物在 `build/native-sample/Release/fgb-sample-native.dll`。
-把 `fgb-native.json` 与 DLL 放在同一目录，压缩成 zip 即可安装。
+把 `fgb-native.json`、DLL 和（可选的）图标放在同一目录，压缩成 zip 即可安装。
 
 ### 8.2 直接命令行（MSVC）
 
@@ -310,10 +317,10 @@ cl /nologo /LD /O2 /EHsc /std:c++20 /I sdk MyModule.cpp /Fe:MyModule.dll
 
 ## 9. 打包与安装
 
-zip 根目录直接放清单和 DLL（可再带 config.ini）：
+zip 根目录直接放清单和 DLL（可再带 config.ini、图标）：
 
 ```powershell
-Compress-Archive -Path fgb-native.json,MyModule.dll -DestinationPath MyModule.zip
+Compress-Archive -Path fgb-native.json,MyModule.dll,icon.svg -DestinationPath MyModule.zip
 ```
 
 安装方式：
@@ -467,6 +474,7 @@ v1 的结构和符号全部删除（[ADR-0034](adr/0034-native-module-v2-only.md
 | 加载失败“没有导出 fgb_module_query_v2” | 忘记 `extern "C" __declspec(dllexport)`，或编译成了 C++ 修饰名 |
 | ABI 版本不兼容 | 模块返回了框架外的 `abi_version`；重新用当前 SDK 头编译 |
 | 卡片显示故障 | 看模块 `report_status(ERROR, ...)` / 日志里的具体原因；初始化返回 0 也会显示 |
+| 卡片没有图标 | 清单没写 `ModuleIcon` 且根目录没有 `icon.*`；界面会显示模块名首字母头像，不影响加载 |
 | 帧率 0 | `update` 没有 `commit`，或 `attributes` 一直是 0 |
 | 眼睛不动但表情正常 | 没声明 `FGB_CAP_EYES`，或没置 `FGB_ATTR_*_OPENNESS/GAZE` |
 | 注视一直「注视中」、方向恒 `(0,0,-1)` | 置了方向属性却没有方向模型（伪造方向）；只置 `LEFT/RIGHT_POINT` |

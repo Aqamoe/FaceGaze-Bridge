@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <fstream>
 #include <iterator>
@@ -167,6 +168,72 @@ std::filesystem::path first_dll(const std::filesystem::path& directory) {
     return best;
 }
 
+// 图标：清单可用 ModuleIcon 指定，否则认模块根目录下常见的 icon.*。
+// 只接受图片扩展名、体积有上限，并且解析后的真实路径必须仍在模块目录内
+// （软链接/junction 也不能把任意文件当图标吐给界面）。
+constexpr std::uintmax_t kMaxIconBytes = 1024 * 1024;
+
+bool icon_extension_ok(const std::filesystem::path& path) {
+    const std::string extension = lower(path.extension().string());
+    return extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
+           extension == ".svg" || extension == ".ico" || extension == ".webp";
+}
+
+std::filesystem::path resolve_module_icon(const std::filesystem::path& directory,
+                                          const std::string& declared) {
+    std::error_code ec;
+    const std::filesystem::path root = std::filesystem::weakly_canonical(directory, ec);
+    if (ec) {
+        return {};
+    }
+    const std::wstring root_text = root.wstring();
+    const auto usable = [&root_text](const std::filesystem::path& candidate) {
+        std::error_code inner;
+        const std::filesystem::path target = std::filesystem::weakly_canonical(candidate, inner);
+        if (inner) {
+            return std::filesystem::path{};
+        }
+        const std::wstring target_text = target.wstring();
+        if (target_text.size() <= root_text.size() ||
+            target_text.compare(0, root_text.size(), root_text) != 0) {
+            return std::filesystem::path{};
+        }
+        const wchar_t next = target_text[root_text.size()];
+        if (next != L'\\' && next != L'/') {
+            return std::filesystem::path{};
+        }
+        if (!std::filesystem::is_regular_file(target, inner) || !icon_extension_ok(target)) {
+            return std::filesystem::path{};
+        }
+        const std::uintmax_t size = std::filesystem::file_size(target, inner);
+        if (inner || size == 0 || size > kMaxIconBytes) {
+            return std::filesystem::path{};
+        }
+        return target;
+    };
+
+    if (!declared.empty()) {
+        const std::filesystem::path relative{declared};
+        if (relative.is_absolute() || relative.has_root_name() ||
+            relative.has_root_directory()) {
+            return {};
+        }
+        for (const auto& part : relative) {
+            if (part.empty() || part == "..") {
+                return {};
+            }
+        }
+        return usable(directory / relative);
+    }
+    for (const char* name : {"icon.png", "icon.jpg", "icon.svg", "icon.ico", "icon.webp"}) {
+        std::filesystem::path hit = usable(directory / name);
+        if (!hit.empty()) {
+            return hit;
+        }
+    }
+    return {};
+}
+
 std::uintmax_t directory_size(const std::filesystem::path& directory) {
     std::error_code ec;
     std::uintmax_t total = 0;
@@ -275,6 +342,203 @@ std::filesystem::path find_module_root(const std::filesystem::path& extracted) {
 
 } // namespace
 
+namespace {
+
+std::uint16_t peek16(const unsigned char* data) {
+    return static_cast<std::uint16_t>(data[0] | (data[1] << 8));
+}
+
+std::uint32_t peek32(const unsigned char* data) {
+    return static_cast<std::uint32_t>(data[0]) | (static_cast<std::uint32_t>(data[1]) << 8) |
+           (static_cast<std::uint32_t>(data[2]) << 16) |
+           (static_cast<std::uint32_t>(data[3]) << 24);
+}
+
+// PNG 的块长度与 IHDR 宽高都是大端（ICO/PE 才是小端）
+std::uint32_t peek32_be(const unsigned char* data) {
+    return (static_cast<std::uint32_t>(data[0]) << 24) |
+           (static_cast<std::uint32_t>(data[1]) << 16) |
+           (static_cast<std::uint32_t>(data[2]) << 8) | static_cast<std::uint32_t>(data[3]);
+}
+
+#ifdef _WIN32
+BOOL CALLBACK first_icon_group(HMODULE, LPCWSTR, LPWSTR name, LONG_PTR param) {
+    if (name == nullptr || !IS_INTRESOURCE(name)) {
+        return TRUE;
+    }
+    *reinterpret_cast<int*>(param) = static_cast<int>(reinterpret_cast<INT_PTR>(name));
+    return FALSE;
+}
+
+void poke16(std::string& out, std::size_t at, std::uint16_t value) {
+    out[at]     = static_cast<char>(value & 0xFF);
+    out[at + 1] = static_cast<char>((value >> 8) & 0xFF);
+}
+
+void poke32(std::string& out, std::size_t at, std::uint32_t value) {
+    out[at]     = static_cast<char>(value & 0xFF);
+    out[at + 1] = static_cast<char>((value >> 8) & 0xFF);
+    out[at + 2] = static_cast<char>((value >> 16) & 0xFF);
+    out[at + 3] = static_cast<char>((value >> 24) & 0xFF);
+}
+#endif
+
+} // namespace
+
+bool find_embedded_png(std::string_view data, std::string& out) {
+    out.clear();
+    constexpr unsigned char kMagic[8] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    const auto* bytes = reinterpret_cast<const unsigned char*>(data.data());
+    std::size_t best_start = 0;
+    std::size_t best_size  = 0;
+    for (std::size_t at = 0; at + 24 <= data.size(); ++at) {
+        if (std::memcmp(bytes + at, kMagic, sizeof(kMagic)) != 0) {
+            continue;
+        }
+        if (std::memcmp(bytes + at + 12, "IHDR", 4) != 0) {
+            continue;
+        }
+        const std::uint32_t width  = peek32_be(bytes + at + 16);
+        const std::uint32_t height = peek32_be(bytes + at + 20);
+        // 图标应当是接近方形的小图；跳过截图、背景图之类的资源
+        if (width < 16 || height < 16 || width > 512 || height > 512 ||
+            width * 2 < height || height * 2 < width) {
+            continue;
+        }
+        std::size_t pos      = at + 8;
+        bool complete        = false;
+        while (pos + 12 <= data.size()) {
+            const std::uint32_t length = peek32_be(bytes + pos);
+            if (length > 8u * 1024u * 1024u || pos + 12u + length > data.size()) {
+                break;
+            }
+            const bool iend = std::memcmp(bytes + pos + 4, "IEND", 4) == 0;
+            pos += 12u + length;
+            if (iend) {
+                complete = true;
+                break;
+            }
+        }
+        if (!complete) {
+            continue;
+        }
+        const std::size_t size = pos - at;
+        if (size > 1024u * 1024u) {
+            continue;
+        }
+        if (size > best_size) {
+            best_size  = size;
+            best_start = at;
+        }
+    }
+    if (best_size == 0) {
+        return false;
+    }
+    out.assign(data.substr(best_start, best_size));
+    return true;
+}
+
+bool read_dll_icon(const std::filesystem::path& dll, std::string& out,
+                   std::string& content_type) {
+    out.clear();
+    content_type.clear();
+#ifdef _WIN32
+    if (dll.empty()) {
+        return false;
+    }
+    // 只读资源，不跑模块代码；.NET 程序集把 ApplicationIcon 编成 RT_GROUP_ICON。
+    HMODULE module = ::LoadLibraryExW(dll.c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE);
+    if (module == nullptr) {
+        return false;
+    }
+    bool ok = false;
+    int group_id = 0;
+    ::EnumResourceNamesW(module, RT_GROUP_ICON, first_icon_group,
+                         reinterpret_cast<LONG_PTR>(&group_id));
+    if (group_id != 0) {
+        HRSRC group_resource = ::FindResourceW(module, MAKEINTRESOURCEW(group_id), RT_GROUP_ICON);
+        const DWORD group_size = group_resource != nullptr
+                                     ? ::SizeofResource(module, group_resource)
+                                     : 0;
+        HGLOBAL group_handle =
+            group_resource != nullptr ? ::LoadResource(module, group_resource) : nullptr;
+        const auto* group =
+            group_handle != nullptr ? static_cast<const unsigned char*>(::LockResource(group_handle))
+                                    : nullptr;
+        if (group != nullptr && group_size >= 6) {
+            const std::uint16_t count = peek16(group + 4);
+            if (count > 0 && count <= 64 && group_size >= 6u + 14u * count) {
+                // ICO 头 + 目录项；每个 RT_ICON 原样跟在后面（可能是 DIB，也可能是 PNG）
+                std::string ico(6u + 16u * count, '\0');
+                poke16(ico, 0, 0);
+                poke16(ico, 2, 1);
+                poke16(ico, 4, count);
+                std::size_t offset = ico.size();
+                bool complete = true;
+                for (std::uint16_t i = 0; i < count && complete; ++i) {
+                    const unsigned char* entry = group + 6u + 14u * i;
+                    const std::uint16_t image_id = peek16(entry + 12);
+                    HRSRC image_resource =
+                        ::FindResourceW(module, MAKEINTRESOURCEW(image_id), RT_ICON);
+                    HGLOBAL image_handle =
+                        image_resource != nullptr ? ::LoadResource(module, image_resource)
+                                                   : nullptr;
+                    const DWORD image_size =
+                        image_resource != nullptr ? ::SizeofResource(module, image_resource) : 0;
+                    const auto* image =
+                        image_handle != nullptr
+                            ? static_cast<const unsigned char*>(::LockResource(image_handle))
+                            : nullptr;
+                    if (image == nullptr || image_size == 0 || offset + image_size > 1024u * 1024u) {
+                        complete = false;
+                        break;
+                    }
+                    const std::size_t at = 6u + 16u * i;
+                    ico[at]     = static_cast<char>(entry[0]); // width
+                    ico[at + 1] = static_cast<char>(entry[1]); // height
+                    ico[at + 2] = static_cast<char>(entry[2]); // palette size
+                    ico[at + 3] = 0;
+                    poke16(ico, at + 4, peek16(entry + 4)); // planes
+                    poke16(ico, at + 6, peek16(entry + 6)); // bit count
+                    poke32(ico, at + 8, image_size);
+                    poke32(ico, at + 12, static_cast<std::uint32_t>(offset));
+                    ico.append(reinterpret_cast<const char*>(image), image_size);
+                    offset += image_size;
+                }
+                if (complete) {
+                    out = std::move(ico);
+                    ok = true;
+                }
+            }
+        }
+    }
+    ::FreeLibrary(module);
+    if (ok) {
+        content_type = "image/x-icon";
+        return true;
+    }
+    // 没有 Win32 图标资源：.NET 程序集常把 logo 当 PNG 托管资源直接嵌在 PE 里
+    std::error_code size_ec;
+    const std::uintmax_t file_size = std::filesystem::file_size(dll, size_ec);
+    if (!size_ec && file_size > 0 && file_size <= 64u * 1024u * 1024u) {
+        std::ifstream input(dll, std::ios::binary);
+        if (input) {
+            std::string data{std::istreambuf_iterator<char>(input),
+                             std::istreambuf_iterator<char>()};
+            if (find_embedded_png(data, out)) {
+                content_type = "image/png";
+                return true;
+            }
+        }
+    }
+    return false;
+#else
+    (void)dll;
+    (void)content_type;
+    return false;
+#endif
+}
+
 bool parse_module_metadata(std::string_view text, ModuleInfo& out) {
     bool any = false;
     std::string value;
@@ -301,6 +565,9 @@ bool parse_module_metadata(std::string_view text, ModuleInfo& out) {
     }
     if (fgb::json::field_string(text, "ModulePageUrl", value)) {
         out.page_url = value;
+    }
+    if (fgb::json::field_string(text, "ModuleIcon", value)) {
+        out.icon_name = value;
     }
     if (fgb::json::field_string(text, "DllFileName", value) && !value.empty()) {
         out.dll = out.directory / value;
@@ -608,6 +875,7 @@ ModuleInfo ModuleRegistry::scan_directory(const std::filesystem::path& dir,
         info.name = info.id;
     }
     info.broken = info.dll.empty();
+    info.icon   = resolve_module_icon(dir, info.icon_name);
     info.bytes  = directory_size(dir);
     return info;
 }

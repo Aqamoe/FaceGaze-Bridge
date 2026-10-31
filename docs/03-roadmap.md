@@ -220,7 +220,10 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > **模块卡片详情（2026-10-31）**：模块库与模块页的卡片可点击展开，显示完整描述、
 > 使用说明（`UsageInstructions`）与模块页；链接经 `open_module_page` 校验后交给系统
 > 默认浏览器。已安装模块重新扫描时读取 `module.json` 的同名字段；原生清单
-> `fgb-native.json` 同步支持（docs/05）。
+> `fgb-native.json` 同步支持（docs/05）。卡片标题旁显示 `ModuleIcon`（或 `icon.*`），
+> 由 `/module-icon/<id>` 提供；没有图片文件时先取 DLL 的 Win32 图标资源（ICO），
+> 再找 .NET 资源里 16–512 见方的内嵌 PNG，仍没有才用首字母头像兜底，
+> VRCFT 兼容模块因此也能显示图标。
 
 ### 验收标准
 

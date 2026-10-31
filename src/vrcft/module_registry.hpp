@@ -37,9 +37,11 @@ struct ModuleInfo {
     std::string description;
     std::string usage; // UsageInstructions：模块库/清单给的使用说明
     std::string page_url;
+    std::string icon_name; // ModuleIcon：清单里写的图标文件名（相对模块目录）
 
     std::filesystem::path directory;
     std::filesystem::path dll;
+    std::filesystem::path icon; // 解析后的图标绝对路径；空 = 没有图标
 
     ModuleKind kind = ModuleKind::vrcft;
     bool metadata_ok = false; // module.json 读到了
@@ -113,6 +115,15 @@ struct VrcftRuntime {
 
 // 从 module.json 文本解析元数据。文本带不带 BOM 都行。
 bool parse_module_metadata(std::string_view text, ModuleInfo& out);
+
+// 从模块 DLL 取图标：优先 Win32 RT_GROUP_ICON（拼成 ICO），没有时再找 .NET
+// 资源里内嵌的 PNG。content_type 返回 image/x-icon 或 image/png；取不到返回 false。
+// 读资源用 LOAD_LIBRARY_AS_DATAFILE，不执行 DllMain。
+bool read_dll_icon(const std::filesystem::path& dll, std::string& out,
+                   std::string& content_type);
+
+// 在任意字节流里找最大的、尺寸合理的 PNG（16..512 见方、长宽比 1:2..2:1）。
+bool find_embedded_png(std::string_view data, std::string& out);
 
 // 按 id 或显示名找（大小写不敏感）。找不到返回 nullptr。
 const ModuleInfo* find_module(const std::vector<ModuleInfo>& modules, std::string_view id);

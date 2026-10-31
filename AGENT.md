@@ -45,6 +45,10 @@
   静态文案用 `data-i18n` 属性。引擎日志保持中文，不要翻译。
 - **原生模块必须带 `fgb-native.json`**（字段同 module.json），模块仓不加载 DLL 就列出元数据；
   运行态统一走 `ISource::module_status()`，不要按具体 Source 类型分支。
+- **模块图标**走清单 `ModuleIcon`（或模块根目录 `icon.*`），只允许模块目录内的图片、
+  ≤1 MB；没有图标文件时从 DLL 提取：先 `RT_GROUP_ICON` 资源，再找 .NET 资源里
+  16–512 见方的内嵌 PNG（`LOAD_LIBRARY_AS_DATAFILE`，不执行 DllMain）。界面统一用
+  `/module-icon/<id>` 取图，再没有才用首字母头像。
 - **原生模块只有一套 ABI**（`sdk/fgb_module_api.h`，导出 `fgb_module_query_v2`，属性帧）。
   v1 已于 2026-10-31 移除（[ADR-0034](docs/adr/0034-native-module-v2-only.md)）：
   不要再加"第二套并行 ABI/兼容分支"，扩展只能在结构末尾追加字段并升 `abi_version`。
@@ -353,7 +357,8 @@ docs/          方案、ADR、路线图、原生模块指南（05）、共享内
 | →UI | `ack`（命令、ok、error） | 每条命令 |
 
 HTTP（同一端口，只绑回环）：`/healthz`、`/api/status`、`/api/params`、
-`/api/calibration`、`/api/preview`、`/api/gaze`、`/api/steamvr` 只读；`/api/quit`、`/api/restart`
+`/api/calibration`、`/api/preview`、`/api/gaze`、`/api/steamvr`、`/module-icon/<id>` 只读；
+`/api/quit`、`/api/restart`
 是控制动作，只给托盘外壳与排障用（外壳不实现 WebSocket 客户端，见 ADR-0022 §5）。
 
 ## 8. 完成的定义（DoD）

@@ -674,6 +674,52 @@ input[type="range"]:disabled::-webkit-slider-thumb {
 .module-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .module-head strong { font-size: 14.5px; font-weight: 600; }
 
+/* 模块图标：没有图时是统一的蓝紫斜向渐变 + 外发光 + 首字母；
+   有图时去掉底色和发光，半透明 PNG 直接落在卡片上 */
+.module-icon {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  overflow: hidden;
+  /* 半透明强调色叠在卡片底色上：比纯色块更贴合界面，也不会像深紫那样发闷 */
+  background:
+    radial-gradient(circle at 30% 22%, rgb(255 255 255 / .18), transparent 58%),
+    linear-gradient(135deg,
+      rgb(59 130 246 / .52) 0%,
+      rgb(124 92 255 / .56) 58%,
+      rgb(147 90 224 / .5) 100%);
+  border: 1px solid rgb(170 185 240 / .28);
+  box-shadow:
+    0 0 12px rgb(124 92 255 / .28),
+    0 2px 6px rgb(2 6 23 / .35),
+    inset 0 1px 0 rgb(255 255 255 / .18);
+  color: #f0f4ff;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgb(15 23 42 / .45);
+  user-select: none;
+}
+.module-icon.has-icon {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  text-shadow: none;
+}
+.module-icon-fallback { opacity: .96; }
+.module-icon.has-icon .module-icon-fallback { display: none; }
+.module-icon img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 /* 已安装卡片：标题区可收缩、徽标固定靠右，展开箭头单独占位 */
 .module-head-card { flex-wrap: nowrap; gap: 10px; }
 .module-title {

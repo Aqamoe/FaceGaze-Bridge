@@ -248,19 +248,23 @@ if(WIN32)
     install(FILES
         "${CMAKE_SOURCE_DIR}/samples/native-sine/native_sine.cpp"
         "${CMAKE_SOURCE_DIR}/samples/native-sine/fgb-native.json"
+        "${CMAKE_SOURCE_DIR}/samples/native-sine/icon.svg"
         "${CMAKE_SOURCE_DIR}/samples/native-sine/CMakeLists.txt"
         DESTINATION sdk/sample-native-sine)
     install(FILES
         "${CMAKE_SOURCE_DIR}/samples/native-face/native_face.cpp"
         "${CMAKE_SOURCE_DIR}/samples/native-face/fgb-native.json"
+        "${CMAKE_SOURCE_DIR}/samples/native-face/icon.svg"
         DESTINATION sdk/sample-native-face)
     install(FILES
         "${CMAKE_SOURCE_DIR}/samples/native-gaze/native_gaze.cpp"
         "${CMAKE_SOURCE_DIR}/samples/native-gaze/fgb-native.json"
+        "${CMAKE_SOURCE_DIR}/samples/native-gaze/icon.svg"
         DESTINATION sdk/sample-native-gaze)
     install(FILES
         "${CMAKE_SOURCE_DIR}/samples/native-openness/native_openness.cpp"
         "${CMAKE_SOURCE_DIR}/samples/native-openness/fgb-native.json"
+        "${CMAKE_SOURCE_DIR}/samples/native-openness/icon.svg"
         DESTINATION sdk/sample-native-openness)
     # Unity 示例包：UPM package.json + Runtime/*.cs，可直接 Add package from disk
     install(DIRECTORY "${CMAKE_SOURCE_DIR}/samples/unity-face-gaze/"

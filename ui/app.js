@@ -1187,6 +1187,25 @@ function render_modules() {
   render_importable((data && data.importable) || []);
 }
 
+// 模块图标：清单带 ModuleIcon/icon.*（或 DLL 内嵌图标）时由 /module-icon/<id> 提供。
+// 没有图标才渲染首字母头像；有图时不画底色，半透明 PNG 才能直接融进卡片背景。
+function module_icon(item, label) {
+  const wrap = el("span", "module-icon");
+  const text = String(label || (item && (item.name || item.id)) || "?").trim();
+  wrap.append(el("span", "module-icon-fallback", (text[0] || "?").toUpperCase()));
+  if (item && item.icon) {
+    const img = document.createElement("img");
+    img.alt = "";
+    img.decoding = "async";
+    img.src = `/module-icon/${encodeURIComponent(item.id)}` +
+      (item.version ? `?v=${encodeURIComponent(item.version)}` : "");
+    img.addEventListener("load", () => wrap.classList.add("has-icon"));
+    img.addEventListener("error", () => img.remove());
+    wrap.append(img);
+  }
+  return wrap;
+}
+
 function library_chevron() {
   const chevron = el("span", "chevron");
   chevron.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>';
@@ -1288,6 +1307,7 @@ function installed_card(item) {
   }
 
   const head = el("div", "module-head module-head-card");
+  head.append(module_icon(item));
   const title = el("div", "module-title");
   title.append(el("strong", "", item.name || item.id));
   if (item.version) {
@@ -1532,6 +1552,7 @@ function library_card(item, installed, status) {
   }
 
   const head = el("div", "module-head");
+  head.append(module_icon(installed || item, item.name));
   head.append(el("strong", "", item.name || item.id));
   head.append(el("span", "module-ver", `v${item.version || "?"}`));
   if (item.author) {
@@ -1651,6 +1672,7 @@ function render_native_library() {
       card.classList.add("expanded");
     }
     const head = el("div", "module-head");
+    head.append(module_icon(item));
     head.append(el("strong", "", item.name || item.id));
     if (item.version) {
       head.append(el("span", "module-ver", `v${item.version}`));

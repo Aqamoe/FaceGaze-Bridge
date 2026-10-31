@@ -40,6 +40,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 
 namespace fgb::web {
 
@@ -145,6 +146,8 @@ private:
     bool handle_http(const net::ws::HttpHead& head, std::string& body,
                      std::string& content_type);
     bool serve_static(std::string_view path, std::string& body, std::string& content_type) const;
+    bool serve_module_icon(std::string_view encoded_id, std::string& body,
+                           std::string& content_type) const;
     void flush_logs();
     void refresh_catalog();
     void poll_picker();
@@ -193,6 +196,14 @@ private:
     std::mutex update_mutex_;
     std::string update_result_;
     bool update_result_pending_ = false;
+
+    // DLL 内嵌图标提取一次就够：按 DLL 路径/大小/修改时间做戳，模块升级后自动失效
+    struct IconCacheEntry {
+        std::string stamp;
+        std::string content_type;
+        std::string bytes;
+    };
+    mutable std::unordered_map<std::string, IconCacheEntry> icon_cache_;
 
     std::unique_ptr<vrcft::ModuleLibrary> library_;
     // OpenVR 初始化会阻塞，放在后台线程；命令结果由 pump() 广播
