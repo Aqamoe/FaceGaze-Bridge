@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 
 namespace fgb::update {
@@ -62,6 +63,9 @@ struct Snapshot {
 // 暂存记录也放这里：用户下载完直接关程序，下次启动不必重下 100 MB。
 struct Preferences {
     std::int64_t next_check_at = 0;
+    // 上次检查时跑的版本。装完新版后节流必须作废：这份文件跨版本沿用，
+    // 不清的话"装完当天再也不会自动检查"（1.0.5 实测踩到）。
+    std::string checked_version;
     std::string skipped_version;
     bool auto_check = true;
     std::string staged_version;
@@ -69,6 +73,10 @@ struct Preferences {
     std::string staged_sha256;
     std::int64_t staged_size = 0;
 };
+
+// 版本变了就当"没查过"（返回 0）；同版本沿用原来的时间点。
+std::int64_t next_check_after_upgrade(const Preferences& prefs,
+                                      std::string_view current) noexcept;
 
 bool load_preferences(const std::filesystem::path& path, Preferences& out);
 bool save_preferences(const std::filesystem::path& path, const Preferences& prefs);
@@ -117,6 +125,8 @@ private:
                            const std::string& expected, std::string& error);
     void publish(Snapshot next);
     void publish_error(Stage stage, std::string error);
+    // 丢掉暂存记录（装完/已有更新版本时）：内存、update.ini、磁盘上的安装包一起清
+    void clear_staged(bool remove_file);
 
     std::filesystem::path data_dir_;
     std::filesystem::path exe_dir_;

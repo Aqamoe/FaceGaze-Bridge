@@ -95,8 +95,13 @@ class ReleaseHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
 
+# 本机回环不要走系统代理：开发机上常设 http_proxy，urllib 会把 127.0.0.1 也发过去，
+# 现象是 502 Bad Gateway，看着像引擎挂了（这个探针踩过一次）。
+LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def http_json(path):
-    with urllib.request.urlopen(f"http://127.0.0.1:{PANEL_PORT}{path}", timeout=5) as response:
+    with LOCAL_OPENER.open(f"http://127.0.0.1:{PANEL_PORT}{path}", timeout=5) as response:
         return json.loads(response.read())
 
 
@@ -212,7 +217,7 @@ class CdpClient:
         target = None
         while time.time() < deadline:
             try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{port}/json", timeout=3) as response:
+                with LOCAL_OPENER.open(f"http://127.0.0.1:{port}/json", timeout=3) as response:
                     targets = json.loads(response.read())
                 for item in targets:
                     if item.get("type") == "page" and item.get("webSocketDebuggerUrl"):
@@ -358,7 +363,7 @@ def ui_check(release_url, check):
     snapshot = {}
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/update", timeout=2) as response:
+            with LOCAL_OPENER.open(f"http://127.0.0.1:{port}/api/update", timeout=2) as response:
                 snapshot = json.loads(response.read())
             break
         except OSError:

@@ -5,6 +5,7 @@
 
 #include "test_framework.hpp"
 
+#include <cstdio>
 #include <filesystem>
 #include <string>
 
@@ -155,6 +156,106 @@ FGB_TEST(update_preferences_roundtrip) {
     FGB_CHECK(!update::load_preferences(dir / "nope.ini", missing));
     FGB_CHECK(missing.next_check_at == 0);
     FGB_CHECK(missing.auto_check == true); // 默认开着自动检查
+
+    std::filesystem::remove_all(dir, ec);
+}
+
+FGB_TEST(update_next_check_after_upgrade) {
+    update::Preferences prefs;
+    prefs.next_check_at   = 1'800'000'000;
+    prefs.checked_version = "1.0.4";
+    // 版本变了：节流作废，启动就查
+    FGB_CHECK(update::next_check_after_upgrade(prefs, "1.0.5") == 0);
+    // 同版本：沿用原来的窗口
+    prefs.checked_version = "1.0.5";
+    FGB_CHECK(update::next_check_after_upgrade(prefs, "1.0.5") == prefs.next_check_at);
+    // 老文件里没有 checked_version：当作没查过
+    prefs.checked_version.clear();
+    FGB_CHECK(update::next_check_after_upgrade(prefs, "1.0.5") == 0);
+}
+
+// 1.0.5 实测踩到的坑：安装器不动 update.ini，装完新版本后那条 staged 记录还在，
+// 界面就一直显示"已下载，可以安装"。构造时必须把它判成过期并清掉。
+FGB_TEST(update_installed_staged_is_dropped) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "fgb-test-update-installed";
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+
+    const std::filesystem::path setup = dir / "FaceGazeBridge-Setup-1.0.5.exe";
+    {
+        std::FILE* file = std::fopen(setup.string().c_str(), "wb");
+        FGB_CHECK(file != nullptr);
+        if (file != nullptr) {
+            std::fputs("dummy", file);
+            std::fclose(file);
+        }
+    }
+
+    update::Preferences prefs;
+    prefs.next_check_at   = 1'800'000'000; // 旧版本写下的 24h 窗口
+    prefs.checked_version = "1.0.4";
+    prefs.staged_version  = "1.0.5";
+    prefs.staged_path     = setup.string();
+    prefs.staged_sha256   = std::string(64, 'd');
+    prefs.staged_size     = 5;
+    FGB_CHECK(update::save_preferences(dir / "update.ini", prefs));
+
+    {
+        update::Manager manager(dir, dir, "1.0.5");
+        const update::Snapshot snap = manager.snapshot();
+        FGB_CHECK(snap.stage == update::Stage::idle);
+        FGB_CHECK(!snap.staged.valid);
+        FGB_CHECK(snap.latest.empty()); // 不再拿 staged 版本冒充"最新版本"
+    }
+
+    // 安装包与记录都该没了，否则下次启动又会恢复
+    FGB_CHECK(!std::filesystem::exists(setup));
+    update::Preferences reloaded;
+    FGB_CHECK(update::load_preferences(dir / "update.ini", reloaded));
+    FGB_CHECK(reloaded.staged_version.empty());
+    FGB_CHECK(reloaded.staged_path.empty());
+    FGB_CHECK(reloaded.next_check_at == 0); // 跨版本 → 立刻能查
+
+    std::filesystem::remove_all(dir, ec);
+}
+
+// 反过来：比当前版本新的包必须留着，用户"下载完关程序、第二天再装"是正常路径
+FGB_TEST(update_newer_staged_is_kept) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "fgb-test-update-staged-newer";
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+
+    const std::filesystem::path setup = dir / "FaceGazeBridge-Setup-1.0.6.exe";
+    {
+        std::FILE* file = std::fopen(setup.string().c_str(), "wb");
+        FGB_CHECK(file != nullptr);
+        if (file != nullptr) {
+            std::fputs("dummy", file);
+            std::fclose(file);
+        }
+    }
+
+    update::Preferences prefs;
+    prefs.checked_version = "1.0.5";
+    prefs.staged_version  = "1.0.6";
+    prefs.staged_path     = setup.string();
+    prefs.staged_sha256   = std::string(64, 'e');
+    prefs.staged_size     = 5;
+    FGB_CHECK(update::save_preferences(dir / "update.ini", prefs));
+
+    {
+        update::Manager manager(dir, dir, "1.0.5");
+        const update::Snapshot snap = manager.snapshot();
+        FGB_CHECK(snap.stage == update::Stage::ready);
+        FGB_CHECK(snap.staged.valid);
+        FGB_CHECK(snap.staged.version == "1.0.6");
+        FGB_CHECK(snap.available);
+    }
+    FGB_CHECK(std::filesystem::exists(setup));
 
     std::filesystem::remove_all(dir, ec);
 }

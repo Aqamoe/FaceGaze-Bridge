@@ -140,6 +140,8 @@ bool load_preferences(const std::filesystem::path& path, Preferences& out) {
         opened = true;
         if (entry.key == "next_check_at") {
             out.next_check_at = std::strtoll(entry.value.c_str(), nullptr, 10);
+        } else if (entry.key == "checked_version") {
+            out.checked_version = entry.value;
         } else if (entry.key == "skipped_version") {
             out.skipped_version = entry.value;
         } else if (entry.key == "auto_check") {
@@ -169,6 +171,7 @@ bool save_preferences(const std::filesystem::path& path, const Preferences& pref
     writer.comment("FaceGaze Bridge 更新状态（界面/引擎自动维护，手改一般没有意义）");
     writer.section("update");
     writer.kv("next_check_at", std::to_string(prefs.next_check_at));
+    writer.kv("checked_version", prefs.checked_version);
     writer.kv("skipped_version", prefs.skipped_version);
     writer.kv_bool("auto_check", prefs.auto_check);
     writer.kv("staged_version", prefs.staged_version);
@@ -188,6 +191,16 @@ std::int64_t next_check_time(std::int64_t now, bool succeeded, std::int64_t jitt
     constexpr std::int64_t kDay = 24 * 3600;
     const std::int64_t jitter  = std::clamp<std::int64_t>(jitter_seconds, 0, 4 * 3600);
     return now + kDay + jitter;
+}
+
+std::int64_t next_check_after_upgrade(const Preferences& prefs,
+                                     std::string_view current) noexcept {
+    // update.ini 是跨版本沿用的：里面记的节流窗口属于上一个版本。
+    // 装完新版本立刻再查一次是正确的（也正是用户预期的"启动就检查"）。
+    if (prefs.checked_version != current) {
+        return 0;
+    }
+    return prefs.next_check_at;
 }
 
 bool installed_copy(const std::filesystem::path& exe_dir, std::filesystem::path* install_dir) {
@@ -244,9 +257,25 @@ Manager::Manager(std::filesystem::path data_dir, std::filesystem::path exe_dir,
         Preferences stored;
         if (load_preferences(prefs_path_, stored)) {
             prefs_ = stored;
-            // 上次已经下完的包：只要文件还在、大小对得上，就直接恢复成 ready，
-            // 不必重下（用户很可能是"下载完关了程序，第二天再装"）
-            if (!prefs_.staged_path.empty() && prefs_.staged_size > 0) {
+            // 节流窗口属于上一个版本，装完新版要立刻能查（用户预期就是"启动自检"）
+            prefs_.next_check_at = next_check_after_upgrade(prefs_, current_version_);
+
+            // "忽略此版本"只对还没装上的版本有意义，装上了就该失效。
+            // 放在 staged 清理之前：clear_staged 会顺手把 prefs 写回去，
+            // 顺序反了就会把这条漏在文件里（内存对、盘上错）。
+            if (!prefs_.skipped_version.empty() &&
+                compare_versions(prefs_.skipped_version, current_version_) <= 0) {
+                prefs_.skipped_version.clear();
+            }
+
+            // 安装器不会动 update.ini：已经装上的那一版如果还留着 staged 记录，
+            // 界面会一直显示"已下载，可以安装"（1.0.5 实测踩到）。
+            if (!prefs_.staged_version.empty() &&
+                compare_versions(prefs_.staged_version, current_version_) <= 0) {
+                clear_staged(true);
+            } else if (!prefs_.staged_path.empty() && prefs_.staged_size > 0) {
+                // 上次已经下完、且比当前版本新：只要文件还在、大小对得上，
+                // 就恢复成 ready，不必重下（用户很可能是"下载完关了程序，第二天再装"）
                 const std::filesystem::path staged{utf8_to_wide(prefs_.staged_path)};
                 std::error_code ec;
                 const auto size = std::filesystem::file_size(staged, ec);
@@ -261,6 +290,13 @@ Manager::Manager(std::filesystem::path data_dir, std::filesystem::path exe_dir,
                     snap_.tag            = "v" + prefs_.staged_version;
                     snap_.latest         = snap_.tag;
                 }
+            }
+
+            // 上面可能只是把节流/忽略记录改了内存值：立刻落盘，免得磁盘上留着
+            // 一份和实际行为不一致的 update.ini（排障时最误导人）
+            if (prefs_.next_check_at != stored.next_check_at ||
+                prefs_.skipped_version != stored.skipped_version) {
+                save_preferences(prefs_path_, prefs_);
             }
         }
     }
@@ -303,6 +339,31 @@ void Manager::publish_error(Stage stage, std::string error) {
     snap_.stage = stage;
     snap_.error = std::move(error);
     changed_    = true;
+}
+
+void Manager::clear_staged(bool remove_file) {
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        path = snap_.staged.path.empty() ? prefs_.staged_path : snap_.staged.path;
+        snap_.staged = Staged{};
+        if (snap_.stage == Stage::ready) {
+            snap_.stage = Stage::idle;
+        }
+        prefs_.staged_version.clear();
+        prefs_.staged_path.clear();
+        prefs_.staged_sha256.clear();
+        prefs_.staged_size = 0;
+        if (!prefs_path_.empty()) {
+            save_preferences(prefs_path_, prefs_);
+        }
+        changed_ = true;
+    }
+    // 文件删不掉不算错：磁盘上的残留最多占几十 MB，下次下载会覆盖它
+    if (remove_file && !path.empty()) {
+        std::error_code ec;
+        std::filesystem::remove(std::filesystem::path{utf8_to_wide(path)}, ec);
+    }
 }
 
 void Manager::start_check(std::string url, bool manual) {
@@ -444,7 +505,10 @@ void Manager::worker(std::string url, bool manual) {
     if (!ok) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            prefs_.next_check_at = next_check_time(now, false, 0);
+            // 失败也要记版本：否则下一次启动会因为"版本不一致"把 6 小时退避冲掉，
+            // 变成每次开程序都立刻重试一次失败的网络请求。
+            prefs_.checked_version = current_version_;
+            prefs_.next_check_at   = next_check_time(now, false, 0);
             save_preferences(prefs_path_, prefs_);
         }
         publish_error(Stage::failed, error);
@@ -456,7 +520,8 @@ void Manager::worker(std::string url, bool manual) {
     const bool newer = compare_versions(info.tag, current_version_) > 0;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        prefs_.next_check_at = next_check_time(now, true, jitter);
+        prefs_.checked_version = current_version_;
+        prefs_.next_check_at   = next_check_time(now, true, jitter);
         save_preferences(prefs_path_, prefs_);
     }
 
@@ -475,6 +540,9 @@ void Manager::worker(std::string url, bool manual) {
         next.stage  = Stage::idle;
         next.staged = Staged{};
         publish(next);
+        // 顺手把 update.ini 里的 staged 记录和残留安装包清掉：只清内存的话，
+        // 下次启动又会从磁盘恢复出"可以安装"（1.0.5 实测踩到的就是这一条）
+        clear_staged(true);
         FGB_INFO(kTag, "更新检查：已是最新（%s）", info.tag.c_str());
         running_.store(false, std::memory_order_release);
         return;

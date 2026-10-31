@@ -102,7 +102,7 @@ cmake --preset windows-vs2022
 # 每次改完代码就增量构建 Debug：产物是"用户能直接跑"的测试程序
 cmake --build --preset windows-vs2022 --parallel
 
-# 单测（当前 218 个用例）：直接跑 exe，或走 ctest
+# 单测（当前 246 个用例）：直接跑 exe，或走 ctest
 ./build/windows-vs2022/bin/Debug/fgb-tests.exe
 ctest --test-dir build/windows-vs2022 -C Debug --output-on-failure
 ```
@@ -294,6 +294,8 @@ gh run watch <id> --exit-status
 | 模块 sandbox socket | 模块报 `SocketException (10048)` | 上一个模块进程/VRCFT 本体占着端口；先关掉再试 |
 | 后台进程 | 命令返回后进程被杀 | 启动→验证→收尾写在**同一条命令**里 |
 | 自动更新"点了没反应" | 安装器跑到一半消失，日志里没有任何失败 | 引擎/外壳在 `KILL_ON_JOB_CLOSE` 的 Job 里，子进程会被连带杀掉。安装器必须 `CREATE_BREAKAWAY_FROM_JOB`，且 Job 要带 `JOB_OBJECT_LIMIT_BREAKAWAY_OK`（[ADR-0036](docs/adr/0036-auto-update.md)）。这是唯一的豁免口，别把它当成"顺手放开 Job" |
+| 装完新版还提示"可以安装" / 装完当天不自动检查 | `update.ini` 里的 staged 记录与 `next_check_at` 是跨版本沿用的，安装器不会清 | 构造 `update::Manager` 时必须作废：`staged_version <= 当前版本` 就丢弃（连文件一起删），`checked_version != 当前版本` 就把 `next_check_at` 清零（[ADR-0036](docs/adr/0036-auto-update.md) §7） |
+| 本机探针全挂、`/api/*` 返回 502 | 开发机设了 `http_proxy`，Python 的 urllib 把 `127.0.0.1` 也发进代理 | 探针里用 `build_opener(ProxyHandler({}))`，或跑之前 `no_proxy=127.0.0.1,localhost`。引擎自己的 `http_get` 本来就会对本机地址绕过代理 |
 | 更新探针拿到 `eligible=false` | 页面能连上、提示条也在，但状态是"不是安装器装的" | 探针的第二台引擎没绑上 VMC 端口（默认 39539 被前一台占着）就退出了，外壳又拉起一台**不带** `--update-assume-installed` 的引擎。给探针引擎单独 `--vmc-port` |
 | 端口探测 | 首次启动要多等 2–3 s | 有的机器（防火墙/安全软件）对未监听端口的 SYN 静默丢弃，逐个 `/healthz` 会等满超时。先用 bind 判断有没有人监听，只对有人听的端口做健康检查 |
 | 截图偏移/尺寸不对 | 截出来的窗口错位 | PowerShell 先 `SetProcessDpiAwarenessContext(-4)` 再量窗口 |
