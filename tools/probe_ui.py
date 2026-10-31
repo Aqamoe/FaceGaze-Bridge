@@ -265,6 +265,8 @@ def main():
         "  return JSON.stringify({"
         "    rows: rows.length,"
         "    expected: state.status && state.status.modules ? state.status.modules.length : 0,"
+        "    expected_names: state.status && state.status.modules"
+        "      ? state.status.modules.map(m => m.name) : [],"
         "    names: rows.map(row => row.querySelector('.running-name').textContent),"
         "    chips: rows.map(row => row.querySelector('.chip').textContent)"
         "  });"
@@ -735,6 +737,9 @@ def main():
         ok = False
     if running.get("rows") != running.get("expected"):
         print("FAIL 运行实例列表与 status.modules 不一致")
+        ok = False
+    elif running.get("names") != running.get("expected_names"):
+        print(f"FAIL 运行实例名字和 status.modules 对不上：{running}")
         ok = False
     if roles.get("selects") != 4 or roles.get("roles") != ["expression", "eyes", "gaze", "head"]:
         print(f"FAIL 角色来源没有渲染完整的四个下拉：{roles}")

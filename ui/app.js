@@ -2052,26 +2052,29 @@ function render_running_modules(modules) {
 
   if (!running.length) {
     list.textContent = "";
-    list.dataset.count = "0";
+    delete list.dataset.signature;
     state.running_rows = [];
     list.append(el("div", "muted", t("modules.running.empty")));
     return;
   }
 
-  if (list.dataset.count !== String(running.length)) {
+  // 按实例身份而不是行数判断是否重建：删掉一个再换成另一个时行数不变，
+  // 只看数量会把旧实例名留在界面上，chip 却已经来自新实例。
+  const signature = running.map((item) => `${item.name}\u0000${item.module_id}`).join("\u0001");
+  if (list.dataset.signature !== signature) {
+    list.dataset.signature = signature;
     list.textContent = "";
-    list.dataset.count = String(running.length);
-    state.running_rows = running.map((item) => {
+    state.running_rows = running.map(() => {
       const row = el("div", "running-row");
-      const name = el("b", "running-name", item.name);
-      const module_name = el("span", "running-module", item.module_name || item.module_id);
+      const name = el("b", "running-name", "");
+      const module_name = el("span", "running-module", "");
       const chip = el("span", "chip", "");
       row.append(name, module_name, chip);
       list.append(row);
 
       const extra = el("div", "running-extra");
       list.append(extra);
-      return { row, chip, extra };
+      return { row, name, module_name, chip, extra };
     });
   }
 
@@ -2080,6 +2083,8 @@ function render_running_modules(modules) {
     if (!ui) {
       return;
     }
+    ui.name.textContent = item.name;
+    ui.module_name.textContent = item.module_name || item.module_id;
     const chip_state = format_state(item.state);
     ui.chip.className = `chip ${chip_state.cls}`.trim();
     ui.chip.textContent = chip_state.text;
