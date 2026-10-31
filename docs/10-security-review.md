@@ -64,6 +64,11 @@
 ## 6. 网络下载与自动更新
 
 - VRCFT 模块库走 WinHTTP，下载后按 registry 给的 MD5 校验；
+- 下载与更新走用户的**系统代理**（IE/WinINET 的 `ProxyEnable`/`ProxyServer`/`AutoConfigURL`，
+  PAC 按目标 URL 现算，[ADR-0039](adr/0039-system-proxy.md)）：WinHTTP 的默认代理与它不通，
+  不读就会出现"开着代理也直连"。注意这也意味着流量信任边界跟着系统里配的代理走——
+  改这两处注册表就能把下载导向第三方代理，所以校验只认 `https` + `size`/`sha256`，
+  不依赖传输路径是否可信；
 - **原生模块库（fgb-registry，schema v2）**：`schemaVersion != 2` 整体拒绝；
   只接受 `https` 下载地址（`127.0.0.1`/`localhost` 供探针联调）；安装前必须
   ① 字节数与索引 `size` 一致、② `sha256`（BCrypt）一致、③ 解压后核对包内

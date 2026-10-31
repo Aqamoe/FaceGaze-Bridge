@@ -150,7 +150,7 @@ bool check_latest(std::string_view api_url, ReleaseInfo& out, std::string& error
         return false;
     }
     std::string body;
-    // 本机地址（探针）收紧超时并绕过系统代理；公网地址走默认代理设置
+    // 本机地址（探针）收紧超时并绕过代理；公网地址按系统代理（ADR-0039）
     const bool local = api_url.find("127.0.0.1") != std::string_view::npos ||
                        api_url.find("localhost") != std::string_view::npos;
     if (!net::http_get(std::string{api_url}, body, error, net::kDefaultTextLimit,

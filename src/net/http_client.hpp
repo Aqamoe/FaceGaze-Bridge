@@ -4,6 +4,9 @@
 // 不做认证、不做分块上传；重定向交给 WinHTTP 自己处理（GitHub release 会 302 到
 // objects.githubusercontent.com）。
 //
+// 公网请求走用户的系统代理（`net/proxy_config.hpp`，ADR-0039）：WinHTTP 的默认代理
+// 与 Clash 等开的 IE 代理互不相通，不显式读过来就会"开着代理也下载失败"。
+//
 // 不引 libcurl：发布包不想多一个 DLL，也不需要它那套多协议/异步能力。
 #pragma once
 

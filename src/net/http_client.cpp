@@ -1,5 +1,7 @@
 #include "net/http_client.hpp"
 
+#include "net/proxy_config.hpp"
+
 #include <windows.h>
 #include <winhttp.h>
 
@@ -59,8 +61,48 @@ struct Request {
     Handle session;
     Handle connection;
     Handle request;
+    // PAC 现算出来的代理：WinHttpSetOption 之后 session 还要用这些字符串
+    std::wstring proxy;
+    std::wstring bypass;
     std::string error;
 };
+
+// "自动配置脚本"没法预先翻译成 host:port，只能拿具体 URL 现算。
+// 解析失败（脚本拉不到、语法错）就保持原有设置——不能因为 PAC 挂了把本来通的请求弄断。
+void apply_pac(Request& request, const std::string& pac_url, const std::string& target) {
+    const std::wstring pac = widen(pac_url);
+    const std::wstring url = widen(target);
+
+    WINHTTP_AUTOPROXY_OPTIONS options{};
+    options.dwFlags           = WINHTTP_AUTOPROXY_CONFIG_URL;
+    options.lpszAutoConfigUrl = pac.c_str();
+
+    WINHTTP_PROXY_INFO info{};
+    if (::WinHttpGetProxyForUrl(request.session, url.c_str(), &options, &info) == FALSE) {
+        return;
+    }
+
+    WINHTTP_PROXY_INFO apply{};
+    if (info.dwAccessType == WINHTTP_ACCESS_TYPE_NAMED_PROXY && info.lpszProxy != nullptr) {
+        request.proxy.assign(info.lpszProxy);
+        if (info.lpszProxyBypass != nullptr) {
+            request.bypass.assign(info.lpszProxyBypass);
+        }
+        apply.dwAccessType    = WINHTTP_ACCESS_TYPE_NAMED_PROXY;
+        apply.lpszProxy       = request.proxy.data();
+        apply.lpszProxyBypass = request.bypass.empty() ? nullptr : request.bypass.data();
+    } else {
+        apply.dwAccessType = WINHTTP_ACCESS_TYPE_NO_PROXY; // 脚本明确要求直连
+    }
+    ::WinHttpSetOption(request.session, WINHTTP_OPTION_PROXY, &apply, sizeof(apply));
+
+    if (info.lpszProxy != nullptr) {
+        ::GlobalFree(info.lpszProxy);
+    }
+    if (info.lpszProxyBypass != nullptr) {
+        ::GlobalFree(info.lpszProxyBypass);
+    }
+}
 
 bool open_request(const std::string& url, Request& out, int timeout_ms = 0) {
     const std::wstring wide = widen(url);
@@ -81,14 +123,35 @@ bool open_request(const std::string& url, Request& out, int timeout_ms = 0) {
         target.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
     }
 
-    // 本机服务显式绕代理：127.0.0.1 不该经过用户配置的 HTTP 代理
-    const DWORD access_type =
-        timeout_ms > 0 ? WINHTTP_ACCESS_TYPE_NO_PROXY : WINHTTP_ACCESS_TYPE_DEFAULT_PROXY;
-    out.session = Handle{::WinHttpOpen(L"FaceGazeBridge/0.1", access_type, WINHTTP_NO_PROXY_NAME,
-                                       WINHTTP_NO_PROXY_BYPASS, 0)};
+    // 本机服务显式绕代理：127.0.0.1 不该经过用户配置的 HTTP 代理。
+    // 公网请求则必须自己读"系统代理"——WinHTTP 的默认代理只认 netsh winhttp 那份配置，
+    // Clash 等开关写的 IE 代理它看不到，症状就是"开着代理也下载失败"。
+    const bool local_only = timeout_ms > 0;
+    const SystemProxy sys = local_only ? SystemProxy{} : system_proxy();
+    std::wstring proxy;
+    std::wstring bypass;
+    DWORD access_type          = WINHTTP_ACCESS_TYPE_DEFAULT_PROXY;
+    const wchar_t* proxy_name  = WINHTTP_NO_PROXY_NAME;
+    const wchar_t* bypass_name = WINHTTP_NO_PROXY_BYPASS;
+    if (local_only) {
+        access_type = WINHTTP_ACCESS_TYPE_NO_PROXY;
+    } else if (!sys.proxy.empty()) {
+        proxy       = widen(sys.proxy);
+        bypass      = widen(sys.bypass);
+        access_type = WINHTTP_ACCESS_TYPE_NAMED_PROXY;
+        proxy_name  = proxy.c_str();
+        if (!bypass.empty()) {
+            bypass_name = bypass.c_str();
+        }
+    }
+    out.session = Handle{::WinHttpOpen(L"FaceGazeBridge/0.1", access_type, proxy_name, bypass_name,
+                                       0)};
     if (out.session.value == nullptr) {
         out.error = last_error_text("HTTP 会话创建失败");
         return false;
+    }
+    if (!local_only && !sys.pac_url.empty()) {
+        apply_pac(out, sys.pac_url, url);
     }
     if (timeout_ms > 0) {
         ::WinHttpSetTimeouts(out.session, timeout_ms, timeout_ms, timeout_ms, timeout_ms);

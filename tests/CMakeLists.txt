@@ -10,6 +10,7 @@ add_executable(fgb-tests
     test_stream_out.cpp
     test_sinks_stress.cpp
     test_update.cpp
+    test_proxy.cpp
     test_vrcft_protocol.cpp
     test_v1_params.cpp
     test_capture.cpp

@@ -29,6 +29,7 @@ add_library(fgb_net STATIC
     net/tcp_listener.cpp
     net/ws_codec.cpp
     net/ws_server.cpp
+    net/proxy_config.cpp
     net/http_client.cpp
     net/update_check.cpp
     net/update_manager.cpp

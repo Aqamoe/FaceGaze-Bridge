@@ -310,6 +310,7 @@ gh run watch <id> --exit-status
 | 删除后「运行中的实例 / 输入源」还在 | 只 `stop_source` 不摘源 | 合并器槽位与 `ctx_.running_modules` / `source_names` 仍留着它。删除成功后必须 `Engine::remove_source`（停止 + 从合并器、源列表摘除），`IpcServer::forget_module_instances()` 已封装 |
 | 模块装完仍显示"安装" | 包内没有 module.json，ID 退化成 DLL 名 | 模块库安装必须传 `ModuleMetadataOverride` 兜底；版本比较用语义版本，不要用字符串相等 |
 | 模块库刷新超时 | WinHTTP 12002 | registry.vrcft.io 偶发卡 20 s；库内部重试一次，失败时保留缓存 |
+| 装模块/更新包全失败，开代理也没用 | 日志里 `12152` 与 `12002` 交替；浏览器能下载 | WinHTTP 默认代理只认 `netsh winhttp`，看不到 Clash 开的 IE 系统代理。公网请求统一走 `src/net/proxy_config.*`（`ProxyEnable`/`ProxyServer`/`AutoConfigURL`，PAC 现算，见 ADR-0039）；只填了 `socks=` 等于没代理（WinHTTP 不支持 SOCKS） |
 | 原生模块库报「结构版本是 N」 | fgb-registry 升了 `schemaVersion` | 宿主只认 2，**不要猜着解析**；升程序或改回 2，别在 UI 里吞掉这条错误 |
 | 原生模块装不上「ModuleId 不一致」 | 包内 `fgb-native.json` 与索引条目对不上 | 索引侧（`modules/*.json`）与包内清单必须同源；宿主不做"以谁为准"的猜测 |
 | 原生模块「SHA-256 不一致」 | 打完包又改/重压了 zip，或索引还是旧哈希 | 重新压缩会换哈希；索引里的 `sha256` 必须对应最终资产 |
