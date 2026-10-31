@@ -690,6 +690,25 @@ source → sanitize → PreviewTap(raw) → Calibration → OneEuro → Snapshot
 **边界**：它是校准的示波器，不是头像预览器。不导入 VRChat 头像、不承诺逐顶点一致、
 v1 不做照片级写实。完整取舍见 [ADR-0021](adr/0021-calibration-workbench-3d-preview.md)。
 
+### 10.5 形状映射：端点 + 曲线
+
+每个形状的映射拆成两件事，刻意不合并：
+
+```text
+t   = clamp01((raw - lo) / (hi - lo))      端点：哪里算 0、哪里算 1
+out = curve(t)                              曲线：中间这段怎么分配
+```
+
+- `curve` 两端锚定 `(0,0) → (1,1)`，永远不让"最高只到 0.8"这种状态出现；
+- 预设是五个闭式函数（线性 / 缓入 / 缓出 / smoothstep / 阶跃），自定义是**单调三次
+  Hermite**（≤8 点）——折线会有折角、普通样条会过冲，单调保形版本两样都避开，
+  求值只要 4 次乘加，120 Hz 热路径可以直接跑；
+- 曲线**不内联进 ShapeRange**：`ShapeRange` 只存 `curve`（1 字节槽号）和 `curve_param`，
+  8 条自定义曲线放在 profile 的 `custom_curves` 表里共享。这样档案仍然约 2 KB，
+  `CalibrationApplier` 的 seqlock"按值拷贝"前提成立（若内联会涨到 7 KB 以上）。
+
+完整取舍见 [ADR-0037](adr/0037-calibration-curve-dual-slider-and-labels.md)。
+
 ---
 
 ## 11. 配置与状态
