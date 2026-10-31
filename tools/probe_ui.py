@@ -556,6 +556,9 @@ def main():
         "  return JSON.stringify({"
         "    active: document.querySelector('.page.active').dataset.page,"
         "    rows: document.querySelectorAll('.cal-row').length,"
+        "    cards: state.cal_rows ? state.cal_rows.length : -1,"
+        "    covered: state.cal_rows"
+        "      ? state.cal_rows.reduce((n, r) => n + (r.names ? r.names.length : 1), 0) : -1,"
         "    expected: c.shapes ? c.shapes.length : -1,"
         "    path: c.path || '',"
         "    dirty: !!c.dirty,"
@@ -596,6 +599,10 @@ def main():
             "    numeric_only: (m.numeric_only || []).length,"
             "    none_rows: document.querySelectorAll('.cal-model-none').length,"
             "    mapped_rows: document.querySelectorAll('.cal-model-region').length,"
+            "    none_cards: (state.cal_rows || []).filter("
+            "      r => (r.names || [r.name]).every(n => face_regions(n).length === 0)).length,"
+            "    mapped_cards: (state.cal_rows || []).filter("
+            "      r => (r.names || [r.name]).some(n => face_regions(n).length > 0)).length,"
             "    fallback_regions: document.querySelectorAll('#cal-fallback [data-region]').length,"
             "    target_active: r ? [...r.target].filter(v => v > 0.01).length : -1,"
             "    canvas: [document.getElementById('cal-canvas').width,"
@@ -916,8 +923,13 @@ def main():
     if logs.get("active") != "logs" or logs.get("lines", 0) == 0:
         print("FAIL 日志页没有内容（新连接应补发最近日志）")
         ok = False
-    if cal_page.get("active") != "calibration" or cal_page.get("rows") != cal_page.get("expected"):
-        print("FAIL 校准页形状行数与 calibration.shapes 不一致")
+    # 校准行是"左右配对卡"：一行可能带两个形状，行数天然小于 shapes 数；
+    # 该对齐的是"卡片覆盖的形状总数"，不是行数本身
+    if cal_page.get("active") != "calibration" or cal_page.get("rows") != cal_page.get("cards"):
+        print("FAIL 校准页行数与 state.cal_rows 不一致")
+        ok = False
+    if cal_page.get("covered") != cal_page.get("expected"):
+        print("FAIL 校准页卡片没有覆盖全部 calibration.shapes（配对卡漏了形状）")
         ok = False
     if not cal_page.get("subscribed"):
         print("FAIL 进入校准页没有订阅预览")
@@ -956,11 +968,16 @@ def main():
     if face.get("morphs", 0) < 24 or face.get("regions", 0) < 20:
         print("FAIL 模型 morph/区域数量不足（检查 .fgbface 与 face_map）")
         ok = False
-    if face.get("numeric_only", 0) <= 0 or face.get("none_rows") != face.get("numeric_only"):
-        print("FAIL 「仅数值」标记数与 face_map.numeric_only 不一致")
+    # 「仅数值」是按卡片打标的：一对镜像形状里只要有一侧映射到模型，整张卡就显示区域，
+    # 所以形状级的 numeric_only 数量与页面标记数不该相等
+    if face.get("numeric_only", 0) <= 0 or face.get("none_rows") != face.get("none_cards"):
+        print("FAIL 「仅数值」标记数与没有模型映射的卡片数不一致")
+        ok = False
+    if face.get("mapped_rows") != face.get("mapped_cards"):
+        print("FAIL 显示模型区域的卡片数与页面对不上")
         ok = False
     if face.get("mapped_rows", 0) <= 0:
-        print("FAIL 没有任何形状显示模型区域")
+        print("FAIL 没有任何卡片显示模型区域")
         ok = False
     if face.get("fallback_regions", 0) <= 10:
         print("FAIL 2D 降级示意图缺少区域节点")
