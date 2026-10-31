@@ -9,6 +9,8 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -308,3 +310,165 @@ FGB_TEST(calibration_atomic_save_keeps_previous_as_backup) {
     // 临时文件不能留在磁盘上
     FGB_CHECK(!std::filesystem::exists(path + ".tmp"));
 }
+
+// ---------------------------------------------------------------------------
+// 映射曲线（ADR-0031）
+// ---------------------------------------------------------------------------
+
+FGB_TEST(curve_presets_hit_both_ends_and_stay_monotonic) {
+    // 端点必须固定在 0 和 1：否则会出现"最高只到 0.8"这种没法解释的状态
+    for (std::uint8_t id = 0; id < static_cast<std::uint8_t>(CurveKind::count); ++id) {
+        FGB_CHECK_NEAR(apply_curve(nullptr, 0, id, 0.5f, 0.0f), 0.0f, 1e-5f);
+        FGB_CHECK_NEAR(apply_curve(nullptr, 0, id, 0.5f, 1.0f), 1.0f, 1e-5f);
+
+        // 单调不减：曲线一旦让表情反向，VRM 里的脸就会抽
+        float prev = -1.0f;
+        for (int i = 0; i <= 40; ++i) {
+            const float t = static_cast<float>(i) / 40.0f;
+            const float v = apply_curve(nullptr, 0, id, 0.5f, t);
+            FGB_CHECK(v >= 0.0f);
+            FGB_CHECK(v <= 1.0f);
+            FGB_CHECK(v >= prev - 1e-5f);
+            prev = v;
+        }
+    }
+}
+
+FGB_TEST(curve_ease_in_holds_back_small_motion) {
+    // 缓入压住小动作、缓出放大轻动作：这是两条最容易用错的曲线，得钉住方向
+    const auto ease_in  = static_cast<std::uint8_t>(CurveKind::ease_in);
+    const auto ease_out = static_cast<std::uint8_t>(CurveKind::ease_out);
+    const float linear  = apply_curve(nullptr, 0, 0, 0.5f, 0.3f);
+    FGB_CHECK(apply_curve(nullptr, 0, ease_in, 0.5f, 0.3f) < linear);
+    FGB_CHECK(apply_curve(nullptr, 0, ease_out, 0.5f, 0.3f) > linear);
+}
+
+FGB_TEST(curve_step_uses_a_narrow_band_not_a_hard_jump) {
+    const auto step = static_cast<std::uint8_t>(CurveKind::step);
+    FGB_CHECK_NEAR(apply_curve(nullptr, 0, step, 0.5f, 0.40f), 0.0f, 1e-5f);
+    FGB_CHECK_NEAR(apply_curve(nullptr, 0, step, 0.5f, 0.60f), 1.0f, 1e-5f);
+    const float mid = apply_curve(nullptr, 0, step, 0.5f, 0.5f);
+    FGB_CHECK(mid > 0.0f);
+    FGB_CHECK(mid < 1.0f);
+}
+
+FGB_TEST(curve_custom_is_smooth_monotone_and_passes_through_points) {
+    CurveShape curve;
+    curve.count    = 3;
+    curve.points[0] = CurvePoint{0.0f, 0.0f};
+    curve.points[1] = CurvePoint{0.5f, 0.9f};
+    curve.points[2] = CurvePoint{1.0f, 1.0f};
+
+    const auto id = static_cast<std::uint8_t>(kCurveCustomBase);
+
+    // 穿过控制点：这是"拖到哪儿就是哪儿"的全部承诺
+    FGB_CHECK_NEAR(apply_curve(&curve, 1, id, 0.5f, 0.5f), 0.9f, 2e-3f);
+    FGB_CHECK_NEAR(apply_curve(&curve, 1, id, 0.5f, 0.0f), 0.0f, 1e-5f);
+    FGB_CHECK_NEAR(apply_curve(&curve, 1, id, 0.5f, 1.0f), 1.0f, 1e-5f);
+
+    // 单调、不过冲：面捕输出一旦局部反向，脸就会抽
+    float prev = -1.0f;
+    for (int i = 0; i <= 64; ++i) {
+        const float v = apply_curve(&curve, 1, id, 0.5f, static_cast<float>(i) / 64.0f);
+        FGB_CHECK(v >= prev - 1e-5f);
+        FGB_CHECK(v >= -1e-5f);
+        FGB_CHECK(v <= 1.0f + 1e-5f);
+        prev = v;
+    }
+
+    // 控制点两侧的斜率必须连续——折线在这里会从 1.8 直接掉到 0.2，
+    // 那正是"一段一段"的来源，也是这条曲线不做折线的原因
+    const float h = 1e-3f;
+    const float left  = (apply_curve(&curve, 1, id, 0.5f, 0.5f) -
+                         apply_curve(&curve, 1, id, 0.5f, 0.5f - h)) / h;
+    const float right = (apply_curve(&curve, 1, id, 0.5f, 0.5f + h) -
+                         apply_curve(&curve, 1, id, 0.5f, 0.5f)) / h;
+    FGB_CHECK(std::fabs(left - right) < 0.05f);
+
+    // 指向不存在的槽：退回线性，而不是把这个形状吞成 0
+    FGB_CHECK_NEAR(
+        apply_curve(&curve, 1, static_cast<std::uint8_t>(kCurveCustomBase + 3), 0.5f, 0.4f), 0.4f,
+        1e-5f);
+}
+
+FGB_TEST(curve_sanitize_anchors_ends_and_sorts_points) {
+    CurveShape curve;
+    curve.count    = 3;
+    curve.points[0] = CurvePoint{0.8f, 0.2f}; // 乱序
+    curve.points[1] = CurvePoint{0.1f, 0.7f};
+    curve.points[2] = CurvePoint{0.4f, 1.6f}; // 越界
+
+    sanitize_curve(curve);
+    FGB_CHECK(curve.count >= 2);
+    FGB_CHECK_NEAR(curve.points[0].x, 0.0f, 1e-5f);
+    FGB_CHECK_NEAR(curve.points[0].y, 0.0f, 1e-5f);
+    FGB_CHECK_NEAR(curve.points[curve.count - 1].x, 1.0f, 1e-5f);
+    FGB_CHECK_NEAR(curve.points[curve.count - 1].y, 1.0f, 1e-5f);
+    for (std::size_t i = 1; i < curve.count; ++i) {
+        FGB_CHECK(curve.points[i].x > curve.points[i - 1].x);
+        FGB_CHECK(curve.points[i].y >= 0.0f);
+        FGB_CHECK(curve.points[i].y <= 1.0f);
+    }
+}
+
+FGB_TEST(curve_profile_roundtrip_keeps_curves_and_custom_points) {
+    const std::string path = temp_path("curve_calib.ini");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    CalibrationProfile profile;
+    auto& jaw = profile.shapes[index_of(Shape::JawOpen)];
+    jaw.lo     = 0.1f;
+    jaw.hi     = 0.9f;
+    jaw.active = true;
+    jaw.curve  = static_cast<std::uint8_t>(CurveKind::smooth);
+
+    auto& smile = profile.shapes[index_of(Shape::MouthCornerPullLeft)];
+    smile.lo     = 0.05f;
+    smile.hi     = 0.85f;
+    smile.active = true;
+    smile.curve  = static_cast<std::uint8_t>(kCurveCustomBase + 1);
+
+    CurveShape custom;
+    custom.count    = 3;
+    custom.points[0] = CurvePoint{0.0f, 0.0f};
+    custom.points[1] = CurvePoint{0.3f, 0.55f};
+    custom.points[2] = CurvePoint{1.0f, 1.0f};
+    profile.custom_curves[1] = custom;
+
+    FGB_CHECK(save_profile(path, profile));
+
+    CalibrationProfile loaded;
+    FGB_CHECK(load_profile(path, loaded));
+    FGB_CHECK(loaded.shapes[index_of(Shape::JawOpen)].curve ==
+              static_cast<std::uint8_t>(CurveKind::smooth));
+    FGB_CHECK(loaded.shapes[index_of(Shape::MouthCornerPullLeft)].curve ==
+              static_cast<std::uint8_t>(kCurveCustomBase + 1));
+    FGB_CHECK(loaded.custom_curves[1].count == 3);
+    FGB_CHECK_NEAR(loaded.custom_curves[1].points[1].y, 0.55f, 1e-3f);
+
+    // 曲线本身也要参与"有未保存改动"的判定：漏了它，拖完曲线点界面仍显示已保存
+    CalibrationProfile touched = loaded;
+    touched.custom_curves[1].points[1].y += 0.1f;
+    FGB_CHECK(touched != loaded);
+}
+
+FGB_TEST(curve_legacy_profile_without_curve_column_loads_as_linear) {
+    // 旧档案只有 lo hi 两段；新增的曲线字段缺省必须是线性，否则升级即改手感
+    const std::string path = temp_path("legacy_calib.ini");
+    {
+        std::FILE* file = std::fopen(path.c_str(), "wb");
+        FGB_CHECK(file != nullptr);
+        std::fputs("[shapes]\nJawOpen = 0.2000 0.8000\n", file);
+        std::fclose(file);
+    }
+
+    CalibrationProfile loaded;
+    FGB_CHECK(load_profile(path, loaded));
+    const ShapeRange& jaw = loaded.shapes[index_of(Shape::JawOpen)];
+    FGB_CHECK(jaw.active);
+    FGB_CHECK_NEAR(jaw.lo, 0.2f, 1e-4f);
+    FGB_CHECK_NEAR(jaw.hi, 0.8f, 1e-4f);
+    FGB_CHECK(jaw.curve == static_cast<std::uint8_t>(CurveKind::linear));
+}
+

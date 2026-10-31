@@ -930,7 +930,32 @@ void IpcServer::build_calibration(std::string& out) {
         writer.key("lo").num(static_cast<double>(range.lo), 4);
         writer.key("hi").num(static_cast<double>(range.hi), 4);
         writer.key("active").boolean(range.active);
+        // 曲线只给文字形式 + 阈值：界面据此画缩略图和选中态，不需要理解枚举值
+        writer.key("curve").str(params::curve_to_text(range.curve));
+        writer.key("curve_param").num(static_cast<double>(range.curve_param), 3);
         writer.obj_end();
+    }
+    writer.arr_end();
+
+    // 自定义曲线槽。空槽给空串，界面按槽号索引，不用再猜"这一条是不是存在"。
+    writer.key("curves").arr_begin();
+    for (const params::CurveShape& curve : profile.custom_curves) {
+        if (curve.count < 2) {
+            writer.str("");
+            continue;
+        }
+        std::string line;
+        for (std::size_t p = 0; p < curve.count; ++p) {
+            if (p != 0) {
+                line += ' ';
+            }
+            char point[32];
+            std::snprintf(point, sizeof(point), "%.3f,%.3f",
+                          static_cast<double>(curve.points[p].x),
+                          static_cast<double>(curve.points[p].y));
+            line += point;
+        }
+        writer.str(line);
     }
     writer.arr_end();
 
@@ -1703,26 +1728,95 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             params::CalibrationProfile profile = ctx_.calib->profile();
             params::ShapeRange& range          = profile.shapes[index_of(shape)];
             double value                       = 0.0;
-            if (json::field_number(text, "lo", value)) {
+            const bool lo_given                = json::field_number(text, "lo", value);
+            if (lo_given) {
                 range.lo = clamp01(static_cast<float>(value));
             }
-            if (json::field_number(text, "hi", value)) {
+            const bool hi_given = json::field_number(text, "hi", value);
+            if (hi_given) {
                 range.hi = clamp01(static_cast<float>(value));
             }
-            if (range.lo > range.hi) {
-                std::swap(range.lo, range.hi); // 拖过头就交换，而不是让用户猜为什么没反应
+
+            // 双滑块上两端不允许交叉：越界时把被拖的那一端顶回去，而不是交换。
+            // 交换会让两个拇指在手指底下瞬间对调，用户完全没法继续控制，所以这里
+            // 改成"碰壁"——拖到贴住就停住，松手后还能往回拖。
+            if (range.hi - range.lo < params::kMinSpan) {
+                if (lo_given && !hi_given) {
+                    range.lo = range.hi - params::kMinSpan;
+                    if (range.lo < 0.0f) {
+                        range.lo = 0.0f;
+                        range.hi = params::kMinSpan;
+                    }
+                } else if (hi_given && !lo_given) {
+                    range.hi = range.lo + params::kMinSpan;
+                    if (range.hi > 1.0f) {
+                        range.hi = 1.0f;
+                        range.lo = 1.0f - params::kMinSpan;
+                    }
+                } else if (range.lo > range.hi) {
+                    std::swap(range.lo, range.hi); // 两端一起给且倒挂：兜底，不丢用户的意图
+                }
             }
+
+            std::string curve_text;
+            if (json::field_string(text, "curve", curve_text)) {
+                range.curve = params::curve_from_text(curve_text);
+            }
+            if (json::field_number(text, "curve_param", value)) {
+                range.curve_param = static_cast<float>(std::clamp(value, 0.0, 1.0));
+            }
+
             bool active = range.active;
             if (json::field_bool(text, "active", active)) {
                 range.active = active;
                 // 刚启用的形状如果区间是"没调过"的状态（跨度近 0），给一个能用的默认：
                 // 否则用户勾了启用、拖滑杆，输出却一点没变
-                if (active && range.hi - range.lo < 0.02f) {
+                if (active && range.hi - range.lo < params::kMinSpan) {
                     range.lo = 0.0f;
                     range.hi = 1.0f;
                 }
             }
             ctx_.calib->set_profile(profile); // 实时生效：预览与实际输出同时变
+            calibration_changed = true;
+            ok                  = true;
+        }
+    } else if (has_type && type == "set_calibration_curve") {
+        // 自定义曲线：槽号 + 一串归一化控制点。点用字符串传，是因为 base/json 只做
+        // "一层对象里取标量"，为 8×2 的数组单开一个嵌套解析器不值当。
+        double slot = 0.0;
+        std::string points;
+        if (ctx_.calib == nullptr) {
+            error = "calibration not available";
+        } else if (!json::field_number(text, "slot", slot) || slot < 0 ||
+                   slot >= static_cast<double>(params::kMaxCustomCurves)) {
+            error = "曲线槽号超出范围";
+        } else if (!json::field_string(text, "points", points)) {
+            error = "缺少控制点";
+        } else {
+            params::CalibrationProfile profile = ctx_.calib->profile();
+            params::CurveShape curve;
+            std::size_t begin = 0;
+            while (begin < points.size() && curve.count < params::kMaxCurvePoints) {
+                const std::size_t end    = points.find(' ', begin);
+                const std::string token  = points.substr(begin, end == std::string::npos
+                                                                     ? std::string::npos
+                                                                     : end - begin);
+                const std::size_t comma  = token.find(',');
+                if (comma != std::string::npos) {
+                    curve.points[curve.count].x =
+                        static_cast<float>(std::atof(token.substr(0, comma).c_str()));
+                    curve.points[curve.count].y =
+                        static_cast<float>(std::atof(token.substr(comma + 1).c_str()));
+                    ++curve.count;
+                }
+                if (end == std::string::npos) {
+                    break;
+                }
+                begin = end + 1;
+            }
+            params::sanitize_curve(curve);
+            profile.custom_curves[static_cast<std::size_t>(slot)] = curve;
+            ctx_.calib->set_profile(profile);
             calibration_changed = true;
             ok                  = true;
         }
@@ -1794,7 +1888,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
                     apply = true;
                     // 两端几乎一样时不启用，但必须告诉用户为什么——否则就是
                     // "点了取当前，什么都没发生"的黑箱
-                    if (range.hi - range.lo >= 0.02f) {
+                    if (range.hi - range.lo >= params::kMinSpan) {
                         range.active = true;
                         ack_message  = "已取当前值为 " + which;
                     } else {
