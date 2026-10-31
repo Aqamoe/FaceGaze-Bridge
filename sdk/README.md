@@ -27,7 +27,7 @@ SDK 的 ABI 由结构体布局和导出符号定义，**请固定在 tag 上**�
 
 ```bash
 git submodule add https://github.com/Aqamoe/FaceGaze-Bridge.git external/facegaze-bridge
-git -C external/facegaze-bridge checkout v1.0.3
+git -C external/facegaze-bridge checkout v1.0.4
 ```
 
 ```cmake
@@ -43,7 +43,7 @@ target_link_libraries(my-module PRIVATE fgb::sdk)
 include(FetchContent)
 FetchContent_Declare(facegaze_sdk
     GIT_REPOSITORY https://github.com/Aqamoe/FaceGaze-Bridge.git
-    GIT_TAG v1.0.3
+    GIT_TAG v1.0.4
     SOURCE_SUBDIR sdk)
 FetchContent_MakeAvailable(facegaze_sdk)
 target_link_libraries(my-module PRIVATE fgb::sdk)
@@ -75,7 +75,7 @@ LICENSE/NOTICE）。解压后的 `FaceGazeBridge-SDK-<version>/` 就是 SDK 根�
 ```cmake
 include(FetchContent)
 FetchContent_Declare(facegaze_sdk
-    URL https://github.com/Aqamoe/FaceGaze-Bridge/releases/download/v1.0.3/FaceGazeBridge-SDK-1.0.3.zip
+    URL https://github.com/Aqamoe/FaceGaze-Bridge/releases/download/v1.0.4/FaceGazeBridge-SDK-1.0.4.zip
     # 建议固定哈希：取 Release 的 SHA256SUMS.txt
     URL_HASH SHA256=<sha256>)
 FetchContent_MakeAvailable(facegaze_sdk)

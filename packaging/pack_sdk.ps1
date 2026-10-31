@@ -5,7 +5,7 @@
 # add_subdirectory，或作为 FetchContent 的源码目录。
 #
 # 用法：
-#   powershell -ExecutionPolicy Bypass -File packaging\pack_sdk.ps1 -Version 1.0.3
+#   powershell -ExecutionPolicy Bypass -File packaging\pack_sdk.ps1 -Version 1.0.4
 param(
     [string]$Version = "",
     [string]$DistDir = "dist",
