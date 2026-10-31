@@ -2,13 +2,16 @@ add_library(fgb_base STATIC
     base/log.cpp
     base/clock.cpp
     base/json.cpp
+    base/json_value.cpp
+    base/hash.cpp
     base/process_stats.cpp
     base/crash.cpp
     base/diagnostics.cpp)
 target_include_directories(fgb_base PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(fgb_base PUBLIC fgb_options)
 if(WIN32)
-    target_link_libraries(fgb_base PRIVATE winmm psapi dbghelp)
+    # bcrypt 只给 base/hash.cpp（模块库校验下载包）
+    target_link_libraries(fgb_base PRIVATE winmm psapi dbghelp bcrypt)
 endif()
 
 add_library(fgb_core STATIC
@@ -41,7 +44,8 @@ add_library(fgb_vrcft STATIC
     vrcft/sandbox_server.cpp
     vrcft/module_host.cpp
     vrcft/module_registry.cpp
-    vrcft/module_library.cpp)
+    vrcft/module_library.cpp
+    vrcft/native_library.cpp)
 target_link_libraries(fgb_vrcft PUBLIC fgb_core fgb_net fgb_config)
 target_compile_definitions(fgb_vrcft PRIVATE FGB_VERSION="${PROJECT_VERSION}")
 if(WIN32)

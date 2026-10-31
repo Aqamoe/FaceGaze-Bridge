@@ -339,6 +339,7 @@ function handle(message) {
       break;
     case "library": {
       const prev = (state.library && state.library.status) || {};
+      const prev_native = (state.library && state.library.native && state.library.native.status) || {};
       const prev_phase = prev.phase;
       const prev_id = prev.install_id;
       state.library = message;
@@ -352,6 +353,24 @@ function handle(message) {
         show_toast(t("modules.library.install_failed", {
           name: entry ? entry.name : prev_id,
           error: next.error || "?",
+        }), "error");
+      }
+
+      // 原生库有独立的下载/安装状态，不能和 VRCFT 库共用一条 install_id 记录
+      const next_native = (message.native && message.native.status) || {};
+      const native_finished = prev_native.phase === "downloading" ||
+        prev_native.phase === "installing";
+      const native_id = prev_native.install_id || "";
+      const native_entry = ((message.native && message.native.items) || [])
+        .find((item) => item.id === native_id);
+      const native_name = native_entry ? native_entry.name : native_id;
+      if (native_finished && next_native.phase === "idle") {
+        show_toast(t("modules.library.install_ok", { name: native_name }));
+      }
+      if (native_finished && next_native.phase === "error") {
+        show_toast(t("modules.library.install_failed", {
+          name: native_name,
+          error: next_native.error || "?",
         }), "error");
       }
       if (state.view === "library") {
@@ -1560,9 +1579,10 @@ function library_card(item, installed, status) {
   }
   const relation = library_relation(installed, item);
   if (relation !== "install") {
-    const tag = el("span", `chip ${relation === "update" ? "warn" : "ok"}`.trim(),
-      relation === "update" ? t("modules.library.update_available") : t("modules.library.installed"));
-    head.append(tag);
+    const badges = el("div", "module-badges");
+    badges.append(el("span", `chip ${relation === "update" ? "warn" : "ok"}`.trim(),
+      relation === "update" ? t("modules.library.update_available") : t("modules.library.installed")));
+    head.append(badges);
   }
   head.append(library_chevron());
   card.append(head);
@@ -1640,77 +1660,385 @@ function update_library_card_progress(card, status, id) {
   }
 }
 
+// ---------- 原生模块库（fgb-registry，registry schema v2） ----------
+
+function native_snapshot() {
+  return (state.library && state.library.native) || null;
+}
+
+// 注册表允许 i18n 覆盖 summary/description/usage，键是 BCP-47 语言标签；
+// 缺省回落到顶层同名字段（schema 这么定义），所以这里只负责挑最合适的一条。
+function native_text(item, field) {
+  const map = (item && item.i18n) || {};
+  const candidates = lang === "zh"
+    ? ["zh", "zh-CN", "zh-Hans", "zh-Hans-CN"]
+    : (lang === "ja" ? ["ja", "ja-JP"] : ["en", "en-US", "en-GB"]);
+  for (const key of candidates) {
+    const text = map[key] && map[key][field];
+    if (text) {
+      return text;
+    }
+  }
+  for (const key of Object.keys(map)) {
+    if (key.split("-")[0] === lang && map[key][field]) {
+      return map[key][field];
+    }
+  }
+  return (item && item[field]) || "";
+}
+
+// 库条目的图标是远程 https（registry 的 icon 字段）；已安装的模块优先用本地
+// /module-icon/<id>，这样离线时也有图。加载失败就退回首字母头像。
+function native_icon(item, installed) {
+  const wrap = el("span", "module-icon");
+  const text = String((item && item.name) || (item && item.id) || "?").trim();
+  wrap.append(el("span", "module-icon-fallback", (text[0] || "?").toUpperCase()));
+  let src = "";
+  if (item.icon && /^https:\/\//i.test(item.icon)) {
+    src = item.icon;
+  } else if (installed) {
+    src = `/module-icon/${encodeURIComponent(item.id)}`;
+  }
+  if (!src) {
+    return wrap;
+  }
+  const img = document.createElement("img");
+  img.alt = "";
+  img.decoding = "async";
+  img.referrerPolicy = "no-referrer";
+  img.src = src;
+  img.addEventListener("load", () => wrap.classList.add("has-icon"));
+  img.addEventListener("error", () => img.remove());
+  wrap.append(img);
+  return wrap;
+}
+
+function native_relation(installed, item) {
+  if (!installed || !item.latest || !item.latest.version) {
+    return "install";
+  }
+  const cmp = compare_versions(installed.version, item.latest.version);
+  // 版本号读不出来的旧安装当作已装，避免永远挂一个"更新"按钮
+  return cmp === null ? "installed" : (cmp < 0 ? "update" : "installed");
+}
+
+function native_incompatible_text(item) {
+  const requires = item.requires || {};
+  const abi = requires.abi || (item.latest && item.latest.abi_version) || 0;
+  switch (item.incompatible_code) {
+  case "abi":
+    return t("modules.native.incompatible.abi", { abi });
+  case "host_version":
+    return t("modules.native.incompatible.host_version", { version: requires.min_host_version || "?" });
+  case "os":
+    return t("modules.native.incompatible.os");
+  case "arch":
+    return t("modules.native.incompatible.arch");
+  default:
+    return item.incompatible_reason || t("modules.native.incompatible.unknown");
+  }
+}
+
+function native_detail_block(label, text) {
+  const section = el("div", "module-detail");
+  section.append(el("div", "module-detail-label", label));
+  section.append(el("p", "module-detail-text", text));
+  return section;
+}
+
+function native_library_card(item, installed, status) {
+  const card = el("article", "lib-card");
+  card.dataset.id = item.id;
+  card.tabIndex = 0;
+  if (state.expanded_library.has(item.id)) {
+    card.classList.add("expanded");
+  }
+
+  const relation = native_relation(installed, item);
+  const head = el("div", "module-head");
+  head.append(native_icon(item, installed));
+  head.append(el("strong", "", item.name || item.id));
+  const shown_version = installed && installed.version ? installed.version : item.latest.version;
+  if (shown_version) {
+    head.append(el("span", "module-ver", `v${shown_version}`));
+  }
+  if (item.author) {
+    head.append(el("span", "module-author", item.author));
+  }
+  // 徽标要成组紧跟在标题后面：.chip 默认 margin-left:auto，逐个塞进 head 会被
+  // flex 推到各处（"已审核"飘中间、"已安装"贴到右边），看着像坏掉了。
+  const badges = el("div", "module-badges");
+  if (item.verified) {
+    badges.append(el("span", "chip ok", t("modules.native.verified")));
+  }
+  if (relation === "update") {
+    badges.append(el("span", "chip warn", t("modules.library.update_available")));
+  } else if (relation === "installed") {
+    badges.append(el("span", "chip ok", t("modules.library.installed")));
+  }
+  if (item.latest.channel === "beta") {
+    badges.append(el("span", "chip warn", t("modules.native.beta")));
+  }
+  if (item.archived) {
+    badges.append(el("span", "chip", t("modules.native.archived")));
+  }
+  if (badges.childElementCount) {
+    head.append(badges);
+  }
+  head.append(library_chevron());
+  card.append(head);
+
+  const summary = native_text(item, "summary");
+  if (summary) {
+    card.append(el("p", "lib-desc", summary));
+  }
+
+  const meta = el("div", "lib-meta");
+  const capabilities = item.capabilities || [];
+  if (capabilities.length) {
+    // 能力标签自己成组，避免 .chip 的 margin-left:auto 把整行拆散
+    const caps = el("span", "lib-caps");
+    for (const capability of capabilities) {
+      caps.append(el("span", "chip cap", t(`channel.${capability}`)));
+    }
+    meta.append(caps);
+  }
+  const downloads = (item.stats && item.stats.downloads) || 0;
+  meta.append(el("span", "", t("modules.library.downloads", { count: fmt_int(downloads) })));
+  if (item.updated) {
+    meta.append(el("span", "", item.updated.slice(0, 10)));
+  }
+  if (item.license) {
+    meta.append(el("span", "", item.license));
+  }
+  card.append(meta);
+
+  const details = el("div", "lib-details");
+  const description = native_text(item, "description");
+  if (description) {
+    details.append(native_detail_block(t("modules.native.description"), description));
+  }
+  details.append(module_details_block(native_text(item, "usage"), item.homepage));
+  if (item.latest.notes) {
+    details.append(native_detail_block(t("modules.native.release_notes"), item.latest.notes));
+  }
+
+  // 版本列表：注册表按版本倒序给，用来降级/回滚（升级走上面的「更新」按钮）
+  const versions = item.versions || [];
+  if (versions.length > 1) {
+    const row = el("div", "module-detail");
+    row.append(el("div", "module-detail-label", t("modules.native.pick_version")));
+    const select = document.createElement("select");
+    select.className = "native-version-select";
+    for (const version of versions) {
+      const option = document.createElement("option");
+      option.value = version.version;
+      option.textContent = version.channel === "beta"
+        ? `${version.version} (beta)`
+        : version.version;
+      select.append(option);
+    }
+    select.value = item.latest.version;
+    const install = el("button", "btn small", t("modules.native.install_version"));
+    const percent = el("span", "muted", "");
+    install.addEventListener("click", async () => {
+      const version = select.value;
+      if (!version) {
+        return;
+      }
+      const question = t("modules.native.confirm", { name: item.name || item.id, version });
+      if (await ask_confirm({
+        title: t("confirm.install_title"),
+        message: question,
+        danger: true,
+      })) {
+        send({ type: "install_native_library", id: item.id, version });
+      }
+    });
+    const option_row = el("div", "native-version-row");
+    option_row.append(select, install, percent);
+    row.append(option_row);
+    details.append(row);
+  }
+  card.append(details);
+
+  const actions = el("div", "lib-actions");
+  const busy_other = status && (status.phase === "downloading" || status.phase === "installing") &&
+    status.install_id !== item.id;
+  const installing = status && status.install_id === item.id &&
+    (status.phase === "downloading" || status.phase === "installing");
+  if (installing) {
+    const progress = el("div", "progress");
+    progress.append(document.createElement("i"));
+    const label = el("span", "muted", "");
+    label.dataset.role = "lib-state";
+    actions.append(progress, label);
+  } else if (!item.compatible) {
+    actions.append(el("span", "chip err", native_incompatible_text(item)));
+  } else if (relation === "installed") {
+    // 头部徽标已经写了"已安装"，这里再放一个灰按钮只是噪音：换成版本提示，
+    // 想换版本可以展开用上面的版本下拉。
+    actions.append(el("span", "muted", t("modules.native.up_to_date", {
+      version: (installed && installed.version) || item.latest.version,
+    })));
+  } else {
+    const button = el("button", "btn small", "");
+    button.textContent = relation === "update" ? t("modules.library.update")
+                                               : t("modules.library.install");
+    button.disabled = !!busy_other;
+    button.addEventListener("click", async () => {
+      const question = t("modules.native.confirm", {
+        name: item.name || item.id,
+        version: item.latest.version,
+      });
+      if (await ask_confirm({
+        title: t("confirm.install_title"),
+        message: question,
+        danger: true,
+      })) {
+        send({ type: "install_native_library", id: item.id, version: item.latest.version });
+      }
+    });
+    actions.append(button);
+    if (item.archived) {
+      actions.append(el("span", "muted", t("modules.native.archived_hint")));
+    }
+  }
+  card.append(actions);
+  update_library_card_progress(card, status, item.id);
+
+  const toggle_card = (event) => toggle_expanded(card, state.expanded_library, item.id, event);
+  card.addEventListener("click", toggle_card);
+  card.addEventListener("keydown", toggle_card);
+  return card;
+}
+
+// 已装但库里没有的原生模块（本地 zip 装的、库条目被撤下的）也要能看见，
+// 否则用户在「原生模块」页找不到自己刚装的东西。
+function native_installed_card(item) {
+  const card = el("article", "lib-card");
+  card.dataset.id = item.id;
+  card.tabIndex = 0;
+  if (state.expanded_library.has(item.id)) {
+    card.classList.add("expanded");
+  }
+  const head = el("div", "module-head");
+  head.append(module_icon(item));
+  head.append(el("strong", "", item.name || item.id));
+  if (item.version) {
+    head.append(el("span", "module-ver", `v${item.version}`));
+  }
+  if (item.author) {
+    head.append(el("span", "module-author", item.author));
+  }
+  const chip_state = item.broken ? { text: t("state.broken"), cls: "err" } : module_chip(item);
+  head.append(el("span", `chip ${chip_state.cls}`.trim(), chip_state.text));
+  head.append(library_chevron());
+  card.append(head);
+  if (item.description) {
+    card.append(el("p", "lib-desc", item.description));
+  }
+  const meta = el("div", "lib-meta");
+  meta.append(el("span", "", `${t("modules.source")} ${source_label(item.source)}`));
+  meta.append(el("span", "", `${t("modules.installed_at")} ${item.installed_at || "—"}`));
+  meta.append(el("span", "", `${t("modules.size")} ${fmt_mb(item.bytes)}`));
+  card.append(meta);
+
+  const details = el("div", "lib-details");
+  details.append(module_details_block(item.usage, item.page));
+  card.append(details);
+
+  const actions = el("div", "lib-actions");
+  const manage = el("button", "btn small", t("modules.library.open_modules"));
+  manage.addEventListener("click", () => switch_page("modules"));
+  actions.append(manage);
+  card.append(actions);
+
+  const toggle_card = (event) => toggle_expanded(card, state.expanded_library, item.id, event);
+  card.addEventListener("click", toggle_card);
+  card.addEventListener("keydown", toggle_card);
+  return card;
+}
+
 function render_native_library() {
   const list = $("native-library-list");
   const status_el = $("lib-status");
   const filter = ($("lib-search").value || "").trim().toLowerCase();
-  const all_items = ((state.modules && state.modules.items) || [])
-    .filter((item) => item.kind === "native");
-  const items = all_items.filter((item) => {
-    if (!filter) {
-      return true;
-    }
-    return `${item.name} ${item.author} ${item.description}`.toLowerCase().includes(filter);
-  });
+  const show_beta = $("lib-native-beta").checked;
+  const native = native_snapshot();
+  const items = (native && native.items) || [];
+  const registry_status = (native && native.status) || {};
 
-  status_el.textContent = t("modules.library.native_count", { count: all_items.length });
-  status_el.title = "";
-  list.textContent = "";
-  if (!items.length) {
-    list.append(el("div", "empty", all_items.length
-      ? t("modules.library.no_match") : t("modules.library.native_empty")));
+  const installed_all = ((state.modules && state.modules.items) || [])
+    .filter((item) => item.kind === "native");
+  const installed_by_id = new Map(installed_all.map((item) => [String(item.id).toLowerCase(), item]));
+  const entry_ids = new Set(items.map((item) => String(item.id).toLowerCase()));
+  const local_only = installed_all.filter((item) => !entry_ids.has(String(item.id).toLowerCase()));
+
+  if (!native) {
+    status_el.textContent = t("modules.native.not_loaded");
+    status_el.title = "";
+    list.textContent = "";
+    list.append(el("div", "empty", t("modules.native.not_loaded")));
     return;
   }
 
-  const live = new Map(((state.status && state.status.modules) || [])
-    .map((entry) => [entry.module_id, entry]));
-  for (const item of items) {
-    const card = el("article", "lib-card");
-    card.dataset.id = item.id;
-    card.tabIndex = 0;
-    if (state.expanded_library.has(item.id)) {
-      card.classList.add("expanded");
-    }
-    const head = el("div", "module-head");
-    head.append(module_icon(item));
-    head.append(el("strong", "", item.name || item.id));
-    if (item.version) {
-      head.append(el("span", "module-ver", `v${item.version}`));
-    }
-    if (item.author) {
-      head.append(el("span", "module-author", item.author));
-    }
-    const runtime_entry = live.get(item.id);
-    const chip_state = item.broken
-      ? { text: t("state.broken"), cls: "err" }
-      : (runtime_entry ? format_state(runtime_entry.state) : module_chip(item));
-    const chip = el("span", `chip ${chip_state.cls}`.trim(), chip_state.text);
-    head.append(chip, library_chevron());
-    card.append(head);
+  if (registry_status.phase === "downloading" || registry_status.phase === "installing") {
+    const percent = registry_status.total > 0
+      ? Math.min(100, (registry_status.received / registry_status.total) * 100)
+      : 0;
+    status_el.textContent = registry_status.phase === "installing"
+      ? t("modules.library.installing")
+      : t("modules.library.downloading", {
+          percent: percent.toFixed(0),
+          received: (registry_status.received / 1048576).toFixed(1),
+          total: registry_status.total ? (registry_status.total / 1048576).toFixed(1) : "?",
+        });
+  } else if (registry_status.phase === "error") {
+    status_el.textContent = t("modules.library.error", { error: registry_status.error || "?" });
+  } else if (registry_status.refreshing) {
+    status_el.textContent = t("modules.library.refreshing");
+  } else if (registry_status.refresh_error) {
+    status_el.textContent = t("modules.library.error", { error: registry_status.refresh_error });
+  } else if (registry_status.stale) {
+    status_el.textContent = t("modules.library.stale", { time: registry_status.fetched_at || "—" });
+  } else {
+    status_el.textContent = t("modules.native.count", {
+      count: items.length,
+      installed: installed_all.length,
+    });
+  }
+  status_el.title = registry_status.error || registry_status.refresh_error || "";
+  $("lib-refresh").disabled = !!registry_status.refreshing;
 
-    if (item.description) {
-      card.append(el("p", "lib-desc", item.description));
+  const matches = (item) => {
+    const text = `${item.name} ${item.author} ${native_text(item, "summary")} ` +
+      `${native_text(item, "description")} ${(item.tags || []).join(" ")}`.toLowerCase();
+    return !filter || text.includes(filter);
+  };
+  const visible = items.filter((item) => {
+    if (item.latest.channel === "beta" && !show_beta) {
+      return false;
     }
-    const meta = el("div", "lib-meta");
-    meta.append(el("span", "", `${t("modules.source")} ${source_label(item.source)}`));
-    meta.append(el("span", "", `${t("modules.installed_at")} ${item.installed_at || "—"}`));
-    meta.append(el("span", "", `${t("modules.size")} ${fmt_mb(item.bytes)}`));
-    card.append(meta);
+    return matches(item);
+  });
+  const local_visible = local_only.filter((item) => {
+    const text = `${item.name} ${item.author} ${item.description}`.toLowerCase();
+    return !filter || text.includes(filter);
+  });
 
-    const details = el("div", "lib-details");
-    details.append(module_details_block(item.usage, item.page));
-    card.append(details);
-
-    const actions = el("div", "lib-actions");
-    const manage = el("button", "btn small", t("modules.library.open_modules"));
-    manage.addEventListener("click", () => switch_page("modules"));
-    actions.append(manage);
-    card.append(actions);
-
-    const toggle_card = (event) => toggle_expanded(card, state.expanded_library, item.id, event);
-    card.addEventListener("click", toggle_card);
-    card.addEventListener("keydown", toggle_card);
-    list.append(card);
+  list.textContent = "";
+  if (!visible.length && !local_visible.length) {
+    list.append(el("div", "empty", items.length || local_only.length
+      ? t("modules.library.no_match") : t("modules.native.empty")));
+    return;
+  }
+  for (const item of visible) {
+    const installed = installed_by_id.get(String(item.id).toLowerCase());
+    list.append(native_library_card(item, installed, registry_status));
+  }
+  for (const item of local_visible) {
+    list.append(native_installed_card(item));
   }
 }
 
@@ -1724,7 +2052,8 @@ function render_library() {
   document.querySelectorAll("#lib-tabs .tab").forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.libTab === state.library_tab);
   });
-  $("lib-refresh").hidden = native;
+  $("lib-refresh").hidden = false;
+  $("lib-native-beta-wrap").hidden = !native;
   $("lib-native-install").hidden = !native;
   list.hidden = native;
   $("native-library-list").hidden = !native;
@@ -1734,7 +2063,6 @@ function render_library() {
     render_native_library();
     return;
   }
-
   const lib = state.library;
   const status_el = $("lib-status");
   if (!lib) {
@@ -2993,10 +3321,13 @@ function wire() {
     send({ type: "import_modules", ids: [...state.import_selection].join(",") });
   });
   $("lib-refresh").addEventListener("click", () => {
-    send({ type: "refresh_library" });
+    send({ type: state.library_tab === "native" ? "refresh_native_library" : "refresh_library" });
   });
   $("lib-search").addEventListener("input", () => {
     render_library();
+  });
+  $("lib-native-beta").addEventListener("change", () => {
+    render_native_library();
   });
   document.querySelectorAll("#lib-tabs .tab").forEach((tab) => {
     tab.addEventListener("click", () => {

@@ -34,7 +34,7 @@
 | | UDP 二进制（低延迟，给串流软件；已实现） | P2 |
 | | 多 Sink 并发 | P0 |
 | **管理** | 模块安装 / 启用 / 禁用 / 排序 | P0 |
-| | 模块注册表（在线浏览安装） | P1 |
+| | 模块注册表（在线浏览安装）：VRCFT 老注册表 + 原生模块 `fgb-registry`（sha256 + 包内清单校验、版本回滚、测试版通道） | P1（已实施；[ADR-0035](adr/0035-native-module-registry.md)） |
 | | 随 SteamVR 启动（OpenVR 自启动注册） | P2（已实施，真实注册待 SteamVR 运行环境验收；[ADR-0020](adr/0020-steamvr-autostart.md)） |
 | | 实时参数监视矩阵 | P0 |
 | | 日志查看与导出 | P0 |

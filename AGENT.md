@@ -52,6 +52,11 @@
 - **原生模块只有一套 ABI**（`sdk/fgb_module_api.h`，导出 `fgb_module_query_v2`，属性帧）。
   v1 已于 2026-10-31 移除（[ADR-0034](docs/adr/0034-native-module-v2-only.md)）：
   不要再加"第二套并行 ABI/兼容分支"，扩展只能在结构末尾追加字段并升 `abi_version`。
+- **两个在线库不许合并**：VRCFT 老注册表（`vrcft/module_library.*`，扁平数组 + MD5）与
+  原生库（`vrcft/native_library.*`，registry schema v2 + sha256）各有一份解析器与缓存。
+  原生库安装必须走"size/sha256 → 解压 → 包内 `fgb-native.json` 的 ModuleId/AbiVersion/DLL
+  → 装入仓"这条链路，`schemaVersion != 2` 整体拒绝
+  （[ADR-0035](docs/adr/0035-native-module-registry.md)）。
 - **模块只从 `%LOCALAPPDATA%\FaceGazeBridge\modules` 加载**；VRCFT 的 `CustomLibs` 只是导入候选，
   任何"直接扫别人的目录然后 LoadLibrary"的写法都不要加（[ADR-0017](docs/adr/0017-module-store-library-runtime.md)）。
 - **新增输入源必须声明 `frame.channels`**（`channel::kExpression / kEyes / kGaze / kHead`）。
@@ -114,9 +119,10 @@ WebView2 SDK 不在 vcpkg：configure 时从 NuGet 抓一次到 `build/_deps`。
 模块仓与运行时（[ADR-0017](docs/adr/0017-module-store-library-runtime.md)）：
 
 ```
-%LOCALAPPDATA%\FaceGazeBridge\modules\<id>\   module.json + dll + config.ini
+%LOCALAPPDATA%\FaceGazeBridge\modules\<id>\   module.json / fgb-native.json + dll + config.ini
 %LOCALAPPDATA%\FaceGazeBridge\modules.ini       启用/启动选择/来源
-%LOCALAPPDATA%\FaceGazeBridge\library.json     模块库缓存
+%LOCALAPPDATA%\FaceGazeBridge\library.json      VRCFT 模块库缓存
+%LOCALAPPDATA%\FaceGazeBridge\native-library.json  原生模块库缓存（fgb-registry）
 <exe>/runtime/vrcft/                          内置精简 VRCFT 运行时（发布包带）
 ```
 
@@ -193,11 +199,12 @@ python tools/build_vrcft_runtime.py --dest dist/runtime/vrcft
 ### 3.4 探针（比截图可靠）
 
 ```powershell
-# 控制面 IPC：HTTP 诊断 + WebSocket 推送/命令（含 /api/gaze 与 30 Hz gaze）
+# 控制面 IPC：HTTP 诊断 + WebSocket 推送/命令（含 /api/gaze、30 Hz gaze、
+# library.native 段与 refresh_native_library 回执）
 python tools/probe_ipc.py 8787
 
 # 界面：通过 WebView2 远程调试端口跑 JS，验证页面真的渲染了数据
-# 包含 3D 模型加载、morph、区域高亮、SteamVR 卡片（只读检测，不切换真实自启动）
+# 包含 3D 模型加载、morph、区域高亮、原生模块库标签页、SteamVR 卡片（只读检测，不切换真实自启动）
 # 校准页/输出设置页会真的保存：引擎启动时加 --calibration 与 --outputs-config 指到临时文件，
 # 别让探针写用户默认的 calibration.ini / outputs.ini
 # 已经有别的实例在跑时，必须给测试实例单独的 user-data，否则 CDP 端口不会监听；
@@ -286,6 +293,10 @@ gh run watch <id> --exit-status
 | 模块更新失败 | 提示"正在被占用" | 引擎加载模块时 DLL 被锁；先停引擎再更新（界面会拒绝删除运行中的模块） |
 | 模块装完仍显示"安装" | 包内没有 module.json，ID 退化成 DLL 名 | 模块库安装必须传 `ModuleMetadataOverride` 兜底；版本比较用语义版本，不要用字符串相等 |
 | 模块库刷新超时 | WinHTTP 12002 | registry.vrcft.io 偶发卡 20 s；库内部重试一次，失败时保留缓存 |
+| 原生模块库报「结构版本是 N」 | fgb-registry 升了 `schemaVersion` | 宿主只认 2，**不要猜着解析**；升程序或改回 2，别在 UI 里吞掉这条错误 |
+| 原生模块装不上「ModuleId 不一致」 | 包内 `fgb-native.json` 与索引条目对不上 | 索引侧（`modules/*.json`）与包内清单必须同源；宿主不做"以谁为准"的猜测 |
+| 原生模块「SHA-256 不一致」 | 打完包又改/重压了 zip，或索引还是旧哈希 | 重新压缩会换哈希；索引里的 `sha256` 必须对应最终资产 |
+| 原生库卡片按钮全灰 | 条目的 `requires.abi` / `minHostVersion` / `os` / `arch` 不满足 | 卡片上有 `incompatible_code` 对应文案；不是按钮坏了 |
 | WebView2 调试端口 | 9222 不监听 | 已有实例共用 user-data 时新实例不会开 CDP；测试实例加 `--user-data %TEMP%\...` |
 | `hidden` 不生效 | 弹窗/提示条启动就在，按钮点不动 | 组件 CSS 的 `display:flex/grid` 会压过 UA 的 `[hidden]`；全局加 `[hidden]{display:none!important}` |
 | 页面不能滚动/底部被裁 | 内容超出窗口但没有滚动条 | grid/flex 子项默认 `min-height:auto`；`.main`/`.content` 必须显式 `min-height:0`，否则 `.content` 的 `overflow-y:auto` 不生效 |
@@ -309,12 +320,14 @@ gh run watch <id> --exit-status
 ## 6. 代码地图
 
 ```
-src/base/      日志（含订阅回调）、时钟、极简 JSON、进程资源、崩溃转储、诊断包
+src/base/      日志（含订阅回调）、时钟、极简 JSON（一层标量）/ JSON 树（模块库深结构）、
+               文件摘要（SHA-256/MD5）、进程资源、崩溃转储、诊断包
 src/core/      数据模型（含 GazeState）、无锁容器、滤波、校准与 GazeEstimator
 src/osc/       OSC 编解码（零分配写入器）
 src/net/       UDP / TCP / WebSocket 服务端（自写 RFC 6455 子集）、WinHTTP 下载、更新检查、mDNS 发现
 src/config/    INI 与输出设置（outputs.ini + outputs-profiles/ 命名预设；命令行可覆盖）
-src/vrcft/     VRCFT 协议、沙箱、模块进程托管、模块仓（module_registry）、模块库（module_library）
+src/vrcft/     VRCFT 协议、沙箱、模块进程托管、模块仓（module_registry）、
+               VRCFT 模块库（module_library）、原生模块库（native_library，fgb-registry）
 src/vmc/       VMC blendshape 名字表（输入/输出共用，只有这一份）
 src/params/    参数目录、v2/v1 派生、地址路由、OSCQuery 头像发现、校准（含预览取样 preview_tap）
 src/sources/   输入（VMC / VRCFT 模块 / 原生 C ABI 模块 / 抓包回放）
@@ -338,7 +351,7 @@ docs/          方案、ADR、路线图、用户手册；SDK 集成文档在 sdk
 | →UI | `hello`（协议版本、版本号、端口） | 连接时 |
 | →UI | `catalog`（365 个参数名 + 是否已绑定） | 连接时 / 换头像后 |
 | →UI | `modules`（已安装 + 可导入 + 运行时 + 启动选择） | 连接时 / 扫描或任何模块变更后 |
-| →UI | `library`（模块库列表 + 缓存状态 + 下载进度） | 连接时 / 刷新或安装过程中 5 Hz |
+| →UI | `library`（VRCFT 模块库列表 + 缓存状态 + 下载进度；`native` 段为原生库的同构内容 + 兼容性判定） | 连接时 / 刷新或安装过程中 5 Hz |
 | →UI | `status`（帧率、tick、OSC、头像、滤波、`modules[]` 每实例状态、`sources[]` 每源贡献） | 10 Hz |
 | →UI | `params`（数值数组，顺序同 `catalog`） | 10 Hz |
 | →UI | `gaze`（方向/俯仰偏航/聚散/置信度/fixation/saccade/head_pose） | 30 Hz |
@@ -351,7 +364,8 @@ docs/          方案、ADR、路线图、用户手册；SDK 集成文档在 sdk
 | →UI | `log`（级别/tag/正文；连接时补发最近 120 行） | 有日志时 |
 | UI→ | `set_filter` / `set_outputs` / `set_module` / `set_module_enabled` / `scan_modules` / `reload_avatar` / `set_log_level` / `quit` | 按操作 |
 | UI→ | `import_module` / `import_modules`（逗号分隔 id）/ `import_all` / `install_module_archive` / `delete_module` / `open_modules_dir` / `open_module_page`（只允许已安装模块或模块库条目登记的 `http(s)` 页面） | 模块管理 |
-| UI→ | `refresh_library` / `install_library` / `restart_engine` | 模块库与重启（退出码 3） |
+| UI→ | `refresh_library` / `install_library` / `restart_engine` | VRCFT 模块库与重启（退出码 3） |
+| UI→ | `refresh_native_library` / `install_native_library`（`id` + 可选 `version`） | 原生模块库（install 会先校验 sha256 与包内清单） |
 | UI→ | `set_preview` / `set_calibration_shape` / `set_calibration_eye` / `capture_calibration` / `save_calibration` / `reload_calibration` / `reset_calibration` | 校准（实时生效，显式保存） |
 | UI→ | `refresh_steamvr` / `set_steamvr_autolaunch` / `remove_steamvr_manifest` | SteamVR（后台线程执行，完成后推 `steamvr`） |
 | UI→ | `save_output_profile` / `apply_output_profile` / `delete_output_profile` | 命名输出预设（应用会写 outputs.ini，界面随后重启引擎） |

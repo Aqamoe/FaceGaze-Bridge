@@ -290,6 +290,16 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > 属性帧 + 能力位门控），旧的整眼原子接口、`FgbGazeV1`、`FGB_GAZE_*` 全部删除；
 > v1 装机量为 0，示例/测试/文档随之迁移，见
 > [ADR-0034](adr/0034-native-module-v2-only.md)。
+>
+> **原生模块在线库已实施（2026-10-31）**：接入 `Aqamoe/fgb-registry`
+> （`registry.json`，registry schema v2），界面「模块库 → 原生模块」从"只有已安装列表"
+> 变成在线列表：搜索、测试版开关、能力/审核/归档徽标、版本下拉回滚、更新说明与模块主页。
+> 安装链路是"下载 → 校验 `size` 与 `sha256` → 解压 → 核对包内 `fgb-native.json`
+> 的 `ModuleId`/`AbiVersion`/DLL → 装入模块仓"，不兼容条目（ABI/宿主版本/系统/架构）
+> 仍然列出但禁止安装。IPC 在 `library` 消息里加 `native` 段，新增
+> `refresh_native_library` / `install_native_library` 命令；单测
+> `tests/test_native_library.cpp`、`tools/probe_ipc.py` 与 `tools/probe_ui.py` 覆盖，
+> 见 [ADR-0035](adr/0035-native-module-registry.md)。
 
 **验收**：5 个 Sink 同时输出时，主链路延迟不增加 > 0.5 ms；录制 10 分钟文件 < 20 MB。
 

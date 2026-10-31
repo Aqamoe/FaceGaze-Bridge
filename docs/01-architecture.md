@@ -716,9 +716,10 @@ v1 不做照片级写实。完整取舍见 [ADR-0021](adr/0021-calibration-workb
 
 > **实现现状（2026-10-29）**：上面是早期的目标布局；实际落地在
 > `%LOCALAPPDATA%\FaceGazeBridge`（DLL 不跟漫游配置走）：`modules\<id>\`、
-> `modules.ini`、`library.json`、`engine.log`，校准档案是 `calibration.ini`
-> （[ADR-0008](adr/0008-calibration-and-filtering.md)）。TOML 主配置尚未落地，
-> 新增文件以现有 INI/JSON 风格为准。
+> `modules.ini`、`library.json`（VRCFT 模块库缓存）、`native-library.json`
+> （原生模块库缓存，[ADR-0035](adr/0035-native-module-registry.md)）、`engine.log`，
+> 校准档案是 `calibration.ini`（[ADR-0008](adr/0008-calibration-and-filtering.md)）。
+> TOML 主配置尚未落地，新增文件以现有 INI/JSON 风格为准。
 
 ### 11.2 不可变配置 / 热重载
 

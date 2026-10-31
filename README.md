@@ -38,6 +38,7 @@ VRCFT 解决的是「我的面捕硬件怎么驱动 VRChat 头像」。FGB 解�
 |---|---|
 | VRCFT 模块兼容 | 自带精简模块宿主运行时，卸载 VRCFT 后仍可加载模块；支持导入本机模块、`.zip` 安装、启停 |
 | 原生 C ABI | 单一 ABI（`fgb_module_query_v2`）、POD 属性帧、能力位分通道；附带不需要硬件的示例模块，见 [SDK 开发指南](sdk/docs/native-module-guide.md) |
+| 模块库 | 两个标签页：**原生模块**来自 [`fgb-registry`](https://github.com/Aqamoe/fgb-registry)（下载校验 SHA-256 与包内清单、版本回滚、测试版通道、审核/归档标记），**VRCFT 模块**沿用 `registry.vrcft.io`；都支持本地 zip 兜底 |
 | 多源合并 | 表情 / 眼睛 / 渲染注视 / 头姿可分别选择提供者，支持 VMC、模块、抓包回放同时输入；可组合多个原生模块，左右眼/左右注视分源，模块可只给 openness 或单眼属性，`--attr-source` 支持逐属性有序源；`--native-host` 可把原生模块放进独立宿主进程，崩溃自动重启 |
 | 直连输入 | VMC、ARKit LiveLink（iPhone，UDP 11111）、通用 OSC 映射表（任意发送端） |
 | 多路输出 | VRChat OSC、VMC、命名共享内存、WebSocket JSON、UDP 二进制 |
@@ -101,7 +102,9 @@ NOTICE, LICENSE        许可证与第三方声明
 ### 第一次运行
 
 1. 双击 `FaceGaze Bridge.exe`，窗口会自动拉起引擎
-2. 到「模块」页导入本机 VRCFT 模块，或从「模块库」安装一个
+2. 到「模块库」安装一个模块：**原生模块**标签页来自
+   [`fgb-registry`](https://github.com/Aqamoe/fgb-registry)（下载后校验 SHA-256 与包内清单），
+   **VRCFT 模块**标签页来自 `registry.vrcft.io`；也可以到「模块」页导入本机已有的模块
 3. 到「输出」页确认 VRChat OSC / VMC / 共享内存等目标
 4. 关窗只是收进托盘，追踪继续；托盘菜单「退出」才停止引擎
 

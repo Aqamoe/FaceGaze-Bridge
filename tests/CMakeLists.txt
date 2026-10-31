@@ -21,6 +21,7 @@ add_executable(fgb-tests
     test_json.cpp
     test_modules.cpp
     test_library.cpp
+    test_native_library.cpp
     test_native_module.cpp
     test_native_host.cpp
     test_shm.cpp

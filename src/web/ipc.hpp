@@ -14,6 +14,7 @@
 // 省掉 https 页面连 ws:// 回环时的 mixed-content 麻烦）。
 #pragma once
 
+#include "base/json.hpp"
 #include "base/process_stats.hpp"
 #include "config/outputs.hpp"
 #include "core/process/one_euro.hpp"
@@ -30,6 +31,7 @@
 #include "sources/vrcft_source.hpp"
 #include "vrcft/module_library.hpp"
 #include "vrcft/module_registry.hpp"
+#include "vrcft/native_library.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -128,6 +130,9 @@ private:
     void build_gaze(std::string& out);
     void build_modules(std::string& out);
     void build_library(std::string& out);
+    // 原生模块库挂在同一条 library 消息的 native 段里：两个标签页共享一次广播，
+    // 也共享"安装完成后重算已装/可更新"的时机。
+    void append_native_library(json::JsonWriter& writer);
     void build_metrics(std::string& out); // status 的公共部分，HTTP 接口复用
     void build_calibration(std::string& out);
     void build_preview(std::string& out);
@@ -206,6 +211,7 @@ private:
     mutable std::unordered_map<std::string, IconCacheEntry> icon_cache_;
 
     std::unique_ptr<vrcft::ModuleLibrary> library_;
+    std::unique_ptr<vrcft::NativeLibrary> native_library_;
     // OpenVR 初始化会阻塞，放在后台线程；命令结果由 pump() 广播
     std::unique_ptr<steamvr::Service> steamvr_;
     std::string pending_delete_id_;

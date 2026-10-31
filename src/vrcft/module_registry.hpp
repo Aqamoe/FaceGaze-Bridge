@@ -190,6 +190,11 @@ public:
                       const ModuleMetadataOverride* metadata = nullptr,
                       InstallOutcome* outcome = nullptr);
 
+    // 把 .zip 解到指定目录（越界路径/符号链接/解压炸弹都会拒收）。
+    // 模块库要在落盘之前核对包内清单，所以单独暴露这一步，而不是让调用方自己解压。
+    bool extract_archive(const std::filesystem::path& archive,
+                         const std::filesystem::path& dest, std::string& error) const;
+
     // 删除仓里的模块。文件被占用（正在运行）时返回 false 并给出原因。
     bool remove_module(std::string_view id, std::string& error);
 

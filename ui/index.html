@@ -235,8 +235,12 @@
         </div>
         <div class="toolbar">
           <input id="lib-search" type="search" data-i18n-placeholder="modules.library.search" placeholder="搜索模块">
+          <label class="switch" id="lib-native-beta-wrap" hidden>
+            <input type="checkbox" id="lib-native-beta">
+            <span data-i18n="modules.native.show_beta">包含测试版</span>
+          </label>
           <button class="btn" id="lib-refresh" data-i18n="modules.library.refresh">刷新</button>
-          <button class="btn" id="lib-native-install" hidden data-i18n="modules.library.native_install">安装原生模块 (.zip)</button>
+          <button class="btn" id="lib-native-install" hidden data-i18n="modules.library.native_install">手动安装 .zip</button>
           <span class="muted" id="lib-status">—</span>
         </div>
         <div class="module-list" id="library-list"></div>
@@ -245,7 +249,7 @@
           列表来自 registry.vrcft.io（与 VRCFT 同源），下载后校验 MD5 再装入模块仓。安装第三方的模块等于运行它的代码，请只装你信任的来源。
         </p>
         <p class="hint" id="native-library-hint" hidden data-i18n="modules.library.native_hint">
-          原生模块没有在线注册表：用 SDK 构建 .zip 后在这里安装。这里显示已安装的原生模块。
+          列表来自 fgb-registry（原生模块索引，schema v2）：下载后校验 SHA-256 与包内清单再装入模块仓。未审核的模块会标出来，装之前确认来源可信。
         </p>
       </section>
 

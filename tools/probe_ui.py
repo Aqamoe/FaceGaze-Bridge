@@ -257,6 +257,40 @@ def main():
         "})()"))
     print(f"模块页：{modules}")
 
+    # 在线模块库 · 原生模块（fgb-registry schema v2）：卡片必须来自 library 消息的
+    # native 段，而不是"已安装列表"凑数；详情展开后要有介绍/使用说明。
+    native_lib = json.loads(cdp.evaluate(
+        "(() => {"
+        "  document.querySelector('.nav-item[data-page=\"library\"]').click();"
+        "  document.querySelector('#lib-tabs .tab[data-lib-tab=\"native\"]').click();"
+        "  const native = (state.library && state.library.native) || null;"
+        "  const items = native ? native.items : [];"
+        "  const ids = new Set(items.map(item => String(item.id).toLowerCase()));"
+        "  const local_only = ((state.modules && state.modules.items) || [])"
+        "    .filter(m => m.kind === 'native' && !ids.has(String(m.id).toLowerCase()));"
+        "  const cards = [...document.querySelectorAll('#native-library-list .lib-card')];"
+        "  if (cards.length) {"
+        "    cards[0].click();"
+        "  }"
+        "  return JSON.stringify({"
+        "    active: document.querySelector('.page.active').dataset.page,"
+        "    tab: state.library_tab,"
+        "    cards: cards.length,"
+        "    expected: items.length + local_only.length,"
+        "    titles: cards.map(card => card.querySelector('strong').textContent),"
+        "    actions: cards.map(card => card.querySelector('.lib-actions').textContent.trim()),"
+        "    details: cards.length ? cards[0].querySelectorAll('.module-detail').length : 0,"
+        "    beta_toggle: !document.getElementById('lib-native-beta-wrap').hidden,"
+        "    hint: !document.getElementById('native-library-hint').hidden,"
+        "    registry: native ? native.registry.homepage : '',"
+        "    phase: native ? native.status.phase : '',"
+        "    refresh_error: native ? native.status.refresh_error : '',"
+        "    sha256_ok: items.every(item => (item.latest.sha256 || '').length === 64),"
+        "    compatible_flag: items.every(item => typeof item.compatible === 'boolean')"
+        "  });"
+        "})()"))
+    print(f"原生模块库：{native_lib}")
+
     # 运行中的模块实例：多实例时不能只显示第一个
     running = json.loads(cdp.evaluate(
         "(() => {"
@@ -735,6 +769,33 @@ def main():
     if modules.get("active") != "modules" or modules.get("cards") != modules.get("expected"):
         print("FAIL 模块页与 catalog 不一致（期望渲染的卡片数对不上）")
         ok = False
+    if native_lib.get("active") != "library" or native_lib.get("tab") != "native":
+        print(f"FAIL 原生模块库标签页没有打开：{native_lib}")
+        ok = False
+    elif native_lib.get("cards") != native_lib.get("expected"):
+        print(f"FAIL 原生模块库卡片数与 library.native.items 对不上：{native_lib}")
+        ok = False
+    elif native_lib.get("expected", 0) and not native_lib.get("titles"):
+        print(f"FAIL 原生模块库卡片没有标题：{native_lib}")
+        ok = False
+    elif native_lib.get("expected", 0) and native_lib.get("details", 0) < 2:
+        print(f"FAIL 原生模块库卡片展开后没有介绍/使用说明：{native_lib}")
+        ok = False
+    if not native_lib.get("beta_toggle") or not native_lib.get("hint"):
+        print(f"FAIL 原生模块库的测试版开关或说明文案没有显示：{native_lib}")
+        ok = False
+    if native_lib.get("registry") != "https://aqamoe.github.io/fgb-registry/":
+        print(f"FAIL 原生模块库的 registry 首页不对：{native_lib.get('registry')!r}")
+        ok = False
+    if native_lib.get("sha256_ok") is not True or native_lib.get("compatible_flag") is not True:
+        print(f"FAIL 原生模块库条目缺少 sha256 或兼容性判定：{native_lib}")
+        ok = False
+    if native_lib.get("phase") not in ("idle", "downloading", "installing", "error"):
+        print(f"FAIL 原生模块库状态非法：{native_lib.get('phase')!r}")
+        ok = False
+    if native_lib.get("expected", 0) == 0:
+        print(f"WARN 原生模块库没有条目（离线且无缓存？refresh_error="
+              f"{native_lib.get('refresh_error')!r}）")
     if running.get("rows") != running.get("expected"):
         print("FAIL 运行实例列表与 status.modules 不一致")
         ok = False

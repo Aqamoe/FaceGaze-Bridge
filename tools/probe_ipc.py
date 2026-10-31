@@ -168,6 +168,8 @@ def main():
     last_gaze = None
     filter_enabled = None
     ack_ok = None
+    ack_by_command = {}
+    native_library = None
     diag_result = None
     diag_path = os.path.join(tempfile.gettempdir(), f"fgb-probe-diag-{os.getpid()}.zip")
     update_result = None
@@ -212,7 +214,10 @@ def main():
                 last_gaze = message
             elif kind == "ack":
                 ack_ok = message.get("ok")
+                ack_by_command[message.get("command")] = message.get("ok")
                 print(f"  ack: {message.get('command')} ok={ack_ok}")
+            elif kind == "library":
+                native_library = message.get("native")
             elif kind == "diagnostics":
                 diag_result = message
             elif kind == "update":
@@ -224,7 +229,9 @@ def main():
                 "type": "set_filter", "enabled": True, "min_cutoff": 2.5, "beta": 0.8}))
             send_text(sock, json.dumps({"type": "export_diagnostics", "out": diag_path}))
             send_text(sock, json.dumps({"type": "check_updates", "url": release_url}))
-            print("  已发送 set_filter / export_diagnostics / check_updates")
+            send_text(sock, json.dumps({"type": "refresh_native_library"}))
+            print("  已发送 set_filter / export_diagnostics / check_updates / "
+                  "refresh_native_library")
 
     # 再等一小会儿，收 ack 与更新后的 status
     deadline = time.time() + 1.0
@@ -255,6 +262,8 @@ def main():
             elif kind == "gaze":
                 gaze_msgs += 1
                 last_gaze = message
+            elif kind == "library":
+                native_library = message.get("native")
             elif kind == "diagnostics":
                 diag_result = message
             elif kind == "update":
@@ -332,6 +341,34 @@ def main():
         print(f"  gaze WS：{gaze_msgs} 条，最后 valid={last_gaze.get('valid')} "
               f"fixation={last_gaze.get('fixation')} "
               f"saccade={last_gaze.get('saccade_vel_deg_s')}°/s")
+    # 原生模块库（fgb-registry）挂在同一条 library 消息里：界面靠这个段落渲染
+    # 在线列表，字段缺失就等于"页面空白"，必须在这里卡住。
+    if native_library is None:
+        print("FAIL library 消息缺少 native 段（原生模块库）")
+        ok = False
+    else:
+        native_status = native_library.get("status") or {}
+        native_items = native_library.get("items") or []
+        print(f"  原生模块库：{len(native_items)} 个条目 phase={native_status.get('phase')} "
+              f"stale={native_status.get('stale')} "
+              f"refreshing={native_status.get('refreshing')} "
+              f"fetched_at={native_status.get('fetched_at')}")
+        if native_status.get("phase") not in ("idle", "downloading", "installing", "error"):
+            print(f"FAIL 原生模块库状态非法：{native_status}")
+            ok = False
+        for item in native_items:
+            latest = item.get("latest") or {}
+            missing = [key for key in ("id", "name", "versions", "requires", "compatible")
+                       if key not in item]
+            if missing or not latest.get("version") or not latest.get("download_url"):
+                print(f"FAIL 原生模块库条目字段不全：{item.get('id')} 缺 {missing}")
+                ok = False
+            elif len(latest.get("sha256") or "") != 64 or "size" not in latest:
+                print(f"FAIL 原生模块库条目缺少校验信息：{item.get('id')}")
+                ok = False
+    if ack_by_command.get("refresh_native_library") is not True:
+        print(f"FAIL refresh_native_library 没有成功回执：{ack_by_command}")
+        ok = False
     print("PASS" if ok else "FAILED")
     return 0 if ok else 1
 

@@ -63,7 +63,14 @@
 
 ## 6. 网络下载与自动更新
 
-- 模块库走 WinHTTP，下载后按 registry 给的 MD5 校验；
+- VRCFT 模块库走 WinHTTP，下载后按 registry 给的 MD5 校验；
+- **原生模块库（fgb-registry，schema v2）**：`schemaVersion != 2` 整体拒绝；
+  只接受 `https` 下载地址（`127.0.0.1`/`localhost` 供探针联调）；安装前必须
+  ① 字节数与索引 `size` 一致、② `sha256`（BCrypt）一致、③ 解压后核对包内
+  `fgb-native.json` 的 `ModuleId` / `AbiVersion` / `DLL` 与索引条目一致，
+  任何一步失败即删除下载文件并中止。裸 DLL 资产没有包内清单，只按索引元数据安装并记告警。
+- 包内不含签名：`sha256` 防传输损坏与"索引和包不匹配"，防不住作者账号被盗后重新发版；
+  `verified` 只是注册表审核标记，界面原样展示，不当作安全承诺。
 - 更新检查（M6.5）只 GET GitHub Releases 的 latest，返回 tag/name/html_url；
   **不下载、不落盘、不执行**。界面「打开下载页」只允许
   `https://github.com/Aqamoe/FaceGaze-Bridge/` 前缀，经 ShellExecute 交给默认浏览器。
@@ -74,7 +81,8 @@
 1. 控制面 token（若未来支持远程访问）。
 2. zip 解压前预列条目（防未来 tar 行为变化）。
 3. 发布符号包（PDB）以提升崩溃转储可用性，同时注意 PDB 不泄漏源码路径。
-4. 模块库增加发布者/签名展示。
+4. 模块库增加发布者/签名展示（原生库已有 `verified` 与 `sha256`，仍缺 minisign /
+   Authenticode 级别的作者签名）。
 
 ## 8. 发布门禁对照
 

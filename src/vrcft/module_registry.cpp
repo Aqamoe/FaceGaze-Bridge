@@ -1198,6 +1198,13 @@ bool ModuleRegistry::extract_zip(const std::filesystem::path& archive,
 #endif
 }
 
+bool ModuleRegistry::extract_archive(const std::filesystem::path& archive,
+                                     const std::filesystem::path& dest,
+                                     std::string& error) const {
+    error.clear();
+    return extract_zip(archive, dest, error);
+}
+
 bool ModuleRegistry::install_loose_dll(const std::filesystem::path& dll, std::string& error,
                                        const std::string& source, bool replace,
                                        const ModuleMetadataOverride* metadata,

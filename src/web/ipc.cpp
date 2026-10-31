@@ -57,7 +57,7 @@ std::string instance_missing_error(const vrcft::ModuleRegistry* registry,
 // 模块页链接来自 registry 或 module.json，界面只负责展示。这里再回查一遍元数据，
 // 避免页面脚本被改坏后把一条 ws 命令变成"用默认浏览器打开任意 URL"。
 bool known_module_page(const vrcft::ModuleRegistry* registry, const vrcft::ModuleLibrary* library,
-                       std::string_view url) {
+                       const vrcft::NativeLibrary* native_library, std::string_view url) {
     if (url.empty() || url.size() > 2048) {
         return false;
     }
@@ -78,6 +78,14 @@ bool known_module_page(const vrcft::ModuleRegistry* registry, const vrcft::Modul
         const vrcft::LibrarySnapshot snapshot = library->snapshot();
         for (const vrcft::LibraryEntry& entry : snapshot.entries) {
             if (matches(entry.page)) {
+                return true;
+            }
+        }
+    }
+    if (native_library != nullptr) {
+        const vrcft::NativeLibrarySnapshot snapshot = native_library->snapshot();
+        for (const vrcft::NativeEntry& entry : snapshot.registry.modules) {
+            if (matches(entry.homepage) || matches(entry.icon) || matches(entry.latest.release_url)) {
                 return true;
             }
         }
@@ -341,6 +349,11 @@ IpcServer::IpcServer(IpcContext context) : ctx_(std::move(context)) {
         library_->load_cache();
         // 6 小时内不重复联网：启动时先用缓存，过期了才在后台刷新
         library_->refresh_if_stale(std::chrono::hours(6));
+
+        // 原生模块库是另一份索引（registry schema v2），独立缓存与刷新节奏
+        native_library_ = std::make_unique<vrcft::NativeLibrary>(ctx_.modules);
+        native_library_->load_cache();
+        native_library_->refresh_if_stale(std::chrono::hours(6));
     }
 
     // SteamVR 卡片只在发布布局（app.vrmanifest 与 exe 同目录）下可用；
@@ -452,6 +465,9 @@ void IpcServer::stop() {
     log::set_callback({});
     if (library_) {
         library_->stop();
+    }
+    if (native_library_) {
+        native_library_->stop();
     }
     server_.close();
 }
@@ -1346,6 +1362,141 @@ void IpcServer::build_library(std::string& out) {
         writer.obj_end();
     }
     writer.arr_end();
+
+    append_native_library(writer);
+
+    writer.obj_end();
+}
+
+namespace {
+
+void write_strings(json::JsonWriter& writer, const std::vector<std::string>& items) {
+    writer.arr_begin();
+    for (const std::string& item : items) {
+        writer.str(item);
+    }
+    writer.arr_end();
+}
+
+void write_native_version(json::JsonWriter& writer, const vrcft::NativeVersion& version) {
+    writer.key("version").str(version.version);
+    writer.key("channel").str(version.channel);
+    writer.key("published").str(version.published_at);
+    writer.key("download_url").str(version.download_url);
+    writer.key("file_name").str(version.file_name);
+    writer.key("size").integer(static_cast<long long>(version.size));
+    writer.key("sha256").str(version.sha256);
+    writer.key("abi_version").integer(version.abi_version);
+    writer.key("downloads").integer(version.downloads);
+    writer.key("notes").str(version.notes);
+    writer.key("release_url").str(version.release_url);
+}
+
+} // namespace
+
+void IpcServer::append_native_library(json::JsonWriter& writer) {
+    vrcft::NativeLibrarySnapshot snapshot;
+    if (native_library_) {
+        snapshot = native_library_->snapshot();
+    }
+
+    writer.key("native").obj_begin();
+
+    writer.key("registry").obj_begin();
+    writer.key("title").str(snapshot.registry.title);
+    writer.key("description").str(snapshot.registry.description);
+    writer.key("homepage").str(snapshot.registry.homepage);
+    writer.key("generated_at").str(snapshot.registry.generated_at);
+    writer.obj_end();
+
+    writer.key("status").obj_begin();
+    writer.key("stale").boolean(snapshot.status.stale);
+    writer.key("fetched_at").str(snapshot.status.fetched_at);
+    writer.key("refreshing").boolean(snapshot.status.refreshing);
+    writer.key("refresh_error").str(snapshot.status.refresh_error);
+    writer.key("phase").str(snapshot.status.phase);
+    writer.key("error").str(snapshot.status.error);
+    writer.key("install_id").str(snapshot.status.install_id);
+    writer.key("install_version").str(snapshot.status.install_version);
+    writer.key("received").integer(static_cast<long long>(snapshot.status.received));
+    writer.key("total").integer(static_cast<long long>(snapshot.status.total));
+    writer.obj_end();
+
+    writer.key("items").arr_begin();
+    for (const vrcft::NativeEntry& entry : snapshot.registry.modules) {
+        writer.obj_begin();
+        writer.key("id").str(entry.id);
+        writer.key("name").str(entry.name);
+        writer.key("author").str(entry.author);
+        writer.key("author_url").str(entry.author_url);
+        writer.key("summary").str(entry.summary);
+        writer.key("description").str(entry.description);
+        writer.key("usage").str(entry.usage);
+        writer.key("homepage").str(entry.homepage);
+        writer.key("repo").str(entry.repo);
+        writer.key("license").str(entry.license);
+        writer.key("icon").str(entry.icon);
+        writer.key("screenshots");
+        write_strings(writer, entry.screenshots);
+        writer.key("tags");
+        write_strings(writer, entry.tags);
+        writer.key("capabilities");
+        write_strings(writer, entry.capabilities);
+        writer.key("default_role").str(entry.default_role);
+        writer.key("channel").str(entry.channel);
+        writer.key("featured").boolean(entry.featured);
+        writer.key("verified").boolean(entry.verified);
+        writer.key("archived").boolean(entry.archived);
+
+        writer.key("stats").obj_begin();
+        writer.key("downloads").integer(entry.stats_downloads);
+        writer.key("stars").integer(entry.stats_stars);
+        writer.obj_end();
+
+        writer.key("published").str(entry.published_at);
+        writer.key("updated").str(entry.updated_at);
+
+        writer.key("requires").obj_begin();
+        writer.key("abi").integer(entry.requires_abi);
+        writer.key("min_host_version").str(entry.min_host_version);
+        writer.key("os");
+        write_strings(writer, entry.requires_os);
+        writer.key("arch");
+        write_strings(writer, entry.requires_arch);
+        writer.obj_end();
+
+        // 兼容性由引擎判定：界面只按 code 出本地化文案，不自己猜版本号
+        writer.key("compatible").boolean(entry.compatible);
+        writer.key("incompatible_code").str(entry.incompatible_code);
+        writer.key("incompatible_reason").str(entry.incompatible_reason);
+
+        writer.key("latest").obj_begin();
+        write_native_version(writer, entry.latest);
+        writer.obj_end();
+
+        writer.key("versions").arr_begin();
+        for (const vrcft::NativeVersion& version : entry.versions) {
+            writer.obj_begin();
+            write_native_version(writer, version);
+            writer.obj_end();
+        }
+        writer.arr_end();
+
+        // i18n 键是 BCP-47 语言标签；界面按当前语言取，缺了就回落到顶层字段
+        writer.key("i18n").obj_begin();
+        for (const auto& [lang, text] : entry.i18n) {
+            writer.key(lang).obj_begin();
+            writer.key("summary").str(text.summary);
+            writer.key("description").str(text.description);
+            writer.key("usage").str(text.usage);
+            writer.obj_end();
+        }
+        writer.obj_end();
+
+        writer.obj_end();
+    }
+    writer.arr_end();
+
     writer.obj_end();
 }
 
@@ -2085,6 +2236,35 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         } else {
             error = "模块库正在刷新或下载，稍后再试";
         }
+    } else if (has_type && type == "refresh_native_library") {
+        if (native_library_ == nullptr) {
+            error = "native library not available";
+        } else if (native_library_->refresh()) {
+            library_touched = true;
+            ok              = true;
+        } else {
+            error = "原生模块库正在刷新，稍后再试";
+        }
+    } else if (has_type && type == "install_native_library") {
+        std::string id;
+        std::string version;
+        json::field_string(text, "id", id);
+        json::field_string(text, "version", version);
+        if (native_library_ == nullptr) {
+            error = "native library not available";
+        } else if (id.empty()) {
+            error = "missing module id";
+        } else if (native_library_->install(id, version)) {
+            library_touched = true;
+            ok              = true;
+        } else {
+            // install() 把"条目不存在/版本不存在/不兼容/正忙"写进了状态，
+            // 界面已经能看到；ack 里也带上同一句，避免点了没反应。
+            const vrcft::NativeLibrarySnapshot snapshot = native_library_->snapshot();
+            error = snapshot.status.error.empty() ? "原生模块库正在下载，稍后再试"
+                                                  : snapshot.status.error;
+            library_touched = true;
+        }
     } else if (has_type && type == "export_diagnostics") {
         if (diag_running_.load(std::memory_order_acquire)) {
             error = "诊断包正在导出，请稍候";
@@ -2135,7 +2315,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     } else if (has_type && type == "open_module_page") {
         std::string url;
         json::field_string(text, "url", url);
-        if (!known_module_page(ctx_.modules, library_.get(), url)) {
+        if (!known_module_page(ctx_.modules, library_.get(), native_library_.get(), url)) {
             error = "链接不在已安装模块或模块库的元数据里";
         } else if (!open_in_browser(url)) {
             error = "无法打开浏览器";
@@ -2193,7 +2373,8 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         build_modules(message);
         server_.broadcast(message);
     }
-    if (library_touched && ok) {
+    // 失败也要推：界面靠 status.phase/error 显示"为什么没开始"，不能只弹一句 toast
+    if (library_touched) {
         std::string message;
         build_library(message);
         server_.broadcast(message);
@@ -2613,8 +2794,16 @@ void IpcServer::pump(int timeout_ms) {
     }
 
     // 模块库的后台线程与界面是否连着无关：界面断开时下载也要能装完
-    if (library_ != nullptr) {
-        const vrcft::LibraryEvents events = library_->poll();
+    if (library_ != nullptr || native_library_ != nullptr) {
+        vrcft::LibraryEvents events;
+        if (library_ != nullptr) {
+            events = library_->poll();
+        }
+        if (native_library_ != nullptr) {
+            const vrcft::NativeLibraryEvents native_events = native_library_->poll();
+            events.changed         = events.changed || native_events.changed;
+            events.modules_changed = events.modules_changed || native_events.modules_changed;
+        }
         if (events.modules_changed) {
             after_module_change(true, "模块库安装完成");
         }
@@ -2645,8 +2834,10 @@ void IpcServer::pump(int timeout_ms) {
         last_preview_ = now;
     }
 
-    if (library_ != nullptr && library_->busy() &&
-        now - last_library_push_ >= std::chrono::milliseconds(200)) {
+    const bool library_busy =
+        (library_ != nullptr && library_->busy()) ||
+        (native_library_ != nullptr && native_library_->busy());
+    if (library_busy && now - last_library_push_ >= std::chrono::milliseconds(200)) {
         std::string message;
         build_library(message);
         server_.broadcast(message);

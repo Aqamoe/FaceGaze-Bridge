@@ -1,11 +1,11 @@
 #include "vrcft/module_library.hpp"
 
+#include "base/hash.hpp"
 #include "base/json.hpp"
 #include "base/log.hpp"
 #include "net/http_client.hpp"
 
 #include <windows.h>
-#include <bcrypt.h>
 
 #include <algorithm>
 #include <cctype>
@@ -98,52 +98,6 @@ std::string safe_file_name(std::string_view id) {
 bool valid_download_url(std::string_view url) {
     return url.rfind("https://", 0) == 0 || url.rfind("http://127.0.0.1", 0) == 0 ||
            url.rfind("http://localhost", 0) == 0;
-}
-
-std::string md5_file(const std::filesystem::path& path) {
-    BCRYPT_ALG_HANDLE algorithm = nullptr;
-    if (::BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_MD5_ALGORITHM, nullptr, 0) < 0) {
-        return {};
-    }
-
-    DWORD hash_length = 0;
-    DWORD written     = 0;
-    ::BCryptGetProperty(algorithm, BCRYPT_HASH_LENGTH, reinterpret_cast<PUCHAR>(&hash_length),
-                        sizeof(hash_length), &written, 0);
-
-    BCRYPT_HASH_HANDLE hash = nullptr;
-    if (::BCryptCreateHash(algorithm, &hash, nullptr, 0, nullptr, 0, 0) < 0) {
-        ::BCryptCloseAlgorithmProvider(algorithm, 0);
-        return {};
-    }
-
-    std::ifstream input(path, std::ios::binary);
-    char buffer[64 * 1024];
-    bool failed = !input;
-    while (!failed && input) {
-        input.read(buffer, sizeof(buffer));
-        const std::streamsize got = input.gcount();
-        if (got > 0) {
-            failed = ::BCryptHashData(hash, reinterpret_cast<PUCHAR>(buffer),
-                                      static_cast<ULONG>(got), 0) < 0;
-        }
-    }
-
-    std::string result;
-    if (!failed) {
-        std::string digest(static_cast<std::size_t>(hash_length), '\0');
-        if (::BCryptFinishHash(hash, reinterpret_cast<PUCHAR>(digest.data()), hash_length, 0) >= 0) {
-            static const char* hex = "0123456789abcdef";
-            for (const unsigned char byte : digest) {
-                result.push_back(hex[byte >> 4]);
-                result.push_back(hex[byte & 0x0F]);
-            }
-        }
-    }
-
-    ::BCryptDestroyHash(hash);
-    ::BCryptCloseAlgorithmProvider(algorithm, 0);
-    return result;
 }
 
 // ---------- registry JSON ----------
@@ -681,7 +635,7 @@ void ModuleLibrary::do_download(LibraryEntry entry) {
     }
 
     if (!entry.file_hash.empty()) {
-        const std::string actual = md5_file(target);
+        const std::string actual = hash::md5_file(target);
         if (lower(actual) != lower(entry.file_hash)) {
             std::filesystem::remove(target, ec);
             std::lock_guard<std::mutex> lock(mutex_);

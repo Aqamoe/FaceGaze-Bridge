@@ -376,6 +376,11 @@ input[type="checkbox"]:disabled { opacity: .4; cursor: not-allowed; }
 .switch input[type="checkbox"]:checked:hover:not(:disabled)::before { background: #fff; }
 .switch input[type="checkbox"]:focus-visible { outline-offset: 3px; border-radius: 999px; }
 .switch input[type="checkbox"]:disabled { opacity: .45; }
+/* .switch 自己就是 display:inline-flex，会盖掉 [hidden] 的 display:none：
+   模块库工具栏里的"包含测试版"只在原生标签页出现，必须靠这条藏住 */
+.switch[hidden] { display: none; }
+/* 工具栏底色和开关轨道都偏深，不勾选时只剩一个小圆点，轨道几乎看不见 */
+.toolbar .switch input[type="checkbox"] { background: #1b2b4a; }
 
 select {
   appearance: none;
@@ -1412,6 +1417,13 @@ input[type="number"]::-webkit-outer-spin-button {
   word-break: break-all;
 }
 .module-page-link:hover { text-decoration: underline; }
+/* 原生模块库的版本下拉：列表按版本倒序，用于降级/回滚 */
+.native-version-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.native-version-select { min-width: 120px; }
+/* 能力标签成组：.chip 自带 margin-left:auto 是给"单个状态徽标靠右"用的，
+   放进 meta 行会把"表情/眼追"和下载数拆得满屏都是 */
+.lib-caps { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.lib-meta .chip { font-size: 10.5px; margin-left: 0; }
 .lib-actions { margin-top: 11px; display: flex; align-items: center; gap: 10px; }
 .progress {
   flex: 1;

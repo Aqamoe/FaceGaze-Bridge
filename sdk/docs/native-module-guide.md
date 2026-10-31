@@ -5,7 +5,8 @@
 - 用 C/C++ 编译一个 DLL
 - 通过 `fgb_module_query_v2` 暴露身份与回调
 - 在 `update()` 里按属性提交表情 / 眼睛 / 注视 / 头姿
-- 打包成 `.zip`，在 FGB 的「模块库 → 原生模块」或「模块」页安装并选中
+- 打包成 `.zip`，在 FGB 的「模块库 → 原生模块」按本地包安装并选中；
+  发布到 `fgb-registry` 之后，用户可以在同一个页面直接一键安装/更新（§9.1）
 
 参考实现：[`samples/native-sine`](../samples/native-sine)（全通道：表情 + 眼睛 + 头姿）、
 [`samples/native-face`](../samples/native-face)（仅表情）、
@@ -325,14 +326,65 @@ Compress-Archive -Path fgb-native.json,MyModule.dll,icon.svg -DestinationPath My
 
 安装方式：
 
-1. **界面**：「模块库 → 原生模块 → 安装原生模块 (.zip)」，或「模块」页「从 .zip 安装」
-2. **命令行**：`fgb-cli modules install MyModule.zip`
+1. **在线库**：「模块库 → 原生模块」里点「安装」（见 §9.1）
+2. **本地包**：「模块库 → 原生模块 → 手动安装 .zip」，或「模块」页「从 .zip 安装」
+3. **命令行**：`fgb-cli modules install MyModule.zip`
 
 安装后：
 
 1. 到「模块」页把模块「设为启动」
 2. 点「重启引擎」
 3. 状态页应该看到帧率/输入源，模块卡片会显示运行状态或具体错误
+
+### 9.1 上架到 fgb-registry（在线库）
+
+宿主读的是 `https://aqamoe.github.io/fgb-registry/registry.json`
+（`schemaVersion: 2`），内容由 `Aqamoe/fgb-registry` 的 Actions 从各模块仓库的
+Release 聚合出来。上架只需在那边提一个 `modules/<模块名>.json` 的 PR，字段与
+`fgb-native.json` 的对应关系是**会被自动校验**的：
+
+| 仓库侧清单（`modules/*.json`） | 包内清单（`fgb-native.json`） | 校验规则 |
+|---|---|---|
+| `id` | `ModuleId` | 必须完全一致 |
+| `requires.abi` | `AbiVersion` | 必须完全一致（当前 ABI = 2） |
+| `entry` / `assetPattern` | `DllFileName` | Release 资产里必须真的有这个 DLL |
+| `tagPrefix` + Release tag | `Version` | tag 必须是 `v1.2.3` 形式的 semver，且与 `Version` 一致 |
+
+额外要求：
+
+- Release 资产要么是**打包好的 zip**（含 `fgb-native.json` + DLL），要么是**单个 DLL**。
+  单个 DLL 没有包内清单，宿主无法核对身份，只能按索引元数据安装并记一条告警；
+  **推荐发 zip**。
+- 资产会按 `sha256` + `size` 记录进索引。宿主下载后先校验这两项，再解压核对清单：
+  任何一项对不上都会拒绝安装。所以**打完包不要再改 zip**（重新压缩就会换哈希）。
+- 仓库公开、下载地址是 `https`；`requires.os` / `requires.arch` 写
+  `["windows"]` / `["x64"]`（宿主按当前平台判断）。
+- `channel: beta`（GitHub prerelease）的条目在界面里默认隐藏，用户勾选「包含测试版」
+  才看得到；`versions[]` 里保留旧版本，用户可指定版本安装来回滚。
+- `i18n` 可以覆盖 `summary` / `description` / `usage`（BCP-47 键，如 `en`、`ja`），
+  界面按语言取，缺省回落到顶层字段。
+
+自测：
+
+```powershell
+# 打 zip（根目录直接放清单与 DLL）
+Compress-Archive -Path fgb-native.json,MyModule.dll,icon.svg -DestinationPath MyModule.zip
+Get-FileHash MyModule.zip -Algorithm SHA256      # 这个值就是索引里的 sha256
+
+# 用本地索引验证界面（把 registry.json 指到自己的文件/本地服务）
+$env:FGB_NATIVE_REGISTRY = "http://127.0.0.1:8787/registry.json"
+```
+
+### 9.2 宿主的安装校验流程
+
+```
+下载 → ① size / sha256 对照索引 → ② 解压（越界路径、符号链接、解压炸弹检查）
+     → ③ 包内 ModuleId == 索引 id、AbiVersion == requires.abi、DLL 存在
+     → ④ 装入模块仓（同 ModuleId 覆盖升级，保留 config.ini）
+```
+
+失败会停在上一步并给出具体原因（"包内 ModuleId 与模块库条目不一致"、
+"校验失败：下载包的 SHA-256 与模块库不一致"等），不会留下半装状态。
 
 ## 10. 多模块组合
 
