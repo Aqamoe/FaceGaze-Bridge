@@ -57,13 +57,14 @@ def build_calibration():
         "active": sum(1 for shape in shapes if shape["active"]),
         "shapes": shapes,
         "curves": ["0.000,0.000 0.280,0.120 0.700,0.880 1.000,1.000"] + [""] * 7,
-        "eye": {"active": True, "gain_x": 1.2, "gain_y": 1.0, "center_x": 0.4, "center_y": -1.2},
+        "eye": {"active": True, "gain_x": 1.2, "gain_y": 1.0, "center_x": 0.4, "center_y": -1.2,
+                "eyelid_gain": 1.37, "eyelid_lo": 0.10},
     }
 
 
 CALIBRATION = build_calibration()
 PREVIEW = {"type": "preview", "seq": 1, "raw": [0.42] * 88, "out": [0.61] * 88,
-           "eye": {"valid": True, "x": 2.4, "y": -1.1}}
+           "eye": {"valid": True, "open_l": 0.72, "open_r": 0.72, "x": 2.4, "y": -1.1}}
 
 
 def ws_frame(payload, opcode=0x1):
@@ -255,19 +256,29 @@ def main():
             groups: document.querySelectorAll('.cal-group').length,
             thumbs: document.querySelectorAll('.cal-thumb').length,
             icons: document.querySelectorAll('.cal-curve-btn svg').length,
+            splits: document.querySelectorAll('.cal-split-btn').length,
             firstZh: (document.querySelector('.cal-zh') || {}).textContent,
+            eyelid: {
+                gain: (document.querySelector('#cal-eyelid-gain') || {}).value,
+                lo: (document.querySelector('#cal-eyelid-lo') || {}).value,
+                step1: (document.querySelector('#cal-eyelid-step1') || {}).textContent,
+                step2: (document.querySelector('#cal-eyelid-step2') || {}).textContent
+            },
             overflow: [...document.querySelectorAll('.cal-row')].slice(0, 6).map(r => {
                 const s = r.querySelector('.cal-slider');
                 return Math.round(s.getBoundingClientRect().bottom - r.getBoundingClientRect().bottom);
             })
         })"""))
         print("ROWS:", stats)
-        if stats["rows"] != 88:
-            failures.append(f"行数 {stats['rows']} != 88")
+        # 88 个形状里 30 对左右镜像合并成一张卡，剩下 10 个方向性 + 18 个单侧各自一张
+        if stats["rows"] != 58:
+            failures.append(f"行数 {stats['rows']} != 58")
         if stats["groups"] != 9:
             failures.append(f"分组数 {stats['groups']} != 9")
-        if stats["thumbs"] != 176 or stats["icons"] != 88:
+        if stats["thumbs"] != 116 or stats["icons"] != 58:
             failures.append("滑块或曲线图标数量不对")
+        if stats["splits"] != 30:
+            failures.append(f"分离按钮 {stats['splits']} != 30")
         if any(value > 0 for value in stats["overflow"]):
             failures.append("滑块溢出卡片")
 
@@ -304,6 +315,17 @@ def main():
                 handle.write(base64.b64decode(data))
             print("SCREENSHOT:", out)
 
+        # 第二张：关掉浮层，专门看列表的对齐
+        client.evaluate("document.querySelector('.cal-curve-pop').hidden = true")
+        time.sleep(0.3)
+        shot2 = client.call("Page.captureScreenshot", {"format": "png"})
+        data2 = shot2.get("result", {}).get("data", "")
+        if data2:
+            list_out = out.replace(".png", "-list.png")
+            with open(list_out, "wb") as handle:
+                handle.write(base64.b64decode(data2))
+            print("SCREENSHOT-LIST:", list_out)
+
         # 中文搜索：搜"眯眼"必须命中左右两条，否则名称表等于白加
         client.evaluate("document.querySelector('.cal-curve-pop').hidden = true")
         client.evaluate("""(() => {
@@ -318,8 +340,35 @@ def main():
                 .map(r => r.querySelector('.cal-en-name').textContent)
         })"""))
         print("SEARCH:", search)
-        if search["visible"] != 2:
-            failures.append(f"中文搜索命中 {search['visible']} 条，期望 2 条")
+        if search["visible"] != 1:
+            failures.append(f"中文搜索命中 {search['visible']} 条，期望 1 条（左右已合并）")
+
+        # 分离一张合并卡：行数 +1，并且出现两张独立的卡
+        client.evaluate("""(() => {
+            const input = document.querySelector('#cal-search');
+            input.value = '';
+            input.dispatchEvent(new Event('input'));
+        })()""")
+        time.sleep(0.3)
+        client.evaluate("document.querySelector('.cal-split-btn').click()")
+        time.sleep(0.8)
+        split = json.loads(client.evaluate("""JSON.stringify({
+            rows: document.querySelectorAll('.cal-row').length,
+            mergeBtns: document.querySelectorAll('.cal-split-btn.active').length
+        })"""))
+        print("SPLIT:", split)
+        if split["rows"] != 59:
+            failures.append(f"分离后行数 {split['rows']} != 59")
+        if split["mergeBtns"] != 2:
+            failures.append(f"分离后应有 2 个合并按钮，实际 {split['mergeBtns']}")
+
+        # 复原，别把状态留给下一次运行
+        client.evaluate("document.querySelector('.cal-split-btn.active').click()")
+        time.sleep(0.6)
+        back = json.loads(client.evaluate(
+            "JSON.stringify({rows: document.querySelectorAll('.cal-row').length})"))
+        if back["rows"] != 58:
+            failures.append(f"合并回来后行数 {back['rows']} != 58")
     finally:
         process.terminate()
         server.shutdown()

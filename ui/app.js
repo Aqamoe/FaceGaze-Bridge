@@ -195,6 +195,8 @@ const state = {
   preview: null,
   cal_rows: [],
   cal_groups: [],
+  cal_wide_index: -1,   // EyeWideLeft 在协议顺序里的下标，眼睑预测要用
+  split_pairs: load_split_pairs(), // 被拆成左右两张卡的基名集合
   cal_curves_sig: "",
   cal_preview_on: false,
   shape_labels: null,   // ui/shapes.json：协议名 → 人话名称/分组/说明
@@ -2830,24 +2832,94 @@ function cal_apply_filter() {
   $("cal-empty").hidden = visible !== 0;
 }
 
+// 哪些"左右对"被拆开了。存 localStorage 而不是校准档案：这属于界面偏好，
+// 换台机器/换份档案不该让卡片的组织方式跟着变。
+function load_split_pairs() {
+  try {
+    const raw = JSON.parse(localStorage.getItem("fgb.cal.splitPairs") || "[]");
+    return new Set(Array.isArray(raw) ? raw : []);
+  } catch (error) {
+    return new Set();
+  }
+}
+
+function save_split_pairs() {
+  try {
+    localStorage.setItem("fgb.cal.splitPairs", JSON.stringify([...state.split_pairs]));
+  } catch (error) {
+    // 存不下只影响"下次打开记不记得"，不影响校准本身
+  }
+}
+
+// 左右成对的形状共用一张卡片：88 项里有一半是镜像对，分开显示就是同一件事看两遍。
+// 默认同步调，需要时可以单独拆开（状态存在 localStorage，属于界面偏好而不是校准数据）。
+function pair_base(name) {
+  if (name.endsWith("Right")) {
+    return name.slice(0, -5);
+  }
+  if (name.endsWith("Left")) {
+    return name.slice(0, -4);
+  }
+  return "";
+}
+
+function paired_label(name) {
+  const zh = shape_label(name);
+  if (lang === "zh") {
+    // "右眼 眯眼" → "双眼 眯眼"；"右嘴角 上提" → "双嘴角 上提"
+    return zh.replace(/^[左右]/, "双");
+  }
+  const info = shape_info(name);
+  const en = (info && info.en) || name;
+  return `${en.replace(/\b(right|left)\b/gi, "").replace(/\s+/g, " ").trim()} (L/R)`;
+}
+
+// 名字像一对不代表是镜像。"JawRight / JawLeft" 是"下颌向右 / 向左"两个相反动作，
+// 把它们的 lo/hi 绑在一起调，人就只能同时往两边撇嘴。这类在 shapes.json 里标 mirror:false。
+function can_pair(name) {
+  const info = shape_info(name);
+  return !info || info.mirror !== false;
+}
+
 function build_cal_rows(shapes) {
   const list = $("cal-list");
   list.textContent = "";
   state.cal_rows = [];
   state.cal_groups = [];
 
-  // 先按分组桶装，再按 shapes.json 里的分组顺序输出：88 行平铺找不到东西
+  // 配对：遍历时先到的那一侧把另一侧领走，落单的（JawOpen 这类）自己一张卡
+  const by_name = new Map();
+  shapes.forEach((shape, index) => by_name.set(shape.name, index));
+  const seen = new Set();
+  const entries = [];
+  for (const shape of shapes) {
+    if (seen.has(shape.name)) {
+      continue;
+    }
+    const partner = mirror_shape_name(shape.name);
+    const split = state.split_pairs.has(pair_base(shape.name));
+    if (partner && by_name.has(partner) && can_pair(shape.name) && !split) {
+      seen.add(shape.name);
+      seen.add(partner);
+      entries.push({ names: [shape.name, partner], indices: [by_name.get(shape.name), by_name.get(partner)] });
+    } else {
+      seen.add(shape.name);
+      entries.push({ names: [shape.name], indices: [by_name.get(shape.name)] });
+    }
+  }
+
+  // 再按分组桶装：88 个形状平铺找不到东西
   const buckets = new Map();
   for (const group of shape_groups()) {
     buckets.set(group.id, []);
   }
-  shapes.forEach((shape, index) => {
-    const gid = shape_group_id(shape.name);
+  for (const entry of entries) {
+    const gid = shape_group_id(entry.names[0]);
     if (!buckets.has(gid)) {
       buckets.set(gid, []);
     }
-    buckets.get(gid).push({ shape, index });
-  });
+    buckets.get(gid).push(entry);
+  }
 
   for (const group of shape_groups()) {
     const items = buckets.get(group.id) || [];
@@ -2867,7 +2939,7 @@ function build_cal_rows(shapes) {
 
     const group_rows = [];
     for (const entry of items) {
-      const row = build_cal_row(entry.shape, entry.index);
+      const row = build_cal_row(entry.names, entry.indices, shapes);
       body.append(row.element);
       state.cal_rows.push(row);
       group_rows.push(row);
@@ -2877,22 +2949,34 @@ function build_cal_rows(shapes) {
 
   // 顺序按分组排了，但 index 仍是协议顺序：preview 的 raw/out 数组按协议顺序发
   state.cal_rows.sort((a, b) => a.index - b.index);
+  state.cal_wide_index = shapes.findIndex((shape) => shape.name === "EyeWideLeft");
 }
 
-function build_cal_row(shape, index) {
+function build_cal_row(names, indices, shapes) {
+  const shape = shapes[indices[0]];
+  const paired = names.length > 1;
   const row = el("div", "cal-row");
-  row.dataset.name = shape.name.toLowerCase();
-  row.dataset.index = String(index);
+  row.dataset.name = names.join(" ").toLowerCase();
+  row.dataset.index = String(indices[0]);
+
+  // 合并卡的数值取两侧平均：两边曾经单独调过时，拖一下就会重新对齐
+  const avg = (key, fallback) => {
+    const values = indices.map((i) => Number(shapes[i][key]));
+    return values.reduce((a, b) => a + b, 0) / Math.max(1, values.length) || fallback;
+  };
 
   const ui = {
     element: row,
-    index,
-    name: shape.name,
+    index: indices[0],
+    indices,
+    names,
+    name: names[0],
+    paired,
     check: null,
     raw: el("span", "cal-raw", "—"),
     out: el("span", "cal-out", "—"),
-    lo: Number(shape.lo),
-    hi: Number(shape.hi),
+    lo: avg("lo", 0),
+    hi: avg("hi", 1),
     curve: shape.curve || "linear",
     curve_param: Number(shape.curve_param === undefined ? 0.5 : shape.curve_param),
     lo_input: null,
@@ -2911,33 +2995,80 @@ function build_cal_row(shape, index) {
   const name_label = el("label", "cal-name");
   const check = document.createElement("input");
   check.type = "checkbox";
-  check.checked = !!shape.active;
+  check.checked = indices.every((i) => shapes[i].active);
   ui.check = check;
 
-  const names = el("span", "cal-names");
-  names.append(el("b", "cal-zh", shape_label(shape.name)));
+  const names_box = el("span", "cal-names");
+  names_box.append(el("b", "cal-zh", paired ? paired_label(names[0]) : shape_label(shape.name)));
   // 说明放在协议名后面同一行：它原来单独占一列，被右边的「原/出」挤到只剩省略号
   const sub = el("span", "cal-en");
-  sub.append(el("span", "cal-en-name", shape.name));
+  sub.append(el("span", "cal-en-name", paired ? pair_base(names[0]) : shape.name));
   const tip = shape_tip(shape.name);
   if (tip) {
     sub.append(el("span", "cal-tip", `· ${tip}`));
   }
-  names.append(sub);
-  name_label.append(check, names);
-  name_label.title = tip ? `${shape_label(shape.name)}｜${tip}` : shape.name;
+  names_box.append(sub);
+  name_label.append(check, names_box);
+  name_label.title = tip ? `${shape_label(shape.name)}｜${tip}` : names.join(" / ");
 
   head.append(name_label);
-  head.append(ui.raw, ui.out);
 
+  // 右侧一列固定宽度：数值、区域、按钮各就各位，89 行竖着看才对得齐。
+  // 之前直接往 head 里塞，任何一项内容变长都会把前面的「原/出」推走。
+  const tail = el("div", "cal-tail");
+  tail.append(ui.raw, ui.out);
+
+  const region_slot = el("span", "cal-region-slot");
   if (state.face_map) {
-    const regions = face_regions(shape.name);
+    // 合并卡把两侧区域去重后显示：eyelidR + eyelidL → "eyelid"，
+    // 直接并集会得到 "eyelidR · cheekR · eyelidL" 这种又长又乱的串
+    const regions = paired
+      ? [...new Set(names.flatMap((name) => face_regions(name)).map((name) => name.replace(/[LR]$/, "")))]
+      : face_regions(names[0]);
     if (regions.length) {
-      head.append(el("span", "cal-model-region", regions.slice(0, 2).join(" · ")));
+      region_slot.append(el("span", "cal-model-region", regions.slice(0, 3).join(" · ")));
     } else {
       // 没有模型映射就必须标出来：否则用户调了半天看不到变化，会以为坏了
-      head.append(el("span", "cal-model-none", t("calibration.preview.numeric_only")));
+      region_slot.append(el("span", "cal-model-none", t("calibration.preview.numeric_only")));
     }
+  }
+  tail.append(region_slot);
+
+  const SPLIT_ICON = '<svg viewBox="0 0 16 12" aria-hidden="true"><path d="M1 3.5h8M6.5 1.5l2.5 2-2.5 2M15 8.5H7M9.5 6.5L7 8.5l2.5 2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const toggle_split = (split) => {
+    if (split) {
+      state.split_pairs.add(pair_base(names[0]));
+    } else {
+      state.split_pairs.delete(pair_base(names[0]));
+    }
+    save_split_pairs();
+    $("cal-list").dataset.signature = "";
+    render_calibration();
+  };
+
+  if (paired) {
+    const split_btn = el("button", "cal-split-btn");
+    split_btn.type = "button";
+    split_btn.title = t("calibration.pair.split");
+    split_btn.innerHTML = SPLIT_ICON;
+    split_btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggle_split(true);
+    });
+    tail.append(split_btn);
+  } else if (pair_base(names[0]) && can_pair(names[0])) {
+    const merge_btn = el("button", "cal-split-btn active");
+    merge_btn.type = "button";
+    merge_btn.title = t("calibration.pair.merge");
+    merge_btn.innerHTML = SPLIT_ICON;
+    merge_btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggle_split(false);
+    });
+    tail.append(merge_btn);
+  } else {
+    // 占位：没有配对的行也留出同样宽度，否则这些行的「原/出」会比别人靠右
+    tail.append(el("span", "cal-split-slot"));
   }
 
   const curve_btn = el("button", "cal-curve-btn");
@@ -2947,16 +3078,21 @@ function build_cal_row(shape, index) {
     open_curve_popover(ui, curve_btn);
   });
   ui.curve_btn = curve_btn;
-  head.append(curve_btn);
+  tail.append(curve_btn);
+
+  head.append(tail);
 
   row.append(head);
   row.append(build_dual_range(ui));
-  row.addEventListener("click", () => select_face_shape(shape.name));
+  row.addEventListener("click", () => select_face_shape(names[0]));
 
   const info = shape_info(shape.name);
   ui.haystack = [
-    shape.name,
+    names.join(" "),
+    paired ? pair_base(names[0]) : "",
     shape_label(shape.name),
+    paired ? paired_label(names[0]) : "",
+    paired ? names.map((name) => shape_label(name)).join(" ") : "",
     (info && info.en) || "",
     (info && info.zh) || "",
     tip,
@@ -3050,11 +3186,37 @@ function build_capture_buttons(ui) {
     button.title = t("calibration.capture.hint", { end: which });
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      send({ type: "capture_calibration", shape: ui.name, which });
+      capture_row_end(ui, which);
     });
     box.append(button);
   }
   return box;
+}
+
+// 单形状走后端（它顺带做"跨度太小就报错"的校验）；合并卡在前端取两侧平均，
+// 因为这个动作的语义就是"两边的物理值折中一下"，发两次 capture 只会互相覆盖。
+function capture_row_end(ui, which) {
+  if (ui.names.length === 1) {
+    send({ type: "capture_calibration", shape: ui.names[0], which });
+    return;
+  }
+  const preview = state.preview;
+  if (!preview || !preview.raw) {
+    show_toast(t("calibration.capture.no_data"));
+    return;
+  }
+  const values = ui.indices.map((index) => Number(preview.raw[index]) || 0);
+  const average = values.reduce((a, b) => a + b, 0) / Math.max(1, values.length);
+  if (which === "lo") {
+    ui.lo = Math.max(0, Math.min(average, ui.hi - CAL_MIN_SPAN));
+  } else {
+    ui.hi = Math.min(1, Math.max(average, ui.lo + CAL_MIN_SPAN));
+  }
+  if (ui.check && !ui.check.checked) {
+    ui.check.checked = true;
+  }
+  render_dual_range(ui);
+  push_cal_shape(ui);
 }
 
 function track_value(track, client_x) {
@@ -3203,15 +3365,18 @@ function push_cal_shape(ui) {
   }
   clearTimeout(ui.timer);
   ui.timer = null;
-  send({
-    type: "set_calibration_shape",
-    name: ui.name,
-    lo: Number(ui.lo),
-    hi: Number(ui.hi),
-    active: ui.check.checked,
-    curve: ui.curve,
-    curve_param: Number(ui.curve_param),
-  });
+  // 合并卡发两条：后端按名字逐条处理，"同步调节"在协议层就是两条一样的指令
+  for (const name of ui.names) {
+    send({
+      type: "set_calibration_shape",
+      name,
+      lo: Number(ui.lo),
+      hi: Number(ui.hi),
+      active: ui.check.checked,
+      curve: ui.curve,
+      curve_param: Number(ui.curve_param),
+    });
+  }
 }
 
 function paint_range(node) {
@@ -3246,7 +3411,7 @@ function render_calibration() {
   const available = !!data.available;
   for (const id of ["cal-save", "cal-reload", "cal-reset", "cal-eye-active",
     "cal-eye-gain-x", "cal-eye-gain-y", "cal-eye-center-x", "cal-eye-center-y",
-    "cal-eye-capture"]) {
+    "cal-eyelid-gain", "cal-eyelid-lo", "cal-eyelid-capture", "cal-eye-capture"]) {
     $(id).disabled = !available;
   }
 
@@ -3265,22 +3430,28 @@ function render_calibration() {
 
   // 逐行同步：拖拽中的行不要被广播抢回数值，否则滑杆会在手指底下弹
   for (const row of state.cal_rows) {
-    const shape = shapes[row.index];
-    if (!shape) {
+    const parts = row.indices.map((i) => shapes[i]).filter(Boolean);
+    if (!parts.length) {
       continue;
     }
+    // 合并卡显示两侧平均：曾经单独调过时，下一次拖动就会重新对齐（这就是"同步"的含义）
+    const mean = (key, fallback) => {
+      const values = parts.map((part) => Number(part[key]));
+      return values.reduce((a, b) => a + b, 0) / values.length || fallback;
+    };
     if (!row.dragging) {
-      row.lo = Number(shape.lo);
-      row.hi = Number(shape.hi);
+      row.lo = mean("lo", 0);
+      row.hi = mean("hi", 1);
       render_dual_range(row);
     }
+    const active = parts.every((part) => part.active);
     if (document.activeElement !== row.check) {
-      row.check.checked = !!shape.active;
+      row.check.checked = active;
     }
-    row.element.classList.toggle("inactive", !shape.active);
+    row.element.classList.toggle("inactive", !active);
 
-    const curve = shape.curve || "linear";
-    const param = Number(shape.curve_param === undefined ? 0.5 : shape.curve_param);
+    const curve = parts[0].curve || "linear";
+    const param = Number(parts[0].curve_param === undefined ? 0.5 : parts[0].curve_param);
     if (row.curve !== curve || row.curve_param !== param) {
       row.curve = curve;
       row.curve_param = param;
@@ -3315,26 +3486,71 @@ function render_calibration() {
   sync_slider("cal-eye-gain-y", eye.gain_y, 2);
   sync_slider("cal-eye-center-x", eye.center_x, 1);
   sync_slider("cal-eye-center-y", eye.center_y, 1);
+  sync_slider("cal-eyelid-gain", eye.eyelid_gain, 2);
+  sync_slider("cal-eyelid-lo", eye.eyelid_lo, 3);
   if (state.preview) {
     render_preview(state.preview);
   }
   update_face_ui();
 }
 
+// 眼睑预测：v2 的 EyeLid = openness × 0.75 + EyeWide × 0.25。
+// 这里抄一份公式，是为了拖增益时立刻看到结果，而不是等参数页下一次刷新。
+function update_eyelid_live(eye, out) {
+  const step1 = $("cal-eyelid-step1");
+  const step2 = $("cal-eyelid-step2");
+  if (!step1 || !step2) {
+    return;
+  }
+  if (!eye.valid) {
+    step1.textContent = t("calibration.eye.no_data");
+    step2.textContent = "";
+    return;
+  }
+  const gain = Number($("cal-eyelid-gain").value) || 1;
+  const lo = Number($("cal-eyelid-lo").value) || 0;
+  const open = Number(eye.open_l) || 0;
+  const wide = state.cal_wide_index >= 0 ? (Number(out[state.cal_wide_index]) || 0) : 0;
+  // 与后端同一条式子：先扣基线、按剩余范围归一化，再乘增益
+  const span = Math.max(0.001, 1 - lo);
+  const norm = cal_clamp(((open - lo) / span) * gain);
+  const lid = cal_clamp(norm * 0.75 + wide * 0.25);
+  step1.textContent = t("calibration.eyelid.step1", {
+    open: open.toFixed(2),
+    lo: lo.toFixed(3),
+    span: span.toFixed(3),
+    gain: gain.toFixed(2),
+    norm: norm.toFixed(2),
+  });
+  step2.textContent = t("calibration.eyelid.step2", {
+    norm: norm.toFixed(2),
+    wide: wide.toFixed(2),
+    lid: lid.toFixed(2),
+  });
+}
+
 function render_preview(message) {
   const raw = message.raw || [];
   const out = message.out || [];
   for (const row of state.cal_rows) {
-    if (row.index >= raw.length) {
+    const idx = row.indices.filter((i) => i < raw.length);
+    if (!idx.length) {
       continue;
     }
-    row.raw.textContent = `${t("calibration.raw")} ${Number(raw[row.index]).toFixed(3)}`;
-    row.out.textContent = `${t("calibration.out")} ${Number(out[row.index]).toFixed(3)}`;
+    const raw_avg = idx.reduce((a, i) => a + (Number(raw[i]) || 0), 0) / idx.length;
+    const out_avg = idx.reduce((a, i) => a + (Number(out[i]) || 0), 0) / idx.length;
+    row.raw.textContent = `${t("calibration.raw")} ${raw_avg.toFixed(3)}`;
+    row.out.textContent = `${t("calibration.out")} ${out_avg.toFixed(3)}`;
   }
   const eye = message.eye || {};
-  $("cal-eye-live").textContent = eye.valid
-    ? `x ${Number(eye.x).toFixed(1)}°  y ${Number(eye.y).toFixed(1)}°`
+  // 和形状卡片同样的写法：左边是校准前、右边是校准后，一眼看出增益/中心的作用
+  $("cal-eye-raw").textContent = eye.valid
+    ? `${t("calibration.raw")} x ${Number(eye.x).toFixed(1)}° y ${Number(eye.y).toFixed(1)}°`
     : t("calibration.eye.no_data");
+  $("cal-eye-out").textContent = eye.valid
+    ? `${t("calibration.out")} x ${Number(eye.out_x || 0).toFixed(1)}° y ${Number(eye.out_y || 0).toFixed(1)}°`
+    : "";
+  update_eyelid_live(eye, out);
 
   // 模型看的是"实际发出去的输出值"（校准 + 滤波之后），不是原始值
   if (state.face_renderer) {
@@ -3498,7 +3714,9 @@ function open_curve_popover(ui, anchor) {
   pop.row = ui;
   pop.anchor = anchor;
   pop.root.hidden = false;
-  pop.title.textContent = `${shape_label(ui.name)} · ${ui.name}`;
+  pop.title.textContent = ui.paired
+    ? `${paired_label(ui.names[0])} · ${pair_base(ui.names[0])}`
+    : `${shape_label(ui.name)} · ${ui.name}`;
   refresh_curve_popover();
   update_curve_cursor(state.preview);
 
@@ -3546,7 +3764,8 @@ function refresh_curve_popover(row) {
     ? t("calibration.curve.custom_hint")
     : t("calibration.curve.preset_hint");
 
-  const mirror = mirror_shape_name(ui.name);
+  // 合并卡两侧已经同步，再给"同步到另一侧"只会让人以为还有第三个形状
+  const mirror = ui.paired ? "" : mirror_shape_name(ui.name);
   pop.mirror.hidden = !mirror;
   if (mirror) {
     pop.mirror.textContent = t("calibration.curve.mirror", { name: shape_label(mirror) });
@@ -3724,9 +3943,14 @@ function update_curve_cursor(message) {
   if (!pop || pop.root.hidden || !pop.row || !message) {
     return;
   }
-  const index = pop.row.index;
-  const raw = Number((message.raw || [])[index]);
-  const out = Number((message.out || [])[index]);
+  const indices = pop.row.indices.filter((i) => i < (message.raw || []).length);
+  if (!indices.length) {
+    pop.live.textContent = t("calibration.curve.no_data");
+    return;
+  }
+  const mean_of = (list) => indices.reduce((a, i) => a + (Number(list[i]) || 0), 0) / indices.length;
+  const raw = mean_of(message.raw || []);
+  const out = mean_of(message.out || []);
   if (!Number.isFinite(raw)) {
     pop.live.textContent = t("calibration.curve.no_data");
     return;
@@ -3797,6 +4021,9 @@ function push_cal_eye() {
     gain_y: Number($("cal-eye-gain-y").value),
     center_x: Number($("cal-eye-center-x").value),
     center_y: Number($("cal-eye-center-y").value),
+    // 眼睑两项与视线是两件事：只拖它们不该顺带打开"启用视线校准"
+    eyelid_gain: Number($("cal-eyelid-gain").value),
+    eyelid_lo: Number($("cal-eyelid-lo").value),
   });
 }
 
@@ -4146,8 +4373,10 @@ function wire() {
     }
   });
 
-  for (const id of ["cal-eye-gain-x", "cal-eye-gain-y", "cal-eye-center-x", "cal-eye-center-y"]) {
-    const digits = id.includes("center") ? 1 : 2;
+  for (const id of ["cal-eye-gain-x", "cal-eye-gain-y", "cal-eye-center-x", "cal-eye-center-y",
+    "cal-eyelid-gain", "cal-eyelid-lo"]) {
+    // 基线的有效位比增益细一档：0.005 的步长用两位小数会被显示成台阶
+    const digits = id.includes("center") ? 1 : (id === "cal-eyelid-lo" ? 3 : 2);
     $(id).addEventListener("input", () => {
       $(`${id}-v`).textContent = Number($(id).value).toFixed(digits);
       queue_cal_eye();
@@ -4155,6 +4384,19 @@ function wire() {
     $(id).addEventListener("change", push_cal_eye);
   }
   $("cal-eye-active").addEventListener("change", push_cal_eye);
+  $("cal-eyelid-capture").addEventListener("click", () => {
+    // 取实时预览里的原始 openness：它正是模块"此刻"报的值。
+    // 闭眼时点一下就是底噪，比让用户猜一个数字靠谱。
+    const eye = state.preview && state.preview.eye;
+    if (!eye || !eye.valid) {
+      show_toast(t("calibration.eye.no_data"));
+      return;
+    }
+    const value = Math.min(0.5, cal_clamp(Number(eye.open_l) || 0));
+    $("cal-eyelid-lo").value = value.toFixed(3);
+    $("cal-eyelid-lo-v").textContent = value.toFixed(3);
+    push_cal_eye();
+  });
   $("cal-eye-capture").addEventListener("click", () => {
     send({ type: "capture_calibration", shape: "", which: "center" });
   });

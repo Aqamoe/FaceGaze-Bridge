@@ -1251,7 +1251,13 @@ input[type="number"]::-webkit-outer-spin-button {
   font-size: 10.5px;
 }
 
-.cal-model-region { color: var(--dim-2); font-size: 10.5px; margin-left: 2px; }
+.cal-model-region {
+  overflow: hidden;
+  color: var(--dim-2);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 @media (max-width: 1120px) {
   .cal-layout { grid-template-columns: 1fr; }
@@ -1291,6 +1297,77 @@ input[type="number"]::-webkit-outer-spin-button {
 
 .cal-raw, .cal-out { color: var(--dim); font-variant-numeric: tabular-nums; }
 .cal-out { color: var(--acc); }
+
+/* 眼睑增益与视线分开一块：它改的是开合，不是角度，混在视线那四行里容易看错 */
+.cal-eyelid {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+.cal-eye-values {
+  display: flex;
+  gap: 14px;
+  margin-left: auto;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.cal-eye-raw { color: var(--dim); }
+.cal-eye-out { color: var(--acc); }
+
+/* 左右分离/合并：图标按钮，不占文案空间 */
+/* 默认可见：只有 hover 才出现的按钮，等于没有 */
+.cal-split-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--dim-2);
+  cursor: pointer;
+}
+.cal-split-btn svg { width: 15px; height: 11px; }
+.cal-split-btn:hover { border-color: var(--line); color: var(--fg); }
+.cal-split-btn.active { color: var(--acc); border-color: rgb(59 130 246 / .45); }
+
+/* 取视线中心只属于视线那四行：放在眼睑下面会被当成眼睑的按钮 */
+.cal-eye-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.cal-eye-actions .btn { margin-top: 0; }
+
+.cal-eyelid-head {
+  margin-bottom: 6px;
+  color: var(--dim);
+  font-size: 12px;
+  letter-spacing: .04em;
+}
+.cal-eyelid-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+.cal-eyelid-foot .btn { margin-top: 0; }
+.cal-eyelid-note { color: var(--dim-2); font-size: 11px; }
+/* 把两步算式摊开：用户能拿计算器验算，就不需要猜"为什么 0.99 的睁眼只有 0.75 的 EyeLid" */
+.cal-eyelid-math {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--dim-2);
+  font-size: 11px;
+  line-height: 1.7;
+  font-variant-numeric: tabular-nums;
+}
+.cal-eyelid-math #cal-eyelid-step2 { color: var(--fg); }
 
 .cal-range { grid-template-columns: 30px 1fr 64px auto; margin: 6px 0; }
 
@@ -1343,7 +1420,22 @@ input[type="number"]::-webkit-outer-spin-button {
   white-space: nowrap;
 }
 .cal-tip { overflow: hidden; font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
-.cal-raw { margin-left: auto; }
+
+/* 右侧一列：数值 / 区域 / 两个图标按钮。整体右推，内部按固定槽位排，
+   这样 88 行竖着看「原/出」是一条竖线，而不是跟着区域文字长短左右晃。 */
+.cal-tail {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+.cal-region-slot {
+  display: flex;
+  justify-content: flex-end;
+  width: 116px;
+  overflow: hidden;
+}
+.cal-split-slot { flex: 0 0 24px; }
 
 .cal-curve-btn {
   display: inline-flex;

@@ -361,8 +361,35 @@
                   </div>
                 </div>
               </div>
-              <button class="btn small" id="cal-eye-capture" data-i18n="calibration.eye.capture">取当前视线为中心</button>
-              <span class="muted mono" id="cal-eye-live">—</span>
+              <div class="cal-eye-actions">
+                <button class="btn small" id="cal-eye-capture" data-i18n="calibration.eye.capture">取当前视线为中心</button>
+                <span class="cal-eye-values">
+                  <span class="cal-eye-raw" id="cal-eye-raw">—</span>
+                  <span class="cal-eye-out" id="cal-eye-out">—</span>
+                </span>
+              </div>
+
+              <div class="cal-eyelid">
+                <div class="cal-eyelid-head" data-i18n="calibration.eyelid.title">眼睑开合</div>
+                <div class="slider-row">
+                  <span data-i18n="calibration.eyelid.gain">眼睑增益</span>
+                  <input type="range" id="cal-eyelid-gain" min="0.5" max="2.5" step="0.01" value="1">
+                  <b id="cal-eyelid-gain-v">—</b>
+                </div>
+                <div class="slider-row">
+                  <span data-i18n="calibration.eyelid.lo">闭眼基线</span>
+                  <input type="range" id="cal-eyelid-lo" min="0" max="0.5" step="0.005" value="0">
+                  <b id="cal-eyelid-lo-v">—</b>
+                </div>
+                <div class="cal-eyelid-foot">
+                  <button class="btn tiny" id="cal-eyelid-capture" data-i18n="calibration.eyelid.capture">取闭眼值</button>
+                  <span class="cal-eyelid-note" data-i18n="calibration.eyelid.note">基线以下按 0 算，以上重新铺满 0–1</span>
+                </div>
+                <div class="cal-eyelid-math" id="cal-eyelid-live">
+                  <div id="cal-eyelid-step1">—</div>
+                  <div id="cal-eyelid-step2">—</div>
+                </div>
+              </div>
               <p class="hint" data-i18n="calibration.eye.hint">平视前方时点一下「取当前视线为中心」，眼睛就不会总往一边飘。增益调大能让眼动更明显。</p>
             </article>
 
