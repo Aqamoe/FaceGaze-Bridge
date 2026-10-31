@@ -58,13 +58,13 @@ def build_calibration():
         "shapes": shapes,
         "curves": ["0.000,0.000 0.280,0.120 0.700,0.880 1.000,1.000"] + [""] * 7,
         "eye": {"active": True, "gain_x": 1.2, "gain_y": 1.0, "center_x": 0.4, "center_y": -1.2,
-                "eyelid_gain": 1.37, "eyelid_lo": 0.10},
+                "eyelid_gain": 1.37, "eyelid_lo": 0.10, "eyelid_sep": 3.7},
     }
 
 
 CALIBRATION = build_calibration()
 PREVIEW = {"type": "preview", "seq": 1, "raw": [0.42] * 88, "out": [0.61] * 88,
-           "eye": {"valid": True, "open_l": 0.72, "open_r": 0.72, "x": 2.4, "y": -1.1}}
+           "eye": {"valid": True, "open_l": 0.72, "open_r": 0.06, "x": 2.4, "y": -1.1}}
 
 
 def ws_frame(payload, opcode=0x1):
@@ -262,7 +262,8 @@ def main():
                 gain: (document.querySelector('#cal-eyelid-gain') || {}).value,
                 lo: (document.querySelector('#cal-eyelid-lo') || {}).value,
                 step1: (document.querySelector('#cal-eyelid-step1') || {}).textContent,
-                step2: (document.querySelector('#cal-eyelid-step2') || {}).textContent
+                step2: (document.querySelector('#cal-eyelid-step2') || {}).textContent,
+                step3: (document.querySelector('#cal-eyelid-step3') || {}).textContent
             },
             overflow: [...document.querySelectorAll('.cal-row')].slice(0, 6).map(r => {
                 const s = r.querySelector('.cal-slider');

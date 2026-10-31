@@ -196,6 +196,7 @@ const state = {
   cal_rows: [],
   cal_groups: [],
   cal_wide_index: -1,   // EyeWideLeft 在协议顺序里的下标，眼睑预测要用
+  cal_wide_index_r: -1, // EyeWideRight
   split_pairs: load_split_pairs(), // 被拆成左右两张卡的基名集合
   cal_curves_sig: "",
   cal_preview_on: false,
@@ -2950,6 +2951,7 @@ function build_cal_rows(shapes) {
   // 顺序按分组排了，但 index 仍是协议顺序：preview 的 raw/out 数组按协议顺序发
   state.cal_rows.sort((a, b) => a.index - b.index);
   state.cal_wide_index = shapes.findIndex((shape) => shape.name === "EyeWideLeft");
+  state.cal_wide_index_r = shapes.findIndex((shape) => shape.name === "EyeWideRight");
 }
 
 function build_cal_row(names, indices, shapes) {
@@ -3411,7 +3413,8 @@ function render_calibration() {
   const available = !!data.available;
   for (const id of ["cal-save", "cal-reload", "cal-reset", "cal-eye-active",
     "cal-eye-gain-x", "cal-eye-gain-y", "cal-eye-center-x", "cal-eye-center-y",
-    "cal-eyelid-gain", "cal-eyelid-lo", "cal-eyelid-capture", "cal-eye-capture"]) {
+    "cal-eyelid-gain", "cal-eyelid-lo", "cal-eyelid-sep", "cal-eyelid-capture",
+    "cal-eye-capture"]) {
     $(id).disabled = !available;
   }
 
@@ -3488,6 +3491,7 @@ function render_calibration() {
   sync_slider("cal-eye-center-y", eye.center_y, 1);
   sync_slider("cal-eyelid-gain", eye.eyelid_gain, 2);
   sync_slider("cal-eyelid-lo", eye.eyelid_lo, 3);
+  sync_slider("cal-eyelid-sep", eye.eyelid_sep, 1);
   if (state.preview) {
     render_preview(state.preview);
   }
@@ -3499,34 +3503,54 @@ function render_calibration() {
 function update_eyelid_live(eye, out) {
   const step1 = $("cal-eyelid-step1");
   const step2 = $("cal-eyelid-step2");
-  if (!step1 || !step2) {
+  const step3 = $("cal-eyelid-step3");
+  if (!step1 || !step2 || !step3) {
     return;
   }
   if (!eye.valid) {
     step1.textContent = t("calibration.eye.no_data");
     step2.textContent = "";
+    step3.textContent = "";
     return;
   }
   const gain = Number($("cal-eyelid-gain").value) || 1;
   const lo = Number($("cal-eyelid-lo").value) || 0;
-  const open = Number(eye.open_l) || 0;
-  const wide = state.cal_wide_index >= 0 ? (Number(out[state.cal_wide_index]) || 0) : 0;
-  // 与后端同一条式子：先扣基线、按剩余范围归一化，再乘增益
+  const sep = Number($("cal-eyelid-sep").value) || 1;
   const span = Math.max(0.001, 1 - lo);
-  const norm = cal_clamp(((open - lo) / span) * gain);
-  const lid = cal_clamp(norm * 0.75 + wide * 0.25);
-  step1.textContent = t("calibration.eyelid.step1", {
-    open: open.toFixed(2),
-    lo: lo.toFixed(3),
-    span: span.toFixed(3),
-    gain: gain.toFixed(2),
-    norm: norm.toFixed(2),
-  });
-  step2.textContent = t("calibration.eyelid.step2", {
-    norm: norm.toFixed(2),
-    wide: wide.toFixed(2),
-    lid: lid.toFixed(2),
-  });
+  // 与后端同一条式子：先扣基线、按剩余范围归一化，再乘增益
+  const norm = (value) => cal_clamp(((value - lo) / span) * gain);
+  const wide_at = (index) => (index >= 0 ? (Number(out[index]) || 0) : 0);
+
+  const open_l = Number(eye.open_l) || 0;
+  const open_r = Number(eye.open_r) || 0;
+  // 左右分离：把模块压扁的左右差异还原，和后端同一条式子
+  const mid = (open_l + open_r) * 0.5;
+  const half = (open_l - open_r) * 0.5 * sep;
+  const in_l = cal_clamp(mid + half);
+  const in_r = cal_clamp(mid - half);
+
+  const wide_l = wide_at(state.cal_wide_index);
+  const wide_r = wide_at(state.cal_wide_index_r);
+  const norm_l = norm(in_l);
+  const norm_r = norm(in_r);
+  const lid_l = cal_clamp(norm_l * 0.75 + wide_l * 0.25);
+  const lid_r = cal_clamp(norm_r * 0.75 + wide_r * 0.25);
+  // 合并参数就是后端 v2 的 EyeLid：左右各半。wink 时它必然落在中间，
+  // 这里单列出来，就是为了让"睁着的那只眼被闭着的那只拖下去"看得见
+  const lid = cal_clamp((norm_l + norm_r) * 0.5 * 0.75 + (wide_l + wide_r) * 0.5 * 0.25);
+
+  const f2 = (value) => value.toFixed(2);
+  const f3 = (value) => value.toFixed(3);
+  // 分离没开时省掉中间那一箭：公式短一截，也更贴近"原始值直接进映射"的事实
+  const chain = (open, value) => (sep === 1 ? f2(open) : `${f2(open)} → ${f2(value)}`);
+  const line = (side, open, value, norm_value, lid_value) =>
+    `${side}  ${chain(open, value)}  →  (${f3(value)} − ${f3(lo)}) ÷ ${f3(span)} × ${f2(gain)}` +
+    ` = ${f2(norm_value)}  →  EyeLid ${f2(lid_value)}`;
+  step1.textContent = line(t("calibration.eyelid.side_l"), open_l, in_l, norm_l, lid_l);
+  step2.textContent = line(t("calibration.eyelid.side_r"), open_r, in_r, norm_r, lid_r);
+  step3.textContent =
+    `${t("calibration.eyelid.side_both")}  EyeLid = (${f2(norm_l)} + ${f2(norm_r)}) ÷ 2 × 0.75` +
+    ` + EyeWide ${f2((wide_l + wide_r) * 0.5)} × 0.25 = ${f2(lid)}`;
 }
 
 function render_preview(message) {
@@ -4024,6 +4048,7 @@ function push_cal_eye() {
     // 眼睑两项与视线是两件事：只拖它们不该顺带打开"启用视线校准"
     eyelid_gain: Number($("cal-eyelid-gain").value),
     eyelid_lo: Number($("cal-eyelid-lo").value),
+    eyelid_sep: Number($("cal-eyelid-sep").value),
   });
 }
 
@@ -4374,9 +4399,9 @@ function wire() {
   });
 
   for (const id of ["cal-eye-gain-x", "cal-eye-gain-y", "cal-eye-center-x", "cal-eye-center-y",
-    "cal-eyelid-gain", "cal-eyelid-lo"]) {
+    "cal-eyelid-gain", "cal-eyelid-lo", "cal-eyelid-sep"]) {
     // 基线的有效位比增益细一档：0.005 的步长用两位小数会被显示成台阶
-    const digits = id.includes("center") ? 1 : (id === "cal-eyelid-lo" ? 3 : 2);
+    const digits = id.includes("center") ? 1 : (id === "cal-eyelid-lo" ? 3 : (id === "cal-eyelid-sep" ? 1 : 2));
     $(id).addEventListener("input", () => {
       $(`${id}-v`).textContent = Number($(id).value).toFixed(digits);
       queue_cal_eye();

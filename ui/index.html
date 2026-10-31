@@ -368,29 +368,43 @@
                   <span class="cal-eye-out" id="cal-eye-out">—</span>
                 </span>
               </div>
+              <p class="hint" data-i18n="calibration.eye.hint">平视前方时点一下「取当前视线为中心」，眼睛就不会总往一边飘。增益调大能让眼动更明显。</p>
 
               <div class="cal-eyelid">
                 <div class="cal-eyelid-head" data-i18n="calibration.eyelid.title">眼睑开合</div>
-                <div class="slider-row">
-                  <span data-i18n="calibration.eyelid.gain">眼睑增益</span>
-                  <input type="range" id="cal-eyelid-gain" min="0.5" max="2.5" step="0.01" value="1">
-                  <b id="cal-eyelid-gain-v">—</b>
+                <div class="cal-param">
+                  <div class="slider-row">
+                    <span data-i18n="calibration.eyelid.gain">眼睑增益</span>
+                    <input type="range" id="cal-eyelid-gain" min="0.5" max="2.5" step="0.01" value="1">
+                    <b id="cal-eyelid-gain-v">—</b>
+                  </div>
+                  <p class="cal-param-note" data-i18n="calibration.eyelid.gain_hint">把睁开的幅度整体放大。二次元模型嫌眼睛睁不开时调大，1.0 等于不处理。</p>
                 </div>
-                <div class="slider-row">
-                  <span data-i18n="calibration.eyelid.lo">闭眼基线</span>
-                  <input type="range" id="cal-eyelid-lo" min="0" max="0.5" step="0.005" value="0">
-                  <b id="cal-eyelid-lo-v">—</b>
+                <div class="cal-param">
+                  <div class="slider-row">
+                    <span data-i18n="calibration.eyelid.lo">闭眼基线</span>
+                    <input type="range" id="cal-eyelid-lo" min="0" max="0.5" step="0.005" value="0">
+                    <b id="cal-eyelid-lo-v">—</b>
+                  </div>
+                  <p class="cal-param-note" data-i18n="calibration.eyelid.lo_hint">模块闭眼时残留的读数。扣掉它闭眼才真的归零，基线以下一律算 0。</p>
+                </div>
+                <div class="cal-param">
+                  <div class="slider-row">
+                    <span data-i18n="calibration.eyelid.sep">左右分离</span>
+                    <input type="range" id="cal-eyelid-sep" min="1" max="5" step="0.1" value="1">
+                    <b id="cal-eyelid-sep-v">—</b>
+                  </div>
+                  <p class="cal-param-note" data-i18n="calibration.eyelid.sep_hint">还原被模块压扁的左右差异。只影响 wink，正常睁眼左右对称，不受影响。</p>
                 </div>
                 <div class="cal-eyelid-foot">
                   <button class="btn tiny" id="cal-eyelid-capture" data-i18n="calibration.eyelid.capture">取闭眼值</button>
-                  <span class="cal-eyelid-note" data-i18n="calibration.eyelid.note">基线以下按 0 算，以上重新铺满 0–1</span>
                 </div>
                 <div class="cal-eyelid-math" id="cal-eyelid-live">
                   <div id="cal-eyelid-step1">—</div>
                   <div id="cal-eyelid-step2">—</div>
+                  <div id="cal-eyelid-step3">—</div>
                 </div>
               </div>
-              <p class="hint" data-i18n="calibration.eye.hint">平视前方时点一下「取当前视线为中心」，眼睛就不会总往一边飘。增益调大能让眼动更明显。</p>
             </article>
 
             <div class="cal-list" id="cal-list"></div>

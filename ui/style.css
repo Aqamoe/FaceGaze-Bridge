@@ -1348,14 +1348,21 @@ input[type="number"]::-webkit-outer-spin-button {
   font-size: 12px;
   letter-spacing: .04em;
 }
+/* 每个参数配一句"它解决什么问题"：三个滑杆挨在一起，光看名字分不清该动哪个 */
+.cal-param + .cal-param { margin-top: 8px; }
+.cal-param-note {
+  margin: 2px 0 0;
+  color: var(--dim-2);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
 .cal-eyelid-foot {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 .cal-eyelid-foot .btn { margin-top: 0; }
-.cal-eyelid-note { color: var(--dim-2); font-size: 11px; }
 /* 把两步算式摊开：用户能拿计算器验算，就不需要猜"为什么 0.99 的睁眼只有 0.75 的 EyeLid" */
 .cal-eyelid-math {
   margin-top: 8px;
@@ -1364,8 +1371,10 @@ input[type="number"]::-webkit-outer-spin-button {
   background: var(--panel-2);
   color: var(--dim-2);
   font-size: 11px;
-  line-height: 1.7;
+  line-height: 1.85;
   font-variant-numeric: tabular-nums;
+  /* 完整算式一行能到 70 多字符，窄窗口下允许折行，别撑破卡片 */
+  overflow-wrap: anywhere;
 }
 .cal-eyelid-math #cal-eyelid-step2 { color: var(--fg); }
 
