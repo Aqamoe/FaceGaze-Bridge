@@ -145,15 +145,33 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $notes = @"
-          FaceGaze Bridge $env:VERSION
-
-          - 用户级安装（不需要管理员），内置 VRCFT 模块宿主运行时与 VC++ 运行库
-          - FaceGazeBridge-SDK-$env:VERSION.zip 是原生模块开发包（ABI 头、文档、示例）
-          - 安装包未签名，首次运行可能被 SmartScreen 拦截；请用 SHA256SUMS.txt 核对文件
-          - 模块、校准、输出设置保存在 %LOCALAPPDATA%\FaceGazeBridge
-          "@
-          Set-Content -Path release-notes.md -Value $notes -Encoding utf8
+          # 发布说明要写"自上一版以来的变更"，每次贴同一段固定文字等于没写
+          & git fetch --tags --force --quiet
+          $prev = & git describe --tags --abbrev=0 "$env:TAG^" 2>$null
+          if ($LASTEXITCODE -ne 0 -or -not $prev) { $prev = $null }
+          if ($prev) {
+            $header  = "## 自 $prev 以来的变更"
+            $changes = @(& git log "$prev..$env:TAG" --no-merges --pretty=format:"- %s")
+            Write-Host "变更范围：$prev..$env:TAG（$($changes.Count) 条）"
+          } else {
+            $header  = "## 本版变更"
+            $changes = @(& git log -20 --no-merges --pretty=format:"- %s")
+            Write-Host "没有更早的 tag，取最近 20 条提交"
+          }
+          if (-not $changes -or $changes.Count -eq 0) { $changes = @("- 见提交记录") }
+          # 用数组拼接而不是 here-string：YAML 里的缩进会被原样写进 notes，
+          # 4 个空格就把整段变成 Markdown 代码块
+          $lines = @("FaceGaze Bridge $env:VERSION", "", $header, "") + $changes + @(
+            "",
+            "## 安装说明",
+            "",
+            "- 用户级安装（不需要管理员），内置 VRCFT 模块宿主运行时与 VC++ 运行库",
+            "- FaceGazeBridge-SDK-$env:VERSION.zip 是原生模块开发包（ABI 头、文档、示例）",
+            "- 安装包未签名，首次运行可能被 SmartScreen 拦截；请用 SHA256SUMS.txt 核对文件",
+            "- 模块、校准、输出设置保存在 %LOCALAPPDATA%\FaceGazeBridge"
+          )
+          [System.IO.File]::WriteAllText((Join-Path $PWD "release-notes.md"),
+            (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
           $assets = @(
             "dist-installer/FaceGazeBridge-Setup-$env:VERSION.exe",
             "dist-installer/FaceGazeBridge-SDK-$env:VERSION.zip",

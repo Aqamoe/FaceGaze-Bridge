@@ -119,14 +119,33 @@ if ($Publish) {
     if ($NotesFile) {
         Copy-Item $NotesFile $notesPath -Force
     } else {
-        $notes = @"
-FaceGaze Bridge $Version
-
-- 用户级安装（不需要管理员），内置 VRCFT 模块宿主运行时与 VC++ 运行库
-- 安装包未签名，首次运行可能被 SmartScreen 拦截；请用 SHA256SUMS.txt 核对文件
-- 模块、校准、输出设置保存在 %LOCALAPPDATA%\FaceGazeBridge
-"@
-        Set-Content -Path $notesPath -Value $notes -Encoding utf8
+        # 发布说明写"自上一版以来的变更"，每次贴同一段固定文字等于没写。
+        # tag 还没建时按 HEAD 算，方便先出包后打 tag。
+        $end = "HEAD"
+        & git rev-parse -q --verify "refs/tags/$tag" | Out-Null
+        if ($LASTEXITCODE -eq 0) { $end = $tag }
+        $prev = & git describe --tags --abbrev=0 "$end^" 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $prev) { $prev = $null }
+        if ($prev) {
+            $header  = "## 自 $prev 以来的变更"
+            $changes = @(& git log "$prev..$end" --no-merges --pretty=format:"- %s")
+            Write-Host "变更范围：$prev..$end（$($changes.Count) 条）"
+        } else {
+            $header  = "## 本版变更"
+            $changes = @(& git log -20 --no-merges --pretty=format:"- %s")
+        }
+        if (-not $changes -or $changes.Count -eq 0) { $changes = @("- 见提交记录") }
+        $lines = @("FaceGaze Bridge $Version", "", $header, "") + $changes + @(
+            "",
+            "## 安装说明",
+            "",
+            "- 用户级安装（不需要管理员），内置 VRCFT 模块宿主运行时与 VC++ 运行库",
+            "- FaceGazeBridge-SDK-$Version.zip 是原生模块开发包（ABI 头、文档、示例）",
+            "- 安装包未签名，首次运行可能被 SmartScreen 拦截；请用 SHA256SUMS.txt 核对文件",
+            "- 模块、校准、输出设置保存在 %LOCALAPPDATA%\FaceGazeBridge"
+        )
+        [System.IO.File]::WriteAllText($notesPath, (($lines -join "`n") + "`n"),
+            (New-Object System.Text.UTF8Encoding($false)))
     }
 
     $assets = @($setup, $runtimeZipOut, $sdkZip, $sumFile)
