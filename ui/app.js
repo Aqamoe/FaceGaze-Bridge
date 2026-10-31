@@ -194,7 +194,12 @@ const state = {
   calibration: null,
   preview: null,
   cal_rows: [],
+  cal_groups: [],
+  cal_curves_sig: "",
   cal_preview_on: false,
+  shape_labels: null,   // ui/shapes.json：协议名 → 人话名称/分组/说明
+  shape_labels_pending: false,
+  curve_pop: null,      // 曲线编辑浮层（单例，打开时指向某一行）
   steamvr: null,
   steamvr_busy: false,
   face_map: null,
@@ -2598,17 +2603,229 @@ async function ensure_face_loaded() {
   }
 }
 
+// 校准：形状名称、分组、曲线
+//
+// shapes.json 是"人话"来源：协议名（不可改）→ 中文名/英文名/分组/一句话说明。
+// 它和 face_map.json 是两份数据：前者描述"这个参数是什么"，后者描述"它在模型上动哪里"。
+// 换模型资产时只动后者，名字不该跟着变。
+
+const CAL_MIN_SPAN = 0.02;
+const CAL_STEP_BAND = 0.02;
+const CAL_CURVE_PRESETS = [
+  ["linear", "calibration.curve.linear"],
+  ["ease_in", "calibration.curve.ease_in"],
+  ["ease_out", "calibration.curve.ease_out"],
+  ["smooth", "calibration.curve.smooth"],
+  ["step", "calibration.curve.step"],
+];
+
+function cal_clamp(v) {
+  return Math.max(0, Math.min(1, v));
+}
+
+function shape_info(name) {
+  const table = state.shape_labels && state.shape_labels.shapes;
+  return (table && table[name]) || null;
+}
+
+function shape_label(name) {
+  const info = shape_info(name);
+  if (!info) {
+    return name;
+  }
+  return (lang === "zh" ? info.zh : info.en) || name;
+}
+
+function shape_tip(name) {
+  const info = shape_info(name);
+  if (!info || lang !== "zh") {
+    return "";
+  }
+  return info.tip || "";
+}
+
+function shape_group_id(name) {
+  const info = shape_info(name);
+  return (info && info.group) || "";
+}
+
+function shape_groups() {
+  const table = state.shape_labels;
+  if (!table || !Array.isArray(table.groups)) {
+    return [{ id: "", zh: "", en: "" }];
+  }
+  return table.groups;
+}
+
+// 曲线求值必须和后端 apply_curve 一致：缩略图和实际输出不同步，
+// 用户就会觉得"我看到的不是我在用的"。
+// 单调三次 Hermite 的切线（Fritsch–Carlson），与后端 curve_tangents 逐行对应。
+// 表情映射必须连续：折线在控制点有折角，普通样条又会过冲，两者放到脸上都是"抽"。
+function cal_curve_tangents(points) {
+  const n = points.length;
+  const slope = [];
+  for (let i = 0; i < n - 1; i += 1) {
+    const dx = points[i + 1][0] - points[i][0];
+    slope[i] = dx > 1e-6 ? (points[i + 1][1] - points[i][1]) / dx : 0;
+  }
+  const tangent = new Array(n).fill(0);
+  if (n === 2) {
+    tangent[0] = slope[0];
+    tangent[1] = slope[0];
+    return tangent;
+  }
+  tangent[0] = slope[0];
+  tangent[n - 1] = slope[n - 2];
+  for (let i = 1; i < n - 1; i += 1) {
+    tangent[i] = 0.5 * (slope[i - 1] + slope[i]);
+  }
+  for (let i = 0; i < n - 1; i += 1) {
+    if (Math.abs(slope[i]) < 1e-6) {
+      tangent[i] = 0;
+      tangent[i + 1] = 0;
+      continue;
+    }
+    const a = tangent[i] / slope[i];
+    const b = tangent[i + 1] / slope[i];
+    const s = a * a + b * b;
+    if (s > 9) {
+      const tau = 3 / Math.sqrt(s);
+      tangent[i] = tau * a * slope[i];
+      tangent[i + 1] = tau * b * slope[i];
+    }
+  }
+  return tangent;
+}
+
+function cal_hermite(y0, y1, m0, m1, dx, u) {
+  const u2 = u * u;
+  const u3 = u2 * u;
+  return (2 * u3 - 3 * u2 + 1) * y0 + (u3 - 2 * u2 + u) * dx * m0 +
+    (-2 * u3 + 3 * u2) * y1 + (u3 - u2) * dx * m1;
+}
+
+function cal_curve_value(spec, t) {
+  t = cal_clamp(t);
+  const name = spec.curve || "linear";
+  if (name.indexOf("custom:") === 0) {
+    const points = spec.points;
+    if (!points || points.length < 2) {
+      return t;
+    }
+    if (t <= points[0][0]) {
+      return points[0][1];
+    }
+    const tangent = cal_curve_tangents(points);
+    for (let i = 1; i < points.length; i += 1) {
+      if (t <= points[i][0]) {
+        const dx = points[i][0] - points[i - 1][0];
+        if (dx <= 1e-6) {
+          return points[i][1];
+        }
+        const u = (t - points[i - 1][0]) / dx;
+        return cal_clamp(cal_hermite(points[i - 1][1], points[i][1],
+          tangent[i - 1], tangent[i], dx, u));
+      }
+    }
+    return points[points.length - 1][1];
+  }
+  if (name === "ease_in") {
+    return t * t;
+  }
+  if (name === "ease_out") {
+    return t * (2 - t);
+  }
+  if (name === "smooth") {
+    return t * t * (3 - 2 * t);
+  }
+  if (name === "step") {
+    const threshold = cal_clamp(spec.param === undefined ? 0.5 : spec.param);
+    if (t <= threshold - CAL_STEP_BAND) {
+      return 0;
+    }
+    if (t >= threshold + CAL_STEP_BAND) {
+      return 1;
+    }
+    return (t - (threshold - CAL_STEP_BAND)) / (2 * CAL_STEP_BAND);
+  }
+  return t;
+}
+
+function cal_curve_points(spec, samples) {
+  const out = [];
+  for (let i = 0; i <= samples; i += 1) {
+    const t = i / samples;
+    out.push([t, cal_curve_value(spec, t)]);
+  }
+  return out;
+}
+
+// 采样点 → SVG path。pad 给描边留位置，否则 0 和 1 两端会被裁掉半条线。
+// 采样密度按"缩略图看不出来折角"定：32 段足够让 28×18 的小图和 140×140 的画布都顺滑。
+function cal_curve_path(spec, w, h, pad) {
+  const points = cal_curve_points(spec, 32);
+  return points.map(([x, y], i) => {
+    const px = pad + x * (w - pad * 2);
+    const py = h - pad - y * (h - pad * 2);
+    return `${i === 0 ? "M" : "L"}${px.toFixed(2)} ${py.toFixed(2)}`;
+  }).join(" ");
+}
+
+function cal_curve_icon(spec) {
+  const w = 28;
+  const h = 18;
+  return `<svg viewBox="0 0 ${w} ${h}" aria-hidden="true"><path d="${cal_curve_path(spec, w, h, 2)}" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+// "custom:2" → 2；预设返回 -1
+function cal_custom_slot(curve) {
+  return curve && curve.indexOf("custom:") === 0 ? Number(curve.slice(7)) : -1;
+}
+
+function cal_parse_points(text) {
+  if (!text) {
+    return [];
+  }
+  return text.split(/\s+/).filter(Boolean).map((token) => {
+    const [x, y] = token.split(",");
+    return [Number(x) || 0, Number(y) || 0];
+  });
+}
+
+function cal_points_text(points) {
+  return points.map(([x, y]) => `${x.toFixed(3)},${y.toFixed(3)}`).join(" ");
+}
+
+// 行的曲线描述：把 "custom:N" 展开成实际控制点，画图和求值都只认这个对象。
+// 正在编辑的那一行优先用浮层里的草稿点：服务端广播回来之前，缩略图也得跟着手走。
+function row_curve_spec(row) {
+  const slot = cal_custom_slot(row.curve);
+  const pop = state.curve_pop;
+  if (slot >= 0 && pop && pop.row === row && pop.slot === slot && pop.points.length >= 2) {
+    return { curve: row.curve, param: row.curve_param, points: pop.points };
+  }
+  const text = slot >= 0 && state.calibration
+    ? ((state.calibration.curves || [])[slot] || "") : "";
+  return { curve: row.curve, param: row.curve_param, points: cal_parse_points(text) };
+}
+
 function cal_apply_filter() {
   const text = ($("cal-search").value || "").trim().toLowerCase();
   const only_active = $("cal-only-active").checked;
   let visible = 0;
-  for (const row of state.cal_rows) {
-    const show = (!text || row.element.dataset.name.includes(text)) &&
-      (!only_active || row.check.checked);
-    row.element.hidden = !show;
-    if (show) {
-      visible += 1;
+  for (const group of state.cal_groups) {
+    let shown = 0;
+    for (const row of group.items) {
+      const show = (!text || row.haystack.includes(text)) &&
+        (!only_active || row.check.checked);
+      row.element.hidden = !show;
+      if (show) {
+        shown += 1;
+      }
     }
+    group.element.hidden = shown === 0;
+    group.count.textContent = String(shown);
+    visible += shown;
   }
   $("cal-empty").hidden = visible !== 0;
 }
@@ -2616,106 +2833,384 @@ function cal_apply_filter() {
 function build_cal_rows(shapes) {
   const list = $("cal-list");
   list.textContent = "";
-  state.cal_rows = shapes.map((shape, index) => {
-    const row = el("div", "cal-row");
-    row.dataset.name = shape.name.toLowerCase();
-    row.dataset.index = String(index);
+  state.cal_rows = [];
+  state.cal_groups = [];
 
-    const head = el("div", "cal-head");
-    const name_label = el("label", "cal-name");
-    const check = document.createElement("input");
-    check.type = "checkbox";
-    check.checked = !!shape.active;
-    name_label.append(check, el("b", "", shape.name));
-    const raw = el("span", "cal-raw", "—");
-    const out = el("span", "cal-out", "—");
-    head.append(name_label, raw, out);
-    if (state.face_map) {
-      const regions = face_regions(shape.name);
-      if (regions.length) {
-        head.append(el("span", "cal-model-region", regions.slice(0, 2).join(" · ")));
-      } else {
-        // 没有模型映射就必须标出来：否则用户调了半天看不到变化，会以为坏了
-        head.append(el("span", "cal-model-none", t("calibration.preview.numeric_only")));
-      }
+  // 先按分组桶装，再按 shapes.json 里的分组顺序输出：88 行平铺找不到东西
+  const buckets = new Map();
+  for (const group of shape_groups()) {
+    buckets.set(group.id, []);
+  }
+  shapes.forEach((shape, index) => {
+    const gid = shape_group_id(shape.name);
+    if (!buckets.has(gid)) {
+      buckets.set(gid, []);
     }
-    row.append(head);
-    row.addEventListener("click", () => select_face_shape(shape.name));
-
-    let row_ui = null;
-    const make_range = (which) => {
-      const wrap = el("div", "slider-row cal-range");
-      wrap.append(el("span", "", which));
-      const slider = document.createElement("input");
-      slider.type = "range";
-      slider.min = "0";
-      slider.max = "1";
-      slider.step = "0.005";
-      slider.value = String(shape[which]);
-      paint_range(slider);
-      const readout = el("b", "", Number(shape[which]).toFixed(3));
-      const capture = el("button", "btn tiny", t("calibration.capture"));
-      capture.addEventListener("click", () => {
-        // 让用户做动作的瞬间点一下，比手填数字靠谱得多
-        send({ type: "capture_calibration", shape: shape.name, which });
-      });
-      slider.addEventListener("input", () => {
-        paint_range(slider);
-        readout.textContent = Number(slider.value).toFixed(3);
-        queue_cal_shape(row_ui);
-      });
-      slider.addEventListener("change", () => push_cal_shape(row_ui));
-      wrap.append(slider, readout, capture);
-      row.append(wrap);
-      return { slider, readout };
-    };
-
-    const lo = make_range("lo");
-    const hi = make_range("hi");
-    row_ui = {
-      element: row,
-      name: shape.name,
-      check,
-      raw,
-      out,
-      lo: lo.slider,
-      lo_v: lo.readout,
-      hi: hi.slider,
-      hi_v: hi.readout,
-      timer: null,
-    };
-    check.addEventListener("change", () => push_cal_shape(row_ui));
-    if (state.face_selected === shape.name) {
-      row.classList.add("selected");
-    }
-    list.append(row);
-    return row_ui;
+    buckets.get(gid).push({ shape, index });
   });
+
+  for (const group of shape_groups()) {
+    const items = buckets.get(group.id) || [];
+    if (!items.length) {
+      continue;
+    }
+    const details = document.createElement("details");
+    details.className = "cal-group";
+    details.open = true;
+    const summary = document.createElement("summary");
+    const count = el("span", "cal-group-count", "0");
+    summary.append(el("b", "", (lang === "zh" ? group.zh : group.en) || group.id), count);
+    details.append(summary);
+    const body = el("div", "cal-group-body");
+    details.append(body);
+    list.append(details);
+
+    const group_rows = [];
+    for (const entry of items) {
+      const row = build_cal_row(entry.shape, entry.index);
+      body.append(row.element);
+      state.cal_rows.push(row);
+      group_rows.push(row);
+    }
+    state.cal_groups.push({ element: details, count, items: group_rows });
+  }
+
+  // 顺序按分组排了，但 index 仍是协议顺序：preview 的 raw/out 数组按协议顺序发
+  state.cal_rows.sort((a, b) => a.index - b.index);
 }
 
-// 拖动时 60 ms 一次：再快只会让引擎把同一份 4 KB 档案广播十几次，滑杆本身也不会更顺
-function queue_cal_shape(row) {
-  if (!row || row.timer) {
+function build_cal_row(shape, index) {
+  const row = el("div", "cal-row");
+  row.dataset.name = shape.name.toLowerCase();
+  row.dataset.index = String(index);
+
+  const ui = {
+    element: row,
+    index,
+    name: shape.name,
+    check: null,
+    raw: el("span", "cal-raw", "—"),
+    out: el("span", "cal-out", "—"),
+    lo: Number(shape.lo),
+    hi: Number(shape.hi),
+    curve: shape.curve || "linear",
+    curve_param: Number(shape.curve_param === undefined ? 0.5 : shape.curve_param),
+    lo_input: null,
+    hi_input: null,
+    span: null,
+    thumb_lo: null,
+    thumb_hi: null,
+    curve_btn: null,
+    dragging: false,
+    drag: null,
+    timer: null,
+    haystack: "",
+  };
+
+  const head = el("div", "cal-head");
+  const name_label = el("label", "cal-name");
+  const check = document.createElement("input");
+  check.type = "checkbox";
+  check.checked = !!shape.active;
+  ui.check = check;
+
+  const names = el("span", "cal-names");
+  names.append(el("b", "cal-zh", shape_label(shape.name)));
+  // 说明放在协议名后面同一行：它原来单独占一列，被右边的「原/出」挤到只剩省略号
+  const sub = el("span", "cal-en");
+  sub.append(el("span", "cal-en-name", shape.name));
+  const tip = shape_tip(shape.name);
+  if (tip) {
+    sub.append(el("span", "cal-tip", `· ${tip}`));
+  }
+  names.append(sub);
+  name_label.append(check, names);
+  name_label.title = tip ? `${shape_label(shape.name)}｜${tip}` : shape.name;
+
+  head.append(name_label);
+  head.append(ui.raw, ui.out);
+
+  if (state.face_map) {
+    const regions = face_regions(shape.name);
+    if (regions.length) {
+      head.append(el("span", "cal-model-region", regions.slice(0, 2).join(" · ")));
+    } else {
+      // 没有模型映射就必须标出来：否则用户调了半天看不到变化，会以为坏了
+      head.append(el("span", "cal-model-none", t("calibration.preview.numeric_only")));
+    }
+  }
+
+  const curve_btn = el("button", "cal-curve-btn");
+  curve_btn.type = "button";
+  curve_btn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    open_curve_popover(ui, curve_btn);
+  });
+  ui.curve_btn = curve_btn;
+  head.append(curve_btn);
+
+  row.append(head);
+  row.append(build_dual_range(ui));
+  row.addEventListener("click", () => select_face_shape(shape.name));
+
+  const info = shape_info(shape.name);
+  ui.haystack = [
+    shape.name,
+    shape_label(shape.name),
+    (info && info.en) || "",
+    (info && info.zh) || "",
+    tip,
+    shape_group_id(shape.name),
+  ].join(" ").toLowerCase();
+
+  check.addEventListener("change", () => push_cal_shape(ui));
+  paint_curve_icon(ui);
+  render_dual_range(ui);
+  return ui;
+}
+
+// 两端各一个数字框，中间一条轨道两个拇指。
+//
+// 【为什么不用两个 input[type=range] 叠起来】原生 range 做不出"拖中间那一段整体平移"，
+// 而平移恰恰是这个界面最常用的动作：调完 lo 往往要同步移 hi。自绘的代价是要自己处理
+// 键盘与命中判定，但换来的是可控的手感。
+function build_dual_range(ui) {
+  const wrap = el("div", "cal-slider");
+
+  const make_input = (which) => {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "cal-num";
+    input.min = "0";
+    input.max = "1";
+    input.step = "0.005";
+    input.value = Number(which === "lo" ? ui.lo : ui.hi).toFixed(3);
+    input.addEventListener("change", () => {
+      const value = cal_clamp(Number(input.value) || 0);
+      if (ui.check && !ui.check.checked) {
+        ui.check.checked = true; // 手填了数就是想让它生效，别让它静默不工作
+      }
+      if (which === "lo") {
+        ui.lo = Math.max(0, Math.min(value, ui.hi - CAL_MIN_SPAN));
+      } else {
+        ui.hi = Math.min(1, Math.max(value, ui.lo + CAL_MIN_SPAN));
+      }
+      render_dual_range(ui);
+      push_cal_shape(ui);
+    });
+    return input;
+  };
+  ui.lo_input = make_input("lo");
+  ui.hi_input = make_input("hi");
+
+  const track = el("div", "cal-track");
+  const rail = el("div", "cal-rail");
+  const span = el("div", "cal-span");
+  ui.span = span;
+  ui.thumb_lo = el("div", "cal-thumb lo");
+  ui.thumb_hi = el("div", "cal-thumb hi");
+  for (const [thumb, which] of [[ui.thumb_lo, "lo"], [ui.thumb_hi, "hi"]]) {
+    thumb.tabIndex = 0;
+    thumb.setAttribute("role", "slider");
+    thumb.setAttribute("aria-label", `${ui.name} ${which}`);
+    thumb.addEventListener("keydown", (event) => {
+      const big = event.shiftKey ? 0.05 : 0.005;
+      let delta = 0;
+      if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+        delta = -big;
+      } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+        delta = big;
+      } else if (event.key === "Home") {
+        delta = -1;
+      } else if (event.key === "End") {
+        delta = 1;
+      } else {
+        return;
+      }
+      event.preventDefault();
+      nudge_dual_range(ui, which, delta);
+    });
+  }
+  track.append(rail, span, ui.thumb_lo, ui.thumb_hi);
+  track.addEventListener("pointerdown", (event) => begin_drag(ui, event));
+  track.addEventListener("pointermove", (event) => move_drag(ui, event));
+  track.addEventListener("pointerup", (event) => end_drag(ui, event));
+  track.addEventListener("pointercancel", (event) => end_drag(ui, event));
+
+  wrap.append(ui.lo_input, track, ui.hi_input, build_capture_buttons(ui));
+  return wrap;
+}
+
+function build_capture_buttons(ui) {
+  const box = el("div", "cal-capture");
+  for (const which of ["lo", "hi"]) {
+    const button = el("button", "btn tiny", which === "lo"
+      ? t("calibration.capture.lo") : t("calibration.capture.hi"));
+    button.type = "button";
+    button.title = t("calibration.capture.hint", { end: which });
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      send({ type: "capture_calibration", shape: ui.name, which });
+    });
+    box.append(button);
+  }
+  return box;
+}
+
+function track_value(track, client_x) {
+  const rect = track.getBoundingClientRect();
+  return cal_clamp((client_x - rect.left) / Math.max(1, rect.width));
+}
+
+function begin_drag(ui, event) {
+  if (event.button !== 0) {
     return;
   }
-  row.timer = setTimeout(() => {
-    row.timer = null;
-    push_cal_shape(row);
+  const track = event.currentTarget;
+  const value = track_value(track, event.clientX);
+  const px = 14 / Math.max(1, track.getBoundingClientRect().width);
+  const d_lo = Math.abs(value - ui.lo);
+  const d_hi = Math.abs(value - ui.hi);
+  let mode;
+  if (d_lo <= px) {
+    mode = "lo";
+  } else if (d_hi <= px) {
+    mode = "hi";
+  } else if (value > ui.lo && value < ui.hi) {
+    mode = "pan"; // 落在中间段：整段平移，跨度不变
+  } else {
+    mode = d_lo < d_hi ? "lo" : "hi";
+  }
+  ui.drag = {
+    mode,
+    pointer: event.pointerId,
+    start_value: value,
+    start_lo: ui.lo,
+    start_hi: ui.hi,
+  };
+  ui.dragging = true;
+  track.setPointerCapture(event.pointerId);
+  if (ui.check && !ui.check.checked) {
+    ui.check.checked = true; // 开始拖就是在调这个形状，顺手启用，省一次点击
+  }
+  event.preventDefault();
+  move_drag(ui, event);
+}
+
+function move_drag(ui, event) {
+  if (!ui.drag || event.pointerId !== ui.drag.pointer) {
+    return;
+  }
+  const value = track_value(event.currentTarget, event.clientX);
+  const drag = ui.drag;
+  if (drag.mode === "lo") {
+    ui.lo = Math.max(0, Math.min(value, ui.hi - CAL_MIN_SPAN));
+  } else if (drag.mode === "hi") {
+    ui.hi = Math.min(1, Math.max(value, ui.lo + CAL_MIN_SPAN));
+  } else {
+    const delta = value - drag.start_value;
+    let lo = drag.start_lo + delta;
+    let hi = drag.start_hi + delta;
+    if (lo < 0) {
+      hi -= lo;
+      lo = 0;
+    }
+    if (hi > 1) {
+      lo -= hi - 1;
+      hi = 1;
+    }
+    ui.lo = Math.max(0, lo);
+    ui.hi = Math.min(1, hi);
+  }
+  render_dual_range(ui);
+  queue_cal_shape(ui);
+}
+
+function end_drag(ui, event) {
+  if (!ui.drag || event.pointerId !== ui.drag.pointer) {
+    return;
+  }
+  ui.drag = null;
+  ui.dragging = false;
+  push_cal_shape(ui);
+}
+
+function nudge_dual_range(ui, which, delta) {
+  if (delta <= -1 || delta >= 1) {
+    if (which === "lo") {
+      ui.lo = 0;
+    } else {
+      ui.hi = 1;
+    }
+  } else if (which === "lo") {
+    ui.lo = Math.max(0, Math.min(ui.lo + delta, ui.hi - CAL_MIN_SPAN));
+  } else {
+    ui.hi = Math.min(1, Math.max(ui.hi + delta, ui.lo + CAL_MIN_SPAN));
+  }
+  render_dual_range(ui);
+  queue_cal_shape(ui);
+}
+
+function render_dual_range(ui) {
+  if (!ui.span) {
+    return;
+  }
+  const lo = cal_clamp(ui.lo);
+  const hi = cal_clamp(ui.hi);
+  ui.span.style.left = `${lo * 100}%`;
+  ui.span.style.width = `${Math.max(0, hi - lo) * 100}%`;
+  ui.thumb_lo.style.left = `${lo * 100}%`;
+  ui.thumb_hi.style.left = `${hi * 100}%`;
+  ui.thumb_lo.setAttribute("aria-valuenow", lo.toFixed(3));
+  ui.thumb_hi.setAttribute("aria-valuenow", hi.toFixed(3));
+  if (document.activeElement !== ui.lo_input) {
+    ui.lo_input.value = lo.toFixed(3);
+  }
+  if (document.activeElement !== ui.hi_input) {
+    ui.hi_input.value = hi.toFixed(3);
+  }
+  // 跨度就是灵敏度：贴得太近时标黄，提示这个形状几乎成了开关
+  ui.element.classList.toggle("narrow", hi - lo < 0.08);
+}
+
+function paint_curve_icon(ui) {
+  if (!ui.curve_btn) {
+    return;
+  }
+  ui.curve_btn.innerHTML = cal_curve_icon(row_curve_spec(ui));
+  const slot = cal_custom_slot(ui.curve);
+  ui.curve_btn.classList.toggle("custom", slot >= 0);
+  const preset = CAL_CURVE_PRESETS.find((entry) => entry[0] === ui.curve);
+  ui.curve_btn.title = slot >= 0
+    ? t("calibration.curve.custom_title", { n: slot + 1 })
+    : t(preset ? preset[1] : "calibration.curve.linear");
+}
+
+// 拖动时 60 ms 一次：再快只会让引擎把同一份约 2 KB 的档案广播十几次，滑杆本身也不会更顺
+function queue_cal_shape(ui) {
+  if (!ui || ui.timer) {
+    return;
+  }
+  ui.timer = setTimeout(() => {
+    ui.timer = null;
+    push_cal_shape(ui);
   }, 60);
 }
 
-function push_cal_shape(row) {
-  if (!row) {
+function push_cal_shape(ui) {
+  if (!ui) {
     return;
   }
-  clearTimeout(row.timer);
-  row.timer = null;
+  clearTimeout(ui.timer);
+  ui.timer = null;
   send({
     type: "set_calibration_shape",
-    name: row.name,
-    lo: Number(row.lo.value),
-    hi: Number(row.hi.value),
-    active: row.check.checked,
+    name: ui.name,
+    lo: Number(ui.lo),
+    hi: Number(ui.hi),
+    active: ui.check.checked,
+    curve: ui.curve,
+    curve_param: Number(ui.curve_param),
   });
 }
 
@@ -2768,26 +3263,43 @@ function render_calibration() {
     list.dataset.signature = signature;
   }
 
-  shapes.forEach((shape, index) => {
-    const row = state.cal_rows[index];
-    if (!row) {
-      return;
+  // 逐行同步：拖拽中的行不要被广播抢回数值，否则滑杆会在手指底下弹
+  for (const row of state.cal_rows) {
+    const shape = shapes[row.index];
+    if (!shape) {
+      continue;
     }
-    if (document.activeElement !== row.lo) {
-      row.lo.value = String(shape.lo);
+    if (!row.dragging) {
+      row.lo = Number(shape.lo);
+      row.hi = Number(shape.hi);
+      render_dual_range(row);
     }
-    if (document.activeElement !== row.hi) {
-      row.hi.value = String(shape.hi);
-    }
-    paint_range(row.lo);
-    paint_range(row.hi);
-    row.lo_v.textContent = Number(row.lo.value).toFixed(3);
-    row.hi_v.textContent = Number(row.hi.value).toFixed(3);
     if (document.activeElement !== row.check) {
       row.check.checked = !!shape.active;
     }
     row.element.classList.toggle("inactive", !shape.active);
-  });
+
+    const curve = shape.curve || "linear";
+    const param = Number(shape.curve_param === undefined ? 0.5 : shape.curve_param);
+    if (row.curve !== curve || row.curve_param !== param) {
+      row.curve = curve;
+      row.curve_param = param;
+      paint_curve_icon(row);
+      refresh_curve_popover(row);
+    }
+  }
+
+  // 自定义曲线被改写时，所有指向该槽的缩略图都要重画（它们共享一条曲线）
+  const curves_sig = (data.curves || []).join("|");
+  if (curves_sig !== state.cal_curves_sig) {
+    state.cal_curves_sig = curves_sig;
+    for (const row of state.cal_rows) {
+      if (cal_custom_slot(row.curve) >= 0) {
+        paint_curve_icon(row);
+      }
+    }
+    refresh_curve_popover();
+  }
 
   cal_apply_filter();
 
@@ -2812,13 +3324,13 @@ function render_calibration() {
 function render_preview(message) {
   const raw = message.raw || [];
   const out = message.out || [];
-  state.cal_rows.forEach((row, index) => {
-    if (index >= raw.length) {
-      return;
+  for (const row of state.cal_rows) {
+    if (row.index >= raw.length) {
+      continue;
     }
-    row.raw.textContent = `${t("calibration.raw")} ${Number(raw[index]).toFixed(3)}`;
-    row.out.textContent = `${t("calibration.out")} ${Number(out[index]).toFixed(3)}`;
-  });
+    row.raw.textContent = `${t("calibration.raw")} ${Number(raw[row.index]).toFixed(3)}`;
+    row.out.textContent = `${t("calibration.out")} ${Number(out[row.index]).toFixed(3)}`;
+  }
   const eye = message.eye || {};
   $("cal-eye-live").textContent = eye.valid
     ? `x ${Number(eye.x).toFixed(1)}°  y ${Number(eye.y).toFixed(1)}°`
@@ -2829,9 +3341,434 @@ function render_preview(message) {
     state.face_renderer.set_eye(eye);
     state.face_renderer.set_values(out);
   }
+  update_curve_cursor(message);
+}
+
+// ---------- 校准：曲线编辑浮层 ----------
+//
+// 单例浮层而不是新页面：调曲线要看"当前这一帧的原始值落在曲线的哪一段"，
+// 离开列表就看不到上下文了。
+const CC_SIZE = 168;
+const CC_PAD = 14;
+
+function cc_x(x) {
+  return CC_PAD + x * (CC_SIZE - CC_PAD * 2);
+}
+
+function cc_y(y) {
+  return CC_SIZE - CC_PAD - y * (CC_SIZE - CC_PAD * 2);
+}
+
+function mirror_shape_name(name) {
+  if (name.endsWith("Right")) {
+    return `${name.slice(0, -5)}Left`;
+  }
+  if (name.endsWith("Left")) {
+    return `${name.slice(0, -4)}Right`;
+  }
+  return "";
+}
+
+function ensure_curve_pop() {
+  if (state.curve_pop) {
+    return state.curve_pop;
+  }
+  const root = el("div", "cal-curve-pop");
+  root.hidden = true;
+  root.innerHTML = `
+    <div class="cc-head"><b class="cc-title"></b><span class="cc-sub"></span></div>
+    <div class="cc-grid"></div>
+    <div class="cc-custom" hidden>
+      <svg class="cc-canvas" viewBox="0 0 ${CC_SIZE} ${CC_SIZE}" role="img"></svg>
+      <div class="cc-tools">
+        <button type="button" class="btn tiny" data-act="add"></button>
+        <button type="button" class="btn tiny" data-act="remove"></button>
+      </div>
+    </div>    <div class="cc-foot">
+      <span class="cc-live"></span>
+      <button type="button" class="btn tiny" data-act="mirror"></button>
+    </div>`;
+  document.body.append(root);
+
+  const pop = {
+    root,
+    title: root.querySelector(".cc-title"),
+    sub: root.querySelector(".cc-sub"),
+    grid: root.querySelector(".cc-grid"),
+    custom: root.querySelector(".cc-custom"),
+    canvas: root.querySelector(".cc-canvas"),
+    live: root.querySelector(".cc-live"),
+    mirror: root.querySelector("[data-act=mirror]"),
+    row: null,
+    anchor: null,
+    points: [],
+    slot: -1,
+    timer: null,
+  };
+
+  pop.grid.textContent = "";
+  for (const [id, key] of CAL_CURVE_PRESETS) {
+    const card = el("button", "cc-card");
+    card.type = "button";
+    card.dataset.curve = id;
+    card.innerHTML = `<span class="cc-icon">${cal_curve_icon({ curve: id })}</span>`;
+    card.append(el("span", "cc-name", t(key)));
+    card.addEventListener("click", () => {
+      if (!pop.row) {
+        return;
+      }
+      pop.row.curve = id;
+      paint_curve_icon(pop.row);
+      push_cal_shape(pop.row);
+      refresh_curve_popover();
+    });
+    pop.grid.append(card);
+  }
+  const custom = el("button", "cc-card");
+  custom.type = "button";
+  custom.dataset.curve = "custom";
+  // 自定义也给个形状：一条手绘感的 S，表示的正是"你自己定"的那类曲线
+  custom.innerHTML = `<span class="cc-icon">${
+    cal_curve_icon({ curve: "custom:0", points: [[0, 0], [0.28, 0.12], [0.72, 0.88], [1, 1]] })
+  }</span>`;
+  custom.append(el("span", "cc-name", t("calibration.curve.custom")));
+  custom.addEventListener("click", () => {
+    if (!pop.row) {
+      return;
+    }
+    use_custom_curve(pop.row);
+  });
+  pop.grid.append(custom);
+
+  root.querySelector("[data-act=add]").textContent = t("calibration.curve.add_point");
+  root.querySelector("[data-act=remove]").textContent = t("calibration.curve.remove_point");
+  root.querySelector("[data-act=add]").addEventListener("click", () => {
+    if (pop.points.length >= 8) {
+      return;
+    }
+    // 插在最宽的一段中间：用户想加点的位置几乎总是"不够细"的那一段
+    let best = 0;
+    for (let i = 1; i < pop.points.length; i += 1) {
+      if (pop.points[i][0] - pop.points[i - 1][0] >
+          pop.points[best][0] - pop.points[best - 1 < 0 ? 0 : best - 1][0]) {
+        best = i;
+      }
+    }
+    const a = pop.points[Math.max(0, best - 1)];
+    const b = pop.points[best];
+    pop.points.splice(best, 0, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
+    commit_custom_curve(pop);
+  });
+  root.querySelector("[data-act=remove]").addEventListener("click", () => {
+    if (pop.points.length <= 2) {
+      return;
+    }
+    pop.points.splice(Math.floor(pop.points.length / 2), 1);
+    commit_custom_curve(pop);
+  });
+  pop.mirror.addEventListener("click", apply_curve_to_mirror);
+
+  // 点外部关闭。用 pointerdown 而不是 click：拖完控制点松手在浮层外时，
+  // click 会落在 body 上，把刚打开的面板关掉。
+  document.addEventListener("pointerdown", (event) => {
+    if (root.hidden || !pop.row) {
+      return;
+    }
+    if (root.contains(event.target)) {
+      return;
+    }
+    if (pop.anchor && pop.anchor.contains(event.target)) {
+      return;
+    }
+    close_curve_popover();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !root.hidden) {
+      close_curve_popover();
+    }
+  });
+
+  bind_custom_canvas(pop);
+  state.curve_pop = pop;
+  return pop;
+}
+
+function open_curve_popover(ui, anchor) {
+  const pop = ensure_curve_pop();
+  pop.row = ui;
+  pop.anchor = anchor;
+  pop.root.hidden = false;
+  pop.title.textContent = `${shape_label(ui.name)} · ${ui.name}`;
+  refresh_curve_popover();
+  update_curve_cursor(state.preview);
+
+  const rect = anchor.getBoundingClientRect();
+  const width = pop.root.offsetWidth || 328;
+  const height = pop.root.offsetHeight || 300;
+  let left = rect.right - width;
+  left = Math.max(12, Math.min(left, window.innerWidth - width - 12));
+  let top = rect.bottom + 8;
+  if (top + height > window.innerHeight - 12) {
+    top = Math.max(12, rect.top - height - 8);
+  }
+  pop.root.style.left = `${left}px`;
+  pop.root.style.top = `${top}px`;
+}
+
+function close_curve_popover() {
+  const pop = state.curve_pop;
+  if (!pop) {
+    return;
+  }
+  pop.root.hidden = true;
+  pop.row = null;
+  pop.anchor = null;
+}
+
+// 只重画选中态和自定义画布：每次拖动都重建整块 DOM 会把正在拖的圆点换掉
+function refresh_curve_popover(row) {
+  const pop = state.curve_pop;
+  if (!pop || pop.root.hidden || !pop.row) {
+    return;
+  }
+  if (row && row !== pop.row) {
+    return;
+  }
+  const ui = pop.row;
+  const slot = cal_custom_slot(ui.curve);
+  for (const card of pop.grid.querySelectorAll(".cc-card")) {
+    const id = card.dataset.curve;
+    const active = id === "custom" ? slot >= 0 : id === ui.curve;
+    card.classList.toggle("active", active);
+  }
+  pop.custom.hidden = slot < 0;
+  pop.sub.textContent = slot >= 0
+    ? t("calibration.curve.custom_hint")
+    : t("calibration.curve.preset_hint");
+
+  const mirror = mirror_shape_name(ui.name);
+  pop.mirror.hidden = !mirror;
+  if (mirror) {
+    pop.mirror.textContent = t("calibration.curve.mirror", { name: shape_label(mirror) });
+  }
+
+  if (slot >= 0) {
+    // 只在"换了槽"时重新读服务端数据：拖点过程中服务端会广播旧值，
+    // 每次都用它覆盖本地点会让拇指在手指底下弹回去
+    if (pop.slot !== slot) {
+      const text = (state.calibration && (state.calibration.curves || [])[slot]) || "";
+      pop.points = cal_parse_points(text);
+      if (pop.points.length < 2) {
+        pop.points = cal_curve_points(row_curve_spec(ui), 4);
+      }
+      pop.slot = slot;
+    }
+    pop.custom.hidden = false;
+    draw_custom_canvas(pop);
+  } else {
+    pop.slot = -1;
+    pop.custom.hidden = true;
+  }
+  reposition_curve_pop();
+}
+
+// 展开自定义画布后浮层会变高：不重新定位就会顶出视口底部
+function reposition_curve_pop() {
+  const pop = state.curve_pop;
+  if (!pop || pop.root.hidden || !pop.anchor) {
+    return;
+  }
+  const rect = pop.anchor.getBoundingClientRect();
+  const height = pop.root.offsetHeight;
+  let top = rect.bottom + 8;
+  if (top + height > window.innerHeight - 12) {
+    top = Math.max(12, window.innerHeight - height - 12);
+  }
+  pop.root.style.top = `${top}px`;
+}
+
+// 切到自定义时，用当前曲线的形状做起点：视觉上不跳变，用户只在需要的地方改
+function use_custom_curve(ui) {
+  const pop = state.curve_pop;
+  let slot = cal_custom_slot(ui.curve);
+  if (slot < 0) {
+    slot = 0;
+    const used = new Set();
+    for (const row of state.cal_rows) {
+      const s = cal_custom_slot(row.curve);
+      if (s >= 0) {
+        used.add(s);
+      }
+    }
+    for (let i = 0; i < 8; i += 1) {
+      if (!used.has(i)) {
+        slot = i;
+        break;
+      }
+    }
+  }
+  pop.points = cal_curve_points(row_curve_spec(ui), 4);
+  pop.slot = slot;
+  ui.curve = `custom:${slot}`;
+  ui.curve_param = 0.5;
+  commit_custom_curve(pop);
+  refresh_curve_popover();
+}
+
+function commit_custom_curve(pop) {
+  const points = pop.points.slice().sort((a, b) => a[0] - b[0]);
+  // 端点锚定：这里也做一次，保证发出去的东西和后端 sanitize 后一致
+  points[0] = [0, 0];
+  points[points.length - 1] = [1, 1];
+  pop.points = points;
+  draw_custom_canvas(pop);
+  if (pop.row) {
+    paint_curve_icon(pop.row);
+  }
+  send({
+    type: "set_calibration_curve",
+    slot: pop.slot,
+    points: cal_points_text(points),
+  });
+  if (pop.row) {
+    push_cal_shape(pop.row);
+  }
+}
+
+function draw_custom_canvas(pop) {
+  const points = pop.points;
+  const grid = [0.25, 0.5, 0.75].map((t) => {
+    const x = cc_x(t).toFixed(1);
+    const y = cc_y(t).toFixed(1);
+    return `<line x1="${x}" y1="${CC_PAD}" x2="${x}" y2="${CC_SIZE - CC_PAD}" class="cc-grid-line"/>` +
+      `<line x1="${CC_PAD}" y1="${y}" x2="${CC_SIZE - CC_PAD}" y2="${y}" class="cc-grid-line"/>`;
+  }).join("");
+  const smooth = cal_curve_points({ curve: `custom:${pop.slot < 0 ? 0 : pop.slot}`, points }, 48)
+    .map(([x, y], i) => `${i === 0 ? "M" : "L"}${cc_x(x).toFixed(1)} ${cc_y(y).toFixed(1)}`)
+    .join(" ");
+  const dots = points.map(([x, y], i) =>
+    `<circle class="cc-dot${i === 0 || i === points.length - 1 ? " locked" : ""}" data-i="${i}" cx="${cc_x(x).toFixed(1)}" cy="${cc_y(y).toFixed(1)}" r="5"/>`).join("");
+  pop.canvas.innerHTML = `
+    <rect class="cc-frame" x="${CC_PAD}" y="${CC_PAD}" width="${CC_SIZE - CC_PAD * 2}" height="${CC_SIZE - CC_PAD * 2}" rx="4"/>
+    ${grid}
+    <path class="cc-ref" d="M${cc_x(0)} ${cc_y(0)} L${cc_x(1)} ${cc_y(1)}"/>
+    <path class="cc-line" d="${smooth}"/>
+    ${dots}`;
+}
+
+function bind_custom_canvas(pop) {
+  let drag = null;
+  pop.canvas.addEventListener("pointerdown", (event) => {
+    const dot = event.target.closest ? event.target.closest(".cc-dot") : null;
+    if (!dot || dot.classList.contains("locked")) {
+      return;
+    }
+    drag = Number(dot.dataset.i);
+    pop.canvas.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+  pop.canvas.addEventListener("pointermove", (event) => {
+    if (drag === null) {
+      return;
+    }
+    const rect = pop.canvas.getBoundingClientRect();
+    const x = cal_clamp((event.clientX - rect.left) / Math.max(1, rect.width));
+    const y = cal_clamp(1 - (event.clientY - rect.top) / Math.max(1, rect.height));
+    // 中间点只能在自己的邻居之间移动：x 一旦交叉，曲线就不再是函数
+    const prev = pop.points[drag - 1];
+    const next = pop.points[drag + 1];
+    pop.points[drag] = [
+      Math.max(prev[0] + 0.02, Math.min(x, next[0] - 0.02)),
+      y,
+    ];
+    draw_custom_canvas(pop);
+    clearTimeout(pop.timer);
+    pop.timer = setTimeout(() => commit_custom_curve(pop), 80);
+  });
+  const stop = (event) => {
+    if (drag === null) {
+      return;
+    }
+    drag = null;
+    pop.canvas.releasePointerCapture?.(event.pointerId);
+    commit_custom_curve(pop);
+  };
+  pop.canvas.addEventListener("pointerup", stop);
+  pop.canvas.addEventListener("pointercancel", stop);
+}
+
+function apply_curve_to_mirror() {
+  const pop = state.curve_pop;
+  if (!pop || !pop.row) {
+    return;
+  }
+  const target = mirror_shape_name(pop.row.name);
+  if (!target) {
+    return;
+  }
+  // 复制的是"整组手感"：端点 + 曲线。左右脸用不同参数几乎没有正当理由。
+  send({
+    type: "set_calibration_shape",
+    name: target,
+    lo: Number(pop.row.lo),
+    hi: Number(pop.row.hi),
+    active: true,
+    curve: pop.row.curve,
+    curve_param: Number(pop.row.curve_param),
+  });
+}
+
+// 实时游标：让用户看到"这一帧的原始值落在曲线的哪一段"，比任何说明都直观
+function update_curve_cursor(message) {
+  const pop = state.curve_pop;
+  if (!pop || pop.root.hidden || !pop.row || !message) {
+    return;
+  }
+  const index = pop.row.index;
+  const raw = Number((message.raw || [])[index]);
+  const out = Number((message.out || [])[index]);
+  if (!Number.isFinite(raw)) {
+    pop.live.textContent = t("calibration.curve.no_data");
+    return;
+  }
+  const span = Math.max(1e-4, pop.row.hi - pop.row.lo);
+  const t_value = cal_clamp((raw - pop.row.lo) / span);
+  pop.live.textContent = t("calibration.curve.cursor", {
+    raw: raw.toFixed(3),
+    t: t_value.toFixed(3),
+    out: Number.isFinite(out) ? out.toFixed(3) : "—",
+  });
 }
 
 // 预览是"订阅制"：页面关掉就停，引擎热路径回到零额外开销（ADR-0021）
+// 名称表是"锦上添花"：拿不到就退回协议名，校准本身照常可用。
+// 失败只 warn 不弹错——用户不该因为一个翻译文件没读到就没法调表情。
+async function ensure_labels_loaded() {
+  if (state.shape_labels || state.shape_labels_pending) {
+    return;
+  }
+  state.shape_labels_pending = true;
+  try {
+    const response = await fetch("shapes.json", { cache: "force-cache" });
+    if (!response.ok) {
+      throw new Error(`shapes.json HTTP ${response.status}`);
+    }
+    state.shape_labels = await response.json();
+    // 名字和分组都变了，列表必须重建：signature 清掉即可，下一次渲染会自己重建
+    const list = $("cal-list");
+    if (list) {
+      list.dataset.signature = "";
+    }
+    if (state.view === "calibration") {
+      render_calibration();
+    }
+  } catch (error) {
+    console.warn("shapes.json 加载失败，退回协议名", error);
+  } finally {
+    state.shape_labels_pending = false;
+  }
+}
+
 function set_cal_preview(on) {
   if (state.cal_preview_on === on) {
     return;
@@ -2840,6 +3777,7 @@ function set_cal_preview(on) {
   send({ type: "set_preview", enabled: on });
   if (on) {
     ensure_face_loaded();
+    ensure_labels_loaded();
   }
   if (state.face_renderer) {
     if (on) {

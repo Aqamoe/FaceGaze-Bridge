@@ -1244,7 +1244,6 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 
 .cal-model-none {
-  margin-left: auto;
   padding: 0 7px;
   border: 1px dashed var(--line);
   border-radius: 999px;
@@ -1279,7 +1278,14 @@ input[type="number"]::-webkit-outer-spin-button {
   font-size: 12.5px;
 }
 
-.cal-name { display: inline-flex; align-items: center; gap: 8px; min-width: 220px; cursor: pointer; }
+.cal-name {
+  display: inline-flex;
+  flex: 0 0 300px;
+  align-items: center;
+  gap: 8px;
+  width: 300px;
+  cursor: pointer;
+}
 .cal-name input { accent-color: var(--acc); }
 .cal-name b { color: var(--fg); font-weight: 600; }
 
@@ -1287,6 +1293,220 @@ input[type="number"]::-webkit-outer-spin-button {
 .cal-out { color: var(--acc); }
 
 .cal-range { grid-template-columns: 30px 1fr 64px auto; margin: 6px 0; }
+
+/* ---------- 校准：分组 ---------- */
+/* 88 个形状平铺找不到东西，分组头可折叠但默认展开：搜索时按组收起比整页滚更清楚。 */
+.cal-group { display: block; }
+.cal-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 4px 6px;
+  color: var(--dim);
+  font-size: 12px;
+  letter-spacing: .04em;
+  cursor: pointer;
+  list-style: none;
+}
+.cal-group > summary::-webkit-details-marker { display: none; }
+.cal-group > summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transform: rotate(90deg);
+  transition: transform .15s ease;
+}
+.cal-group:not([open]) > summary::before { transform: rotate(0deg); }
+.cal-group-count {
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--dim-2);
+  font-size: 10.5px;
+}
+.cal-group-body { display: grid; gap: 6px; padding-bottom: 6px; }
+
+/* ---------- 校准：行的头部 ---------- */
+/* 宽度写死是为了让 88 行的「原/出」竖着对成一条线；说明文字跟在协议名后面，
+   不再单独占一列——那样它只会被右侧挤成省略号。 */
+.cal-names { display: flex; flex-direction: column; gap: 1px; min-width: 0; line-height: 1.25; }
+.cal-zh { color: var(--fg); font-weight: 600; }
+.cal-en { display: flex; gap: 4px; min-width: 0; color: var(--dim-2); font-size: 10.5px; }
+/* 协议名占固定宽度，说明才能从同一列开始——按名字实际长度排会让 88 行参差不齐 */
+.cal-en-name {
+  flex: 0 0 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cal-tip { overflow: hidden; font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.cal-raw { margin-left: auto; }
+
+.cal-curve-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 26px;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--dim);
+  cursor: pointer;
+}
+.cal-curve-btn:hover { border-color: rgb(59 130 246 / .55); color: var(--fg); }
+.cal-curve-btn.custom { border-color: rgb(124 92 255 / .5); color: var(--acc-2); }
+
+/* ---------- 校准：双滑块 ---------- */
+.cal-slider {
+  display: grid;
+  grid-template-columns: 64px 1fr 64px auto;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+.cal-num {
+  width: 100%;
+  padding: 3px 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11.5px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.cal-num:focus { border-color: var(--acc); outline: none; }
+.cal-num::-webkit-outer-spin-button,
+.cal-num::-webkit-inner-spin-button { margin: 0; -webkit-appearance: none; }
+
+.cal-track {
+  position: relative;
+  height: 24px;
+  cursor: default;
+  touch-action: none;
+}
+.cal-rail {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 2px;
+  background: var(--line);
+}
+/* 中间这段的长度就是增益：跨度越窄越灵敏，不用再看数字 */
+.cal-span {
+  position: absolute;
+  top: 50%;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--acc), var(--acc-2));
+  pointer-events: none;
+}
+.cal-row.narrow .cal-span { background: var(--warn); }
+.cal-thumb {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--acc);
+  border-radius: 50%;
+  background: #eaf2ff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / .45);
+  transform: translate(-50%, -50%);
+}
+.cal-thumb.hi { border-color: var(--acc-2); }
+.cal-thumb:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+
+.cal-capture { display: flex; gap: 4px; }
+.cal-capture .btn { margin-top: 0; }
+
+/* ---------- 校准：曲线浮层 ---------- */
+.cal-curve-pop {
+  position: fixed;
+  z-index: 60;
+  width: 336px;
+  max-height: calc(100vh - 24px);
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: 0 18px 48px rgb(0 0 0 / .55);
+  overflow-y: auto;
+}
+.cc-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; }
+.cc-title { color: var(--fg); font-size: 13px; }
+.cc-sub { color: var(--dim-2); font-size: 11px; }
+.cc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.cc-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--dim);
+  cursor: pointer;
+}
+.cc-card:hover { border-color: rgb(59 130 246 / .5); color: var(--fg); }
+.cc-card.active {
+  border-color: var(--acc);
+  background: rgb(59 130 246 / .14);
+  color: var(--fg);
+}
+.cc-icon { display: block; }
+/* 图标必须给尺寸：SVG 没有 width/height 时会被 flex 压成 0 宽，预设卡片就只剩文字 */
+.cc-icon svg { display: block; width: 46px; height: 26px; }
+.cc-name { font-size: 11px; line-height: 1.3; }
+/* 画布在上、工具条在下：放在右侧时按钮会被挤成十几像素，文字直接看不见 */
+.cc-custom {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.cc-canvas {
+  flex: 0 0 auto;
+  width: 140px;
+  height: 140px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  touch-action: none;
+}
+.cc-tools { display: flex; flex: 0 0 auto; flex-direction: row; gap: 6px; width: 100%; }
+/* 高度必须写死：row 容器里子项的 auto 高度会和 stretch 互相等，最后塌成几像素 */
+.cc-tools .btn { flex: 1; height: 26px; white-space: nowrap; }
+.cc-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+.cc-live { color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+.cc-grid-line { stroke: rgb(139 154 189 / .16); stroke-width: 1; }
+.cc-frame { fill: none; stroke: rgb(139 154 189 / .2); }
+.cc-ref { fill: none; stroke: rgb(139 154 189 / .35); stroke-width: 1; stroke-dasharray: 3 3; }
+.cc-line { fill: none; stroke: var(--acc); stroke-width: 2; stroke-linejoin: round; }
+.cc-dot { fill: var(--panel); stroke: var(--acc); stroke-width: 2; }
+.cc-dot.locked { fill: var(--acc); }
 
 .btn.tiny { padding: 3px 9px; font-size: 11.5px; margin-top: 0; }
 .btn:disabled { opacity: .42; cursor: not-allowed; }
