@@ -516,8 +516,73 @@ FGB_TEST(install_zip_with_root_folder) {
     }
 }
 
-FGB_TEST(install_zip_rejects_path_traversal) {
+// 安装前探测目标模块：更新时界面要据此先把运行中的实例停下，
+// 探测结果必须和真正落盘后的 ID 一致，否则停错实例/停不到实例。
+FGB_TEST(peek_package_id_matches_install_result) {
     TempDir root;
+    const fs::path zip = root.path / "module.zip";
+    write_zip(zip, {{"Pico/module.json", metadata_for("pico-id", "PicoModule", "Mod.dll")},
+                    {"Pico/Mod.dll", "dll"}});
+
+    ModuleRegistry registry{root.path / "modules.ini", root.path / "store"};
+    std::string id;
+    std::string error;
+    FGB_CHECK(registry.peek_package_id(zip, id, error));
+    FGB_CHECK(id == "pico-id");
+
+    // 探测不落盘：仓里没有模块，临时解压目录也不能留下（.tmp-peek-* 会被当成残留）
+    FGB_CHECK(registry.modules().empty());
+    std::size_t leftovers = 0;
+    std::error_code ec;
+    if (fs::is_directory(root.path / "store", ec)) {
+        for (const auto& entry : fs::directory_iterator(root.path / "store", ec)) {
+            (void)entry;
+            ++leftovers;
+        }
+    }
+    FGB_CHECK(leftovers == 0);
+
+    FGB_CHECK(registry.install_path(zip, error, "zip"));
+    const ModuleInfo* installed = registry.find(id);
+    FGB_CHECK(installed != nullptr);
+}
+
+FGB_TEST(peek_package_id_loose_dll_uses_stem) {
+    TempDir root;
+    const fs::path dll = root.path / "LooseMod.dll";
+    write_file(dll, "not a real dll");
+
+    ModuleRegistry registry{root.path / "modules.ini", root.path / "store"};
+    std::string id;
+    std::string error;
+    FGB_CHECK(registry.peek_package_id(dll, id, error));
+    FGB_CHECK(id == "LooseMod");
+}
+
+FGB_TEST(peek_package_id_reports_bad_packages) {
+    TempDir root;
+    ModuleRegistry registry{root.path / "modules.ini", root.path / "store"};
+    std::string id;
+    std::string error;
+
+    FGB_CHECK(!registry.peek_package_id(root.path / "missing.zip", id, error));
+    FGB_CHECK(!error.empty());
+
+    const fs::path text = root.path / "notes.txt";
+    write_file(text, "hello");
+    error.clear();
+    FGB_CHECK(!registry.peek_package_id(text, id, error));
+    FGB_CHECK(error.find(".zip") != std::string::npos);
+
+    // 包里没有 DLL：装不上，探测也要明确失败，让调用方按"未知目标"处理
+    const fs::path empty_zip = root.path / "empty.zip";
+    write_zip(empty_zip, {{"readme.txt", "nothing here"}});
+    error.clear();
+    FGB_CHECK(!registry.peek_package_id(empty_zip, id, error));
+    FGB_CHECK(!error.empty());
+}
+
+FGB_TEST(install_zip_rejects_path_traversal) {    TempDir root;
     const fs::path zip = root.path / "evil.zip";
     write_zip(zip, {{"../evil.txt", "bad"}, {"module.json", metadata_for("ok", "Ok", "Ok.dll")},
                     {"Ok.dll", "dll"}});

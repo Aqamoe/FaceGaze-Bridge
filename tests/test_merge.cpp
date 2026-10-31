@@ -331,8 +331,34 @@ FGB_TEST(engine_processors_run_once_per_merged_frame) {
     FGB_CHECK(counter_raw->calls == 5);
 }
 
-FGB_TEST(merge_splits_gaze_from_eyes) {
-    FakeSource eyes{"eyes"};
+// 模块被删除时要把输入源彻底摘掉：只 stop 的话，界面「输入源 / 运行中的实例」
+// 会继续显示一个已经不在磁盘上的模块（真机上就是这么被用户发现的）。
+FGB_TEST(engine_remove_source_drops_it_from_report) {
+    Engine engine;
+    auto source = std::make_unique<FakeSource>("native:gone");
+    FakeSource* raw = source.get();
+    engine.add_source(std::move(source));
+
+    raw->push(expression_frame(0.5f));
+    engine.tick_once(1'000'000ULL);
+    FGB_CHECK(engine.source_report().size() == 1);
+
+    std::string error;
+    FGB_CHECK(engine.remove_source("native:gone", error));
+    FGB_CHECK(error.empty());
+    FGB_CHECK(engine.source_report().empty());
+
+    // 再摘一次要明确说找不到（界面对已删除实例点「启动」也会走这条）
+    FGB_CHECK(!engine.remove_source("native:gone", error));
+    FGB_CHECK(!error.empty());
+
+    // 别的源不能被误删
+    engine.add_source(std::make_unique<FakeSource>("vmc"));
+    FGB_CHECK(engine.source_report().size() == 1);
+    FGB_CHECK(engine.source_report().front().name == "vmc");
+}
+
+FGB_TEST(merge_splits_gaze_from_eyes) {    FakeSource eyes{"eyes"};
     FakeSource gaze{"gaze"};
 
     SourceMerger merger;

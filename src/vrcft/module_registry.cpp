@@ -893,6 +893,18 @@ ModuleInfo ModuleRegistry::scan_dll(const std::filesystem::path& dll,
     return info;
 }
 
+ModuleInfo ModuleRegistry::scan_package(const std::filesystem::path& dir) const {
+    ModuleInfo info = scan_directory(dir, "install");
+    // 扫描根可能套了一层目录（zip 常见），往上找真正的模块根
+    if (info.broken) {
+        const std::filesystem::path nested = find_module_root(dir);
+        if (nested != dir) {
+            info = scan_directory(nested, "install");
+        }
+    }
+    return info;
+}
+
 void ModuleRegistry::scan_store() {
     modules_.clear();
     if (store_dir_.empty()) {
@@ -1205,6 +1217,60 @@ bool ModuleRegistry::extract_archive(const std::filesystem::path& archive,
     return extract_zip(archive, dest, error);
 }
 
+bool ModuleRegistry::peek_package_id(const std::filesystem::path& path, std::string& id,
+                                     std::string& error) const {
+    error.clear();
+    id.clear();
+    std::error_code ec;
+    if (path.empty() || !std::filesystem::exists(path, ec)) {
+        error = "文件不存在";
+        return false;
+    }
+
+    if (std::filesystem::is_directory(path, ec)) {
+        const ModuleInfo info = scan_package(path);
+        if (!info.broken) {
+            id = info.id;
+        }
+    } else {
+        const std::string extension = lower(path.extension().string());
+        if (extension == ".dll") {
+            // 裸 DLL 安装时没有清单，ID 就是文件名（与 scan_directory 的兜底一致）
+            id = path.stem().string();
+        } else if (extension == ".zip") {
+            const std::filesystem::path temp =
+                store_dir_ / (".tmp-peek-" + std::to_string(
+                                                 std::chrono::steady_clock::now()
+                                                     .time_since_epoch()
+                                                     .count()));
+            std::filesystem::create_directories(temp, ec);
+            if (!extract_zip(path, temp, error)) {
+                std::filesystem::remove_all(temp, ec);
+                return false;
+            }
+            const ModuleInfo info = scan_package(find_module_root(temp));
+            if (!info.broken) {
+                id = info.id;
+            }
+            std::filesystem::remove_all(temp, ec);
+        } else {
+            error = "只支持 .zip 安装包或 .dll";
+            return false;
+        }
+    }
+
+    if (id.empty()) {
+        error = "没有找到模块 DLL";
+        return false;
+    }
+    if (!valid_module_id(id)) {
+        id.clear();
+        error = "模块 ID 含有非法字符，拒绝安装";
+        return false;
+    }
+    return true;
+}
+
 bool ModuleRegistry::install_loose_dll(const std::filesystem::path& dll, std::string& error,
                                        const std::string& source, bool replace,
                                        const ModuleMetadataOverride* metadata,
@@ -1237,14 +1303,7 @@ bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
     }
     std::error_code ec;
 
-    ModuleInfo info = scan_directory(source_dir, "install");
-    // 扫描根可能套了一层目录（zip 常见），往上找真正的模块根
-    if (info.broken) {
-        const std::filesystem::path nested = find_module_root(source_dir);
-        if (nested != source_dir) {
-            info = scan_directory(nested, "install");
-        }
-    }
+    ModuleInfo info = scan_package(source_dir);
     if (info.broken) {
         error = "没有找到模块 DLL";
         return false;
@@ -1353,8 +1412,9 @@ bool ModuleRegistry::install_directory(const std::filesystem::path& source_dir,
         std::filesystem::rename(dest, backup, ec);
         if (ec) {
             // 用错误码而不是 ec.message()：后者是 ANSI 文本，混进 UTF-8 日志会乱码
-            error = "无法替换旧版本（模块可能正在运行）：请先在「模块」页停止该模块实例"
-                    "或重启引擎后重试（错误码 " +
+            error = "无法替换旧版本（模块 DLL 被占用）：界面里的删除/更新会先自动停实例，"
+                    "仍失败说明是别的程序占着这个文件（另一个 FaceGaze Bridge、VRCFT 本体或"
+                    "杀毒扫描），关掉占用方后重试（错误码 " +
                     std::to_string(ec.value()) + "）";
             std::filesystem::remove_all(staging, ec);
             return false;

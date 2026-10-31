@@ -32,8 +32,15 @@ void SourceMerger::add(ISource* source) {
     slots_.push_back(slot);
 }
 
-bool SourceMerger::fresh(const Slot& slot, std::uint64_t now_ns,
-                         std::uint64_t stale_ns) const noexcept {
+void SourceMerger::remove(ISource* source) {
+    slots_.erase(std::remove_if(slots_.begin(), slots_.end(),
+                                [source](const Slot& slot) { return slot.source == source; }),
+                 slots_.end());
+    // 策略里留下的旧名字不用清：pick() 找不到就按"没指定"回落到注册顺序，
+    // 用户下次把同名实例加回来时策略仍然有效。
+}
+
+bool SourceMerger::fresh(const Slot& slot, std::uint64_t now_ns,                         std::uint64_t stale_ns) const noexcept {
     if (!slot.has_frame) {
         return false;
     }

@@ -93,6 +93,25 @@ bool Engine::start_source(std::string_view name, std::string& error) {
     return false;
 }
 
+bool Engine::remove_source(std::string_view name, std::string& error) {
+    error.clear();
+    for (auto it = sources_.begin(); it != sources_.end(); ++it) {
+        ISource* source = it->get();
+        if (source == nullptr || name != source->name()) {
+            continue;
+        }
+        // 先停（关宿主进程 / FreeLibrary），再脱离合并器，最后析构：
+        // 析构里也会 stop()，但先显式停能保证文件立刻解锁，删除模块不会撞占用。
+        source->stop();
+        merger_.remove(source);
+        sources_.erase(it);
+        FGB_INFO(kTag, "输入源 '%s' 已移除", std::string(name).c_str());
+        return true;
+    }
+    error = "找不到输入源";
+    return false;
+}
+
 bool Engine::start() {
     for (auto& source : sources_) {
         if (!source->start()) {

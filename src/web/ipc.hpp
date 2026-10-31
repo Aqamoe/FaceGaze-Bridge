@@ -2,6 +2,7 @@
 //
 // 形态：`ws://127.0.0.1:<port>/ws`，JSON 文本帧。
 //   - 引擎 → UI：hello / catalog（参数名表，只在连接建立时发一次）/ status / params / log
+//                notice（删除/安装/更新这类异步动作的最终结果，成功失败都推）
 //   - UI → 引擎：set_filter / reload_avatar / set_log_level / quit，逐条回 ack
 //
 // 为什么是 WebSocket 而不是让页面轮询 HTTP：
@@ -43,6 +44,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <vector>
 
 namespace fgb::web {
 
@@ -113,9 +115,6 @@ public:
     // 引擎主循环里每帧调用。内部自带节流：状态与参数各 10 Hz 推送。
     void pump(int timeout_ms);
 
-    // 删除正在运行的模块：引擎停下、DLL 解锁之后再执行，返回要删除的 id
-    std::string take_pending_delete();
-
 private:
     struct LogLine {
         int level = 2;
@@ -158,6 +157,29 @@ private:
     void poll_picker();
     void start_picker();
     void after_module_change(bool ok, const std::string& message);
+
+    // 删除 / 安装 / 更新要替换 DLL，而 Windows 不允许改写正在被加载的文件。
+    // 以前的做法是弹窗让用户自己去实例行点「停止」；现在由这三个协助函数代劳。
+    std::vector<std::string> stop_module_instances(const std::string& module_id);
+    bool start_instance(const std::string& display_name, std::string& error);
+    // 模块删除后把它的输入源从引擎里摘掉（否则输入源/帧率还挂着一个不存在的模块）
+    void forget_module_instances(const std::string& module_id);
+
+    // 异步安装（模块库下载完才落盘）代停的实例与结果，整理成一次可读的提醒。
+    // 一个库同时只有一个安装任务，所以按库各存一条。
+    struct ModuleJob {
+        std::string module_id;
+        std::string name;
+        std::string version;
+        std::vector<std::string> stopped_instances;
+        bool update = false;
+        bool active = false;
+    };
+    ModuleJob& job_for(bool native) { return native ? native_job_ : vrcft_job_; }
+    void finish_module_job(bool native, bool ok, const std::string& error);
+    // 停掉的实例恢复运行；返回第一条失败原因（空 = 都起来了），restored 回填成功数
+    std::string restart_instances(const std::vector<std::string>& names, std::size_t* restored);
+    void broadcast_notice(bool ok, const std::string& text);
 
     IpcContext ctx_;
     net::WsServer server_;
@@ -214,7 +236,11 @@ private:
     std::unique_ptr<vrcft::NativeLibrary> native_library_;
     // OpenVR 初始化会阻塞，放在后台线程；命令结果由 pump() 广播
     std::unique_ptr<steamvr::Service> steamvr_;
-    std::string pending_delete_id_;
+    ModuleJob vrcft_job_;
+    ModuleJob native_job_;
+    // 库安装的相位只在 pump() 里读一次：下一条命令不会重置它，但两条库各自独立
+    std::string last_vrcft_phase_  = "idle";
+    std::string last_native_phase_ = "idle";
     std::shared_ptr<PickerState> picker_;
     std::chrono::steady_clock::time_point last_library_push_{};
 };

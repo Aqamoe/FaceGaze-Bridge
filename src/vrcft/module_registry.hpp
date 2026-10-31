@@ -195,6 +195,12 @@ public:
     bool extract_archive(const std::filesystem::path& archive,
                          const std::filesystem::path& dest, std::string& error) const;
 
+    // 只读探测：这个安装包会装成哪个模块（不写入模块仓）。
+    // 安装前要据此判断"目标模块正在跑"，先把实例停下来，否则旧 DLL 被锁，
+    // 用户只会看到"无法替换旧版本"。探测失败不代表装不上，调用方按未知处理即可。
+    bool peek_package_id(const std::filesystem::path& path, std::string& id,
+                         std::string& error) const;
+
     // 删除仓里的模块。文件被占用（正在运行）时返回 false 并给出原因。
     bool remove_module(std::string_view id, std::string& error);
 
@@ -220,6 +226,9 @@ private:
     void scan_import_roots();
     ModuleInfo scan_directory(const std::filesystem::path& dir, const std::string& origin) const;
     ModuleInfo scan_dll(const std::filesystem::path& dll, const std::string& origin) const;
+    // 解压/拷贝后的包根目录 → 模块元数据。装目录结构与安装前探测共用这一份，
+    // 免得两处"往上找一层"的规则各写一遍后漂移。
+    ModuleInfo scan_package(const std::filesystem::path& dir) const;
 
     bool install_directory(const std::filesystem::path& source_dir, std::string& error,
                            const std::string& source, bool replace,

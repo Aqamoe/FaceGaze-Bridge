@@ -203,6 +203,10 @@ python tools/build_vrcft_runtime.py --dest dist/runtime/vrcft
 # library.native 段与 refresh_native_library 回执）
 python tools/probe_ipc.py 8787
 
+# 模块管理动作：临时 LOCALAPPDATA + 本地 registry，真的删除/更新一个正在运行的
+# 原生模块，验证"自动停实例 → 删/换 → 自动恢复 → notice 结果"
+python tools/probe_module_actions.py
+
 # 界面：通过 WebView2 远程调试端口跑 JS，验证页面真的渲染了数据
 # 包含 3D 模型加载、morph、区域高亮、原生模块库标签页、SteamVR 卡片（只读检测，不切换真实自启动）
 # 校准页/输出设置页会真的保存：引擎启动时加 --calibration 与 --outputs-config 指到临时文件，
@@ -290,7 +294,9 @@ gh run watch <id> --exit-status
 | 截图偏移/尺寸不对 | 截出来的窗口错位 | PowerShell 先 `SetProcessDpiAwarenessContext(-4)` 再量窗口 |
 | `fgb.ini` 写盘 | 整份重写 | 加新键时必须**先读再写**，否则盖掉用户手改的内容 |
 | zip 安装 | 解压后目录结构不对/越界 | 用系统 `tar.exe` 解压，再校验路径/符号链接/体积；不要自己拼 zip 解析 |
-| 模块更新失败 | 提示"正在被占用" | 引擎加载模块时 DLL 被锁；先停引擎再更新（界面会拒绝删除运行中的模块） |
+| 模块更新失败 | 提示"正在被占用" | 引擎加载模块时 DLL 被锁。正常路径由 IPC 先 `stop_source` 再装（用户确认即授权），装完自动拉起；仍失败说明是**别的进程**占着 DLL，报错要指明这一点 |
+| 删除运行中的模块 | 报「删除失败（正在被占用）」 | 同上：先停该模块的所有实例再删，失败时把实例恢复运行；只有 `remove_all` 真的删掉了才清配置 |
+| 删除后「运行中的实例 / 输入源」还在 | 只 `stop_source` 不摘源 | 合并器槽位与 `ctx_.running_modules` / `source_names` 仍留着它。删除成功后必须 `Engine::remove_source`（停止 + 从合并器、源列表摘除），`IpcServer::forget_module_instances()` 已封装 |
 | 模块装完仍显示"安装" | 包内没有 module.json，ID 退化成 DLL 名 | 模块库安装必须传 `ModuleMetadataOverride` 兜底；版本比较用语义版本，不要用字符串相等 |
 | 模块库刷新超时 | WinHTTP 12002 | registry.vrcft.io 偶发卡 20 s；库内部重试一次，失败时保留缓存 |
 | 原生模块库报「结构版本是 N」 | fgb-registry 升了 `schemaVersion` | 宿主只认 2，**不要猜着解析**；升程序或改回 2，别在 UI 里吞掉这条错误 |
@@ -361,6 +367,7 @@ docs/          方案、ADR、路线图、用户手册；SDK 集成文档在 sdk
 | →UI | `outputs_profiles`（预设名列表/active/dir） | 连接时 / 任何预设或保存值变更后 |
 | →UI | `diagnostics`（导出结果/路径/错误） | 后台打包完成后 |
 | →UI | `update`（current/latest/tag/name/url/available/error） | 更新检查完成后 |
+| →UI | `notice`（level=info/error + message）：模块删除/安装/更新的最终结果 | 安装落盘结束、删除完成时（异步动作的唯一权威反馈） |
 | →UI | `log`（级别/tag/正文；连接时补发最近 120 行） | 有日志时 |
 | UI→ | `set_filter` / `set_outputs` / `set_module` / `set_module_enabled` / `scan_modules` / `reload_avatar` / `set_log_level` / `quit` | 按操作 |
 | UI→ | `import_module` / `import_modules`（逗号分隔 id）/ `import_all` / `install_module_archive` / `delete_module` / `open_modules_dir` / `open_module_page`（只允许已安装模块或模块库条目登记的 `http(s)` 页面） | 模块管理 |

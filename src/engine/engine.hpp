@@ -58,6 +58,9 @@ public:
     bool restart_source(std::string_view name, std::string& error);
     bool stop_source(std::string_view name, std::string& error);
     bool start_source(std::string_view name, std::string& error);
+    // 彻底摘掉一个输入源（模块被删除时用）：停止、从合并器与源列表里移除。
+    // 只 stop 不摘会让界面继续显示一个已经不存在的模块。
+    bool remove_source(std::string_view name, std::string& error);
 
     bool start();
     void stop() noexcept;

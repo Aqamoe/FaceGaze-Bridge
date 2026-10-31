@@ -38,6 +38,14 @@ namespace {
 
 constexpr char kTag[] = "ipc";
 
+// 模块库的安装相位从"下载中/安装中"落到"空闲/失败"就是这次装完了。
+// 成功与否看落到哪一端，界面和服务端用同一条判断，谁也不猜。
+bool install_phase_finished(const std::string& previous, const std::string& current) {
+    const bool was_busy = previous == "downloading" || previous == "installing";
+    const bool done     = current == "idle" || current == "error";
+    return was_busy && done;
+}
+
 // 实例在启动配置里、但引擎启动时还没加载（用户刚添加）：和"名字根本不存在"
 // 分开说，否则界面只剩一句 unknown instance。
 std::string instance_missing_error(const vrcft::ModuleRegistry* registry,
@@ -2074,33 +2082,51 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     } else if (has_type && type == "delete_module") {
         std::string id;
         json::field_string(text, "id", id);
-        const bool running =
-            std::any_of(ctx_.running_modules.begin(), ctx_.running_modules.end(),
-                        [&id](const RunningModule& module) { return module.module_id == id; });
         if (ctx_.modules == nullptr) {
             error = "module registry not available";
-        } else if (running) {
-            // DLL 正被模块进程加载，直接删会失败。标记为"停机后删除"，
-            // 引擎停止（模块进程退出）后由 cmd_run 执行，然后自动重启。
-            pending_delete_id_ = id;
-            if (ctx_.restart_engine != nullptr) {
-                ctx_.restart_engine->store(true, std::memory_order_release);
-            }
-            if (ctx_.quit != nullptr) {
-                ctx_.quit->store(true, std::memory_order_release);
-            }
-            ack_message      = "模块正在运行：停止引擎、删除文件后会自动重启";
-            engine_restarting = true;
-            ok                = true;
+        } else if (const vrcft::ModuleInfo* module = ctx_.modules->find(id); module == nullptr) {
+            error = "模块未安装";
         } else {
+            const std::string name = module->name.empty() ? id : module->name;
+
+            // DLL 被运行中的实例锁着，删不掉。以前是把"请先停止实例"丢给用户，
+            // 现在直接替他停：确认框里已经写明会停实例，用户点确定就是授权。
+            const std::vector<std::string> stopped = stop_module_instances(id);
             std::string remove_error;
-            const bool removed = ctx_.modules->remove_module(id, remove_error);
+            bool removed = false;
+            // 停宿主会带走模块自己拉起的子进程（如采集 tap），它们释放文件比宿主晚
+            // 几十毫秒。只有真的动过实例才值得等这一下；外部程序占用等多久都没用。
+            const int attempts = stopped.empty() ? 1 : 10;
+            for (int attempt = 0; attempt < attempts; ++attempt) {
+                if (attempt > 0) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+                }
+                remove_error.clear();
+                if (ctx_.modules->remove_module(id, remove_error)) {
+                    removed = true;
+                    break;
+                }
+            }
             ctx_.active_module_id = ctx_.modules->active_id();
             modules_touched       = true;
-            modules_message       = removed ? "模块已删除" : remove_error;
-            ok                    = removed;
-            if (!removed) {
-                error = remove_error;
+            if (removed) {
+                // 文件没了，实例也不可能再起来：把源从引擎里摘掉，别让界面继续显示它
+                forget_module_instances(id);
+                modules_message = "模块已删除";
+                ack_message     = name + " 已删除";
+                if (!stopped.empty()) {
+                    ack_message += "（已自动停止 " + std::to_string(stopped.size()) + " 个运行中的实例）";
+                }
+                ok = true;
+            } else {
+                modules_message = remove_error;
+                error           = remove_error;
+                // 没删成就得把实例恢复，否则用户既没删掉模块也丢了追踪
+                const std::string failed = restart_instances(stopped, nullptr);
+                if (!failed.empty()) {
+                    error += "；" + failed;
+                }
+                ack_message = name + " 删除失败：" + error;
             }
         }
     } else if (has_type && type == "import_module") {
@@ -2226,15 +2252,51 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     } else if (has_type && type == "install_library") {
         std::string id;
         json::field_string(text, "id", id);
+        const vrcft::LibrarySnapshot snapshot =
+            library_ != nullptr ? library_->snapshot() : vrcft::LibrarySnapshot{};
+        const bool downloading = snapshot.status.phase == "downloading" ||
+                                 snapshot.status.phase == "installing";
         if (library_ == nullptr) {
             error = "library not available";
         } else if (id.empty()) {
             error = "missing module id";
-        } else if (library_->install(id)) {
-            library_touched = true;
-            ok              = true;
+        } else if (downloading) {
+            error = "模块库正在下载，稍后再试";
         } else {
-            error = "模块库正在刷新或下载，稍后再试";
+            // 更新要替换的 DLL 正被运行中的实例加载着：先把它们停下，装完再拉起来。
+            // 用户点确认时弹窗已经写明这一步，不需要他再去实例行手动点「停止」。
+            ModuleJob job;
+            job.module_id = id;
+            job.update    = ctx_.modules != nullptr && ctx_.modules->find(id) != nullptr;
+            for (const vrcft::LibraryEntry& entry : snapshot.entries) {
+                if (entry.id == id) {
+                    job.name    = entry.name;
+                    job.version = entry.version;
+                    break;
+                }
+            }
+            job.stopped_instances = stop_module_instances(id);
+            if (library_->install(id)) {
+                job.active      = true;
+                vrcft_job_      = job;
+                library_touched = true;
+                ok              = true;
+                ack_message     = job.stopped_instances.empty()
+                                      ? (job.update ? "正在下载更新包…" : "正在下载安装包…")
+                                      : "已停止运行中的实例，正在下载" +
+                                            std::string(job.update ? "更新包…" : "安装包…");
+            } else {
+                const vrcft::LibrarySnapshot failed = library_->snapshot();
+                error = failed.status.error.empty() ? "模块库正在刷新或下载，稍后再试"
+                                                    : failed.status.error;
+                // 下载都没开始就把实例恢复了，别让用户白白丢追踪
+                const std::string restore = restart_instances(job.stopped_instances, nullptr);
+                if (!restore.empty()) {
+                    error += "；" + restore;
+                }
+                ack_message     = "安装未开始：" + error;
+                library_touched = true;
+            }
         }
     } else if (has_type && type == "refresh_native_library") {
         if (native_library_ == nullptr) {
@@ -2250,20 +2312,51 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         std::string version;
         json::field_string(text, "id", id);
         json::field_string(text, "version", version);
+        const vrcft::NativeLibrarySnapshot snapshot =
+            native_library_ != nullptr ? native_library_->snapshot() : vrcft::NativeLibrarySnapshot{};
+        const bool downloading = snapshot.status.phase == "downloading" ||
+                                 snapshot.status.phase == "installing";
         if (native_library_ == nullptr) {
             error = "native library not available";
         } else if (id.empty()) {
             error = "missing module id";
-        } else if (native_library_->install(id, version)) {
-            library_touched = true;
-            ok              = true;
+        } else if (downloading) {
+            error = "原生模块库正在下载，稍后再试";
         } else {
-            // install() 把"条目不存在/版本不存在/不兼容/正忙"写进了状态，
-            // 界面已经能看到；ack 里也带上同一句，避免点了没反应。
-            const vrcft::NativeLibrarySnapshot snapshot = native_library_->snapshot();
-            error = snapshot.status.error.empty() ? "原生模块库正在下载，稍后再试"
-                                                  : snapshot.status.error;
-            library_touched = true;
+            ModuleJob job;
+            job.module_id = id;
+            job.update    = ctx_.modules != nullptr && ctx_.modules->find(id) != nullptr;
+            for (const vrcft::NativeEntry& entry : snapshot.registry.modules) {
+                if (entry.id == id) {
+                    job.name = entry.name;
+                    const vrcft::NativeVersion* selected = vrcft::select_version(entry, version);
+                    job.version = selected != nullptr ? selected->version : entry.latest.version;
+                    break;
+                }
+            }
+            job.stopped_instances = stop_module_instances(id);
+            if (native_library_->install(id, version)) {
+                job.active      = true;
+                native_job_     = job;
+                library_touched = true;
+                ok              = true;
+                ack_message     = job.stopped_instances.empty()
+                                      ? (job.update ? "正在下载更新包…" : "正在下载安装包…")
+                                      : "已停止运行中的实例，正在下载" +
+                                            std::string(job.update ? "更新包…" : "安装包…");
+            } else {
+                // install() 把"条目不存在/版本不存在/不兼容/正忙"写进了状态，
+                // 界面已经能看到；ack 里也带上同一句，避免点了没反应。
+                const vrcft::NativeLibrarySnapshot failed = native_library_->snapshot();
+                error = failed.status.error.empty() ? "原生模块库正在下载，稍后再试"
+                                                    : failed.status.error;
+                const std::string restore = restart_instances(job.stopped_instances, nullptr);
+                if (!restore.empty()) {
+                    error += "；" + restore;
+                }
+                ack_message     = "安装未开始：" + error;
+                library_touched = true;
+            }
         }
     } else if (has_type && type == "export_diagnostics") {
         if (diag_running_.load(std::memory_order_acquire)) {
@@ -2686,10 +2779,142 @@ void IpcServer::start_picker() {
 #endif
 }
 
-std::string IpcServer::take_pending_delete() {
-    std::string id = std::move(pending_delete_id_);
-    pending_delete_id_.clear();
-    return id;
+std::vector<std::string> IpcServer::stop_module_instances(const std::string& module_id) {
+    std::vector<std::string> stopped;
+    if (ctx_.engine == nullptr || module_id.empty()) {
+        return stopped;
+    }
+    for (const RunningModule& module : ctx_.running_modules) {
+        if (module.source == nullptr || module.module_id != module_id) {
+            continue;
+        }
+        // 已经停了的实例不必再动（再停一次也没事，但会让"已停止 N 个"变成假话）
+        const auto status = module.source->module_status();
+        if (status.has_value() && !status->alive) {
+            continue;
+        }
+        std::string stop_error;
+        if (!ctx_.engine->stop_source(module.display_name, stop_error)) {
+            FGB_WARN(kTag, "停止实例 %s 失败：%s", module.display_name.c_str(),
+                     stop_error.c_str());
+            continue;
+        }
+        stopped.push_back(module.display_name);
+    }
+    return stopped;
+}
+
+bool IpcServer::start_instance(const std::string& display_name, std::string& error) {
+    if (ctx_.engine == nullptr) {
+        error = "引擎未运行，实例无法自动恢复";
+        return false;
+    }
+    return ctx_.engine->start_source(display_name, error);
+}
+
+// 模块被删掉之后，它的实例不可能再起来。只 stop 不摘的话，界面的「运行中的实例」
+// 「输入源」「输入帧率」会一直挂着一个已经不存在的模块——用户会以为没删干净。
+void IpcServer::forget_module_instances(const std::string& module_id) {
+    for (auto it = ctx_.running_modules.begin(); it != ctx_.running_modules.end();) {
+        if (it->module_id != module_id) {
+            ++it;
+            continue;
+        }
+        const std::string name = it->display_name;
+        std::string remove_error;
+        if (ctx_.engine != nullptr && !name.empty() &&
+            !ctx_.engine->remove_source(name, remove_error)) {
+            // 摘不掉也不要紧：条目已经从 running_modules 里删了，界面不会再显示它，
+            // 但源还在合并器里就会继续喂数据，所以这条必须留在日志里。
+            FGB_WARN(kTag, "摘除实例 %s 的输入源失败：%s", name.c_str(), remove_error.c_str());
+        }
+        it = ctx_.running_modules.erase(it);
+        ctx_.source_names.erase(
+            std::remove(ctx_.source_names.begin(), ctx_.source_names.end(), name),
+            ctx_.source_names.end());
+    }
+
+    // status.source 是启动时拼好的人话（"native:A+native:B"），删完要重拼，
+    // 否则输入帧率卡片还会显示那个刚被删掉的模块名。
+    std::string joined;
+    for (const std::string& name : ctx_.source_names) {
+        if (!joined.empty()) {
+            joined += "+";
+        }
+        joined += name;
+    }
+    ctx_.source_name = joined;
+}
+
+std::string IpcServer::restart_instances(const std::vector<std::string>& names,
+                                         std::size_t* restored) {
+    std::string first_error;
+    std::size_t done = 0;
+    for (const std::string& name : names) {
+        std::string start_error;
+        if (start_instance(name, start_error)) {
+            ++done;
+        } else if (first_error.empty()) {
+            first_error = "实例「" + name + "」恢复失败：" + start_error;
+        }
+    }
+    if (restored != nullptr) {
+        *restored = done;
+    }
+    return first_error;
+}
+
+void IpcServer::broadcast_notice(bool ok, const std::string& text) {
+    if (ok) {
+        FGB_INFO(kTag, "%s", text.c_str());
+    } else {
+        FGB_WARN(kTag, "%s", text.c_str());
+    }
+    std::string out;
+    JsonWriter writer{out};
+    writer.obj_begin();
+    writer.key("type").str("notice");
+    writer.key("level").str(ok ? "info" : "error");
+    writer.key("message").str(text);
+    writer.obj_end();
+    server_.broadcast(out);
+}
+
+// 异步安装（模块库先下载再落盘）的结果只有这里知道：下载线程不碰模块仓，
+// 落盘发生在 poll()。装完必须主动告诉界面，否则用户只能去日志里找。
+void IpcServer::finish_module_job(bool native, bool ok, const std::string& error) {
+    ModuleJob& job = job_for(native);
+    if (!job.active) {
+        return;
+    }
+    const std::string name    = job.name.empty() ? job.module_id : job.name;
+    const std::string version = job.version.empty() ? std::string{} : " v" + job.version;
+    std::string text;
+    if (ok) {
+        text = "「" + name + "」" + (job.update ? "已更新到" : "已安装") + version;
+    } else {
+        text = "「" + name + "」" + (job.update ? "更新失败：" : "安装失败：") +
+               (error.empty() ? "未知错误" : error);
+    }
+
+    std::size_t restored      = 0;
+    const std::string failed  = restart_instances(job.stopped_instances, &restored);
+    if (!job.stopped_instances.empty()) {
+        if (failed.empty()) {
+            text += "；已自动恢复 " + std::to_string(restored) + " 个运行中的实例";
+        } else {
+            text += "；" + failed;
+        }
+    }
+    job = ModuleJob{};
+
+    // 成功装完要刷新模块列表（新版本号/新模块），失败也要让卡片回到可重试状态
+    std::string message;
+    build_modules(message);
+    server_.broadcast(message);
+    build_status(message);
+    server_.broadcast(message);
+    broadcast_notice(ok && failed.empty(), text);
 }
 
 void IpcServer::poll_picker() {
@@ -2704,6 +2929,16 @@ void IpcServer::poll_picker() {
             std::lock_guard<std::mutex> lock(state->mutex);
             path = state->path;
         }
+
+        // 手动装包同样可能是覆盖升级：先探出目标模块，它要是正跑着就先停实例，
+        // 否则旧 DLL 被锁，用户只会拿到一句"无法替换旧版本"。
+        std::string target_id;
+        std::string peek_error;
+        std::vector<std::string> stopped;
+        if (ctx_.modules->peek_package_id(path, target_id, peek_error)) {
+            stopped = stop_module_instances(target_id);
+        }
+
         std::string error;
         vrcft::InstallOutcome outcome;
         // replace=true：同一个 ModuleId 的新包就是这个模块的升级包。
@@ -2711,7 +2946,7 @@ void IpcServer::poll_picker() {
         // 否则作者改了 Version 重新打包后永远装不进去。
         const bool ok =
             ctx_.modules->install_path(path, error, "zip", true, nullptr, &outcome);
-        std::string message = "模块已安装";
+        std::string message;
         if (ok) {
             const std::string name = outcome.name.empty() ? outcome.id : outcome.name;
             if (outcome.upgraded) {
@@ -2727,8 +2962,22 @@ void IpcServer::poll_picker() {
             } else {
                 message = name + " 已安装";
             }
+        } else {
+            message = "安装失败：" + (error.empty() ? std::string("未知错误") : error);
         }
-        after_module_change(ok, ok ? message : error);
+
+        std::size_t restored     = 0;
+        const std::string failed = restart_instances(stopped, &restored);
+        if (!stopped.empty()) {
+            if (failed.empty()) {
+                message += "；已自动恢复 " + std::to_string(restored) + " 个运行中的实例";
+            } else {
+                message += "；" + failed;
+            }
+        }
+        after_module_change(ok, ok ? message : (error.empty() ? message : error));
+        // 成功和失败都要让用户看见：装完只写日志，用户会以为点了没反应
+        broadcast_notice(ok && failed.empty(), message);
     } else {
         std::string message;
         build_modules(message);
@@ -2796,15 +3045,26 @@ void IpcServer::pump(int timeout_ms) {
     // 模块库的后台线程与界面是否连着无关：界面断开时下载也要能装完
     if (library_ != nullptr || native_library_ != nullptr) {
         vrcft::LibraryEvents events;
+        std::string vrcft_phase  = last_vrcft_phase_;
+        std::string native_phase = last_native_phase_;
+        std::string vrcft_error;
+        std::string native_error;
         if (library_ != nullptr) {
             events = library_->poll();
+            const vrcft::LibrarySnapshot snapshot = library_->snapshot();
+            vrcft_phase = snapshot.status.phase;
+            vrcft_error = snapshot.status.error;
         }
         if (native_library_ != nullptr) {
             const vrcft::NativeLibraryEvents native_events = native_library_->poll();
             events.changed         = events.changed || native_events.changed;
             events.modules_changed = events.modules_changed || native_events.modules_changed;
+            const vrcft::NativeLibrarySnapshot snapshot = native_library_->snapshot();
+            native_phase = snapshot.status.phase;
+            native_error = snapshot.status.error;
         }
         if (events.modules_changed) {
+            // 具体的名字/版本由 finish_module_job 组合成人话播出去，这里只做状态重算
             after_module_change(true, "模块库安装完成");
         }
         if (events.changed) {
@@ -2812,6 +3072,17 @@ void IpcServer::pump(int timeout_ms) {
             build_library(message);
             server_.broadcast(message);
         }
+        // 装完（成功或失败）要把代停的实例拉回来，并给用户一句明确的结果；
+        // 这两步都只在相位从"下载/安装中"落到"空闲/失败"的那一拍做一次。
+        if (library_ != nullptr && install_phase_finished(last_vrcft_phase_, vrcft_phase)) {
+            finish_module_job(false, vrcft_phase == "idle", vrcft_error);
+        }
+        if (native_library_ != nullptr &&
+            install_phase_finished(last_native_phase_, native_phase)) {
+            finish_module_job(true, native_phase == "idle", native_error);
+        }
+        last_vrcft_phase_  = vrcft_phase;
+        last_native_phase_ = native_phase;
     }
 
     if (server_.ready_count() == 0) {

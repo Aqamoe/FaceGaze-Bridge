@@ -338,46 +338,20 @@ function handle(message) {
       }
       break;
     case "library": {
-      const prev = (state.library && state.library.status) || {};
-      const prev_native = (state.library && state.library.native && state.library.native.status) || {};
-      const prev_phase = prev.phase;
-      const prev_id = prev.install_id;
       state.library = message;
-      const next = message.status || {};
-      const finished = prev_phase === "downloading" || prev_phase === "installing";
-      const entry = (message.items || []).find((item) => item.id === prev_id);
-      if (finished && next.phase === "idle") {
-        show_toast(t("modules.library.install_ok", { name: entry ? entry.name : prev_id }));
-      }
-      if (finished && next.phase === "error") {
-        show_toast(t("modules.library.install_failed", {
-          name: entry ? entry.name : prev_id,
-          error: next.error || "?",
-        }), "error");
-      }
-
-      // 原生库有独立的下载/安装状态，不能和 VRCFT 库共用一条 install_id 记录
-      const next_native = (message.native && message.native.status) || {};
-      const native_finished = prev_native.phase === "downloading" ||
-        prev_native.phase === "installing";
-      const native_id = prev_native.install_id || "";
-      const native_entry = ((message.native && message.native.items) || [])
-        .find((item) => item.id === native_id);
-      const native_name = native_entry ? native_entry.name : native_id;
-      if (native_finished && next_native.phase === "idle") {
-        show_toast(t("modules.library.install_ok", { name: native_name }));
-      }
-      if (native_finished && next_native.phase === "error") {
-        show_toast(t("modules.library.install_failed", {
-          name: native_name,
-          error: next_native.error || "?",
-        }), "error");
-      }
+      // 安装/更新的结果由服务端的 notice 消息广播（下载线程只有它知道成败），
+      // 这里不再拿相位变化去猜，免得两处判断各说一套、或者一次装完弹两个 toast。
       if (state.view === "library") {
         render_library();
       }
       break;
     }
+    case "notice":
+      // 模块删除/安装/更新这类会失败也会耗时的操作，成功失败都要有一句人话提醒
+      if (message.message) {
+        show_toast(message.message, message.level === "error" ? "error" : undefined);
+      }
+      break;
     case "params":
       render_params(message.values || []);
       break;
@@ -444,7 +418,9 @@ function handle(message) {
         set_restarting(true);
       }
       if (!message.ok && message.error) {
-        show_toast(`${message.command}: ${message.error}`, "error");
+        // 服务端已经把失败原因写成人话（modules.message）；有就用它，
+        // 别把 "delete_module: ..." 这种命令名甩给用户
+        show_toast(message.message || `${message.command}: ${message.error}`, "error");
         push_log({ level: "warn", tag: "ui", message: `${message.command}: ${message.error}` });
         if ((message.command || "").includes("steamvr")) {
           state.steamvr_busy = false;
@@ -1426,7 +1402,8 @@ function installed_card(item) {
 
   const remove = el("button", "btn danger small", t("modules.delete"));
   remove.addEventListener("click", async () => {
-    const running = !!(item.running || live);
+    // 只有实例真的在跑（DLL 被锁）才需要提示"会先停实例"；停着的模块直接删
+    const running = module_running(item.id);
     const text = running
       ? t("modules.delete_confirm_running", { name: item.name || item.id })
       : t("modules.delete_confirm", { name: item.name || item.id });
@@ -1557,6 +1534,36 @@ function library_relation(installed, item) {
   return cmp >= 0 ? "installed" : "update";
 }
 
+// 这个模块现在是不是真的被某个实例加载着（DLL 被锁）。
+// 卡片上的 running 只在 modules 消息时刷新，实时状态要看 1 Hz 的 status。
+function module_running(id) {
+  const live = running_state_of(id);
+  if (live) {
+    return live === "active" || live === "starting" || live === "error";
+  }
+  const item = ((state.modules && state.modules.items) || []).find((entry) => entry.id === id);
+  return !!(item && item.running);
+}
+
+// 安装/更新前的确认文案。更新正在跑的模块时，弹窗必须写明"会先停实例、装完自动拉起来"：
+// 用户点确定就是授权后台去停，而不是装到一半再让他自己去实例行点「停止」。
+function install_question(item, kind, update, version) {
+  const name = item.name || item.id;
+  const target = version || item.version || (item.latest && item.latest.version) || "";
+  let text;
+  if (update && target) {
+    text = t("modules.library.confirm_update", { name, version: target });
+  } else if (kind === "native") {
+    text = t("modules.native.confirm", { name, version: target });
+  } else {
+    text = t("modules.library.confirm", { name });
+  }
+  if (module_running(item.id)) {
+    text += " " + t("modules.library.auto_stop");
+  }
+  return text;
+}
+
 function rating_stars(value) {
   const full = Math.round(value || 0);
   return "★".repeat(Math.max(0, Math.min(5, full))) + "☆".repeat(Math.max(0, 5 - full));
@@ -1624,7 +1631,7 @@ function library_card(item, installed, status) {
     button.disabled = relation === "installed" || (status && (status.phase === "downloading" ||
       status.phase === "installing"));
     button.addEventListener("click", async () => {
-      const question = t("modules.library.confirm", { name: item.name || item.id });
+      const question = install_question(item, "vrcft", relation === "update");
       if (await ask_confirm({ title: t("confirm.install_title"), message: question, danger: true })) {
         send({ type: "install_library", id: item.id });
       }
@@ -1846,7 +1853,9 @@ function native_library_card(item, installed, status) {
       if (!version) {
         return;
       }
-      const question = t("modules.native.confirm", { name: item.name || item.id, version });
+      // 版本下拉是"装回/切到某个版本"，可能还是降级；这里按安装说，
+      // 不写"更新到"，否则用户会以为版本号只能往上走
+      const question = install_question(item, "native", false, version);
       if (await ask_confirm({
         title: t("confirm.install_title"),
         message: question,
@@ -1887,10 +1896,7 @@ function native_library_card(item, installed, status) {
                                                : t("modules.library.install");
     button.disabled = !!busy_other;
     button.addEventListener("click", async () => {
-      const question = t("modules.native.confirm", {
-        name: item.name || item.id,
-        version: item.latest.version,
-      });
+      const question = install_question(item, "native", relation === "update", item.latest.version);
       if (await ask_confirm({
         title: t("confirm.install_title"),
         message: question,

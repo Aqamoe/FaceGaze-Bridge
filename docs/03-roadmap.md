@@ -300,6 +300,16 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > `refresh_native_library` / `install_native_library` 命令；单测
 > `tests/test_native_library.cpp`、`tools/probe_ipc.py` 与 `tools/probe_ui.py` 覆盖，
 > 见 [ADR-0035](adr/0035-native-module-registry.md)。
+>
+> **模块操作反馈与自动停实例已实施（2026-10-31）**：删除 / 安装 / 更新正在运行的模块时，
+> 服务端在用户确认后自己停掉目标实例（`Engine::stop_source`），删文件或换 DLL 之后再自动
+> 拉起；装不上时实例恢复运行。以前"请先在模块页停止该实例"的手工步骤彻底去掉。
+> 异步安装的结果（模块库下载落盘、手动 .zip 安装）统一用新 IPC 消息 `notice` 广播，
+> 界面弹成功/失败 toast 并写日志，不再只落在 `engine.log`。删除成功后还会把该模块的
+> 实例与输入源从引擎里摘掉（`Engine::remove_source`），「运行中的实例 / 输入源 / 输入帧率」
+> 立刻不再显示它，不需要重启引擎。相关：
+> `ModuleRegistry::peek_package_id`（安装前探测目标模块）、
+> `tests/test_modules.cpp` 与 `tools/probe_module_actions.py`（真停实例的端到端探针）。
 
 **验收**：5 个 Sink 同时输出时，主链路延迟不增加 > 0.5 ms；录制 10 分钟文件 < 20 MB。
 

@@ -91,6 +91,8 @@ public:
 
     // 注册顺序即优先级
     void add(ISource* source);
+    // 模块被删除时把源彻底摘掉：留着它会让"输入源/输入帧率"继续显示一个已经不存在的模块
+    void remove(ISource* source);
     std::size_t source_count() const noexcept { return slots_.size(); }
 
     // 拉一遍所有源并合并。**本 tick 有任何新帧**才返回 true（合并结果写入 out）：
