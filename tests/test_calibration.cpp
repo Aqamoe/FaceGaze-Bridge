@@ -312,7 +312,107 @@ FGB_TEST(calibration_atomic_save_keeps_previous_as_backup) {
 }
 
 // ---------------------------------------------------------------------------
-// 映射曲线（ADR-0031）
+// 眼睑增益（ADR-0038）
+// ---------------------------------------------------------------------------
+
+FGB_TEST(calibration_eyelid_gain_scales_openness) {
+    CalibrationProfile profile;
+    profile.eyelid_gain = 1.375f;
+
+    CalibrationApplier applier{profile};
+    FaceFrame frame;
+    frame.eyes.left.openness  = 0.72f;
+    frame.eyes.right.openness = 0.40f;
+    applier.process(frame);
+
+    FGB_CHECK_NEAR(frame.eyes.left.openness, 0.99f, 1e-3f);
+    FGB_CHECK_NEAR(frame.eyes.right.openness, 0.55f, 1e-3f);
+
+    // 零点必须不动：闭眼乘任何增益都还是闭眼，换成加偏移就会留一条缝
+    frame.eyes.left.openness  = 0.0f;
+    frame.eyes.right.openness = 0.0f;
+    applier.process(frame);
+    FGB_CHECK_NEAR(frame.eyes.left.openness, 0.0f, 1e-6f);
+    FGB_CHECK_NEAR(frame.eyes.right.openness, 0.0f, 1e-6f);
+
+    // 超过 1 要夹住，不能把 openness 塞到 1.24 去污染下游
+    frame.eyes.left.openness  = 0.90f;
+    frame.eyes.right.openness = 0.90f;
+    applier.process(frame);
+    FGB_CHECK_NEAR(frame.eyes.left.openness, 1.0f, 1e-6f);
+    FGB_CHECK_NEAR(frame.eyes.right.openness, 1.0f, 1e-6f);
+}
+
+FGB_TEST(calibration_eyelid_gain_default_is_passthrough) {
+    CalibrationProfile profile; // eyelid_gain 默认 1.0
+    CalibrationApplier applier{profile};
+    FaceFrame frame;
+    frame.eyes.left.openness = 0.63f;
+    applier.process(frame);
+    FGB_CHECK_NEAR(frame.eyes.left.openness, 0.63f, 1e-6f);
+}
+
+FGB_TEST(calibration_eyelid_lo_removes_closed_offset) {
+    // 实测硬件在闭眼时报 0.10 而不是 0：只乘增益消不掉，必须先扣基线
+    CalibrationProfile profile;
+    profile.eyelid_lo   = 0.10f;
+    profile.eyelid_gain = 1.44f;
+
+    CalibrationApplier applier{profile};
+    FaceFrame frame;
+
+    frame.eyes.left.openness  = 0.10f;
+    frame.eyes.right.openness = 0.08f; // 比基线还低也不能翻成负数
+    applier.process(frame);
+    FGB_CHECK_NEAR(frame.eyes.left.openness, 0.0f, 1e-5f);
+    FGB_CHECK_NEAR(frame.eyes.right.openness, 0.0f, 1e-5f);
+
+    // 正常睁眼 0.72 → (0.72-0.10)/0.90 × 1.44 = 0.992
+    frame.eyes.left.openness = 0.72f;
+    applier.process(frame);
+    FGB_CHECK_NEAR(frame.eyes.left.openness, 0.992f, 2e-3f);
+
+    // 只扣基线、不放大（gain 留在 1.0）也要是对的：用户可能分两步调
+    profile.eyelid_gain      = 1.0f;
+    CalibrationApplier bare{profile};
+    frame.eyes.left.openness = 0.72f;
+    bare.process(frame);
+    FGB_CHECK_NEAR(frame.eyes.left.openness, 0.6889f, 2e-3f);
+}
+
+FGB_TEST(calibration_eyelid_gain_roundtrips_and_marks_dirty) {
+    const std::string path = temp_path("eyelid_gain.ini");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    CalibrationProfile profile;
+    profile.eyelid_gain = 1.37f;
+    profile.eyelid_lo   = 0.10f;
+    FGB_CHECK(save_profile(path, profile));
+
+    CalibrationProfile loaded;
+    FGB_CHECK(load_profile(path, loaded));
+    FGB_CHECK_NEAR(loaded.eyelid_gain, 1.37f, 1e-3f);
+    FGB_CHECK_NEAR(loaded.eyelid_lo, 0.10f, 1e-3f);
+
+    // 只改眼睑增益也要能触发"未保存"提示
+    loaded.eyelid_gain = 1.2f;
+    FGB_CHECK(loaded != profile);
+
+    // 手改档案写成离谱的值要被夹住，否则所有眼睛永远闭着
+    {
+        std::FILE* file = std::fopen(path.c_str(), "wb");
+        FGB_CHECK(file != nullptr);
+        std::fputs("[eye]\neyelid_gain = 40.0\n", file);
+        std::fclose(file);
+    }
+    CalibrationProfile clamped;
+    FGB_CHECK(load_profile(path, clamped));
+    FGB_CHECK(clamped.eyelid_gain <= 4.0f);
+}
+
+// ---------------------------------------------------------------------------
+// 映射曲线（ADR-0037）
 // ---------------------------------------------------------------------------
 
 FGB_TEST(curve_presets_hit_both_ends_and_stay_monotonic) {

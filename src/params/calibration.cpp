@@ -294,6 +294,10 @@ bool operator==(const CalibrationProfile& a, const CalibrationProfile& b) noexce
     if (a.has_eye != b.has_eye) {
         return false;
     }
+    // 眼睑参数与视线无关，单独比：只调它不该被 has_eye 的开关掩盖
+    if (a.eyelid_gain != b.eyelid_gain || a.eyelid_lo != b.eyelid_lo) {
+        return false;
+    }
     if (a.has_eye && (a.eye_gain_x != b.eye_gain_x || a.eye_gain_y != b.eye_gain_y ||
                       a.eye_center_x != b.eye_center_x || a.eye_center_y != b.eye_center_y)) {
         return false;
@@ -398,6 +402,9 @@ bool save_profile(const std::string& path, const CalibrationProfile& profile) {
     writer.kv("gain_y", static_cast<double>(profile.eye_gain_y), 4);
     writer.kv("center_x", static_cast<double>(profile.eye_center_x), 4);
     writer.kv("center_y", static_cast<double>(profile.eye_center_y), 4);
+    // 与视线各存各的：只调眼睑不该被迫打开视线校准
+    writer.kv("eyelid_gain", static_cast<double>(profile.eyelid_gain), 4);
+    writer.kv("eyelid_lo", static_cast<double>(profile.eyelid_lo), 4);
 
     writer.section("shapes");
     for (std::size_t i = 0; i < kShapeCount; ++i) {
@@ -454,6 +461,12 @@ bool load_profile(const std::string& path, CalibrationProfile& profile) {
                 profile.eye_center_x = config::parse_float(entry.value, 0.0f);
             } else if (entry.key == "center_y") {
                 profile.eye_center_y = config::parse_float(entry.value, 0.0f);
+            } else if (entry.key == "eyelid_gain") {
+                // 夹到界面能拖的范围：手改档案写成 10 只会让所有眼睛永远闭合
+                profile.eyelid_gain = std::clamp(config::parse_float(entry.value, 1.0f), 0.2f, 4.0f);
+            } else if (entry.key == "eyelid_lo") {
+                // 基线超过 0.5 就等于"眼睛大部分时间都是闭的"，一定是填错了
+                profile.eyelid_lo = std::clamp(config::parse_float(entry.value, 0.0f), 0.0f, 0.5f);
             }
             saw_any = true;
             return;
@@ -607,6 +620,20 @@ void CalibrationApplier::process(FaceFrame& frame) noexcept {
         const float t = clamp01((frame.shapes[i] - range.lo) / span);
         frame.shapes[i] = apply_curve(profile.custom_curves.data(), profile.custom_curves.size(),
                                       range.curve, range.curve_param, t);
+    }
+
+    // 眼睑开合：先扣掉模块在闭眼时报的底噪，按剩余范围归一化，再放大。
+    // 只减不归一化的话，lo=0.1 时增益要从 1.6 起算，用户没法把"1.4"和观感对上；
+    // 而归一化之后 gain=1.0 仍然等于"原样透传"，参数语义保持一致。
+    // openness 不属于 88 个形状，所以这条不受 range.active 影响。
+    if (profile.eyelid_gain != 1.0f || profile.eyelid_lo > 0.0f) {
+        const float lo   = std::clamp(profile.eyelid_lo, 0.0f, 0.5f);
+        const float span = 1.0f - lo;
+        for (EyeState* eye : {&frame.eyes.left, &frame.eyes.right}) {
+            const float base =
+                span > 1e-3f ? (eye->openness - lo) / span : eye->openness - lo;
+            eye->openness = clamp01(base * profile.eyelid_gain);
+        }
     }
 
     if (profile.has_eye) {

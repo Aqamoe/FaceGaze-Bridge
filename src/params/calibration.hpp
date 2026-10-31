@@ -94,6 +94,20 @@ struct CalibrationProfile {
     float eye_center_y  = 0.0f;
     bool has_eye        = false;
 
+    // 眼睑开合增益：模块给的 openness 乘上它。
+    //
+    // 【为什么需要，以及为什么是乘法】
+    // openness 不在 88 个形状里（它是 EyeState 的独立字段），形状校准完全够不着它；
+    // 而 v2 的 EyeLidLeft = openness × 0.75 + EyeWide × 0.25，模块给 0.72 的正常睁眼
+    // 到这里只剩 0.55。二次元/大眼模型往往要 0.7 以上才"看起来睁开"。
+    // 用乘性而不是加性：不会在所有表情上叠一个常数偏移，闭眼的"零点"由 eyelid_lo 单独负责。
+    float eyelid_gain   = 1.0f;
+
+    // 闭眼基线：模块在"完全闭眼"时报的 openness。实际硬件很少是干净的 0
+    // （实测有 0.10），不扣掉的话乘完增益仍然剩 0.1 以上，眼睛合不严。
+    // 先减基线、按剩余范围归一化，再乘增益——这样 gain 的量级仍从 1.0 起算。
+    float eyelid_lo     = 0.0f;
+
     std::size_t active_shape_count() const noexcept;
 };
 

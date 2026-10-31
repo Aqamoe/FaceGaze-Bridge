@@ -965,6 +965,9 @@ void IpcServer::build_calibration(std::string& out) {
     writer.key("gain_y").num(static_cast<double>(profile.eye_gain_y), 3);
     writer.key("center_x").num(static_cast<double>(profile.eye_center_x), 3);
     writer.key("center_y").num(static_cast<double>(profile.eye_center_y), 3);
+    // 眼睑两项：不依赖 has_eye（视线校准开关），只调它们也能立刻见效
+    writer.key("eyelid_gain").num(static_cast<double>(profile.eyelid_gain), 3);
+    writer.key("eyelid_lo").num(static_cast<double>(profile.eyelid_lo), 3);
     writer.obj_end();
 
     writer.obj_end();
@@ -1003,6 +1006,13 @@ void IpcServer::build_preview(std::string& out) {
     writer.key("open_r").num(static_cast<double>(have_raw ? raw.openness_r : 1.0f), 3);
     writer.key("x").num(static_cast<double>(have_raw ? raw.gaze_x_deg : 0.0f), 2);
     writer.key("y").num(static_cast<double>(have_raw ? raw.gaze_y_deg : 0.0f), 2);
+    // 校准后的角度（左右平均），和形状的 out 同一个口径：界面上「原 → 出」才说得通
+    writer.key("out_x").num(
+        static_cast<double>(0.5f * (frame.eyes.left.gazePitchYawDeg.y +
+                                    frame.eyes.right.gazePitchYawDeg.y)), 2);
+    writer.key("out_y").num(
+        static_cast<double>(0.5f * (frame.eyes.left.gazePitchYawDeg.x +
+                                    frame.eyes.right.gazePitchYawDeg.x)), 2);
     writer.obj_end();
 
     writer.obj_end();
@@ -1837,6 +1847,12 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             }
             if (json::field_number(text, "center_y", value)) {
                 profile.eye_center_y = static_cast<float>(std::clamp(value, -60.0, 60.0));
+            }
+            if (json::field_number(text, "eyelid_gain", value)) {
+                profile.eyelid_gain = static_cast<float>(std::clamp(value, 0.2, 4.0));
+            }
+            if (json::field_number(text, "eyelid_lo", value)) {
+                profile.eyelid_lo = static_cast<float>(std::clamp(value, 0.0, 0.5));
             }
             bool active = profile.has_eye;
             if (json::field_bool(text, "active", active)) {
