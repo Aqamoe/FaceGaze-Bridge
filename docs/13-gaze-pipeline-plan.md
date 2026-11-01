@@ -1,6 +1,6 @@
 # 13 · 注视管线实施计划（规范化 / 标定 / 稳定化）
 
-- 状态：**实施中**（P0 ✅ 2026-11-02 · P1a ✅ 2026-11-02 · P2 未开始）
+- 状态：**实施中**（P0 ✅ · P1a ✅ · P2 代码完成，待真机验证 · P1.7/P3 未开始）
 - 日期：2026-11-02
 - 决策：[ADR-0042](adr/0042-unified-gaze-pipeline.md)
 - 关联：[ADR-0026](adr/0026-gaze-estimator-and-api.md)（注视估计与 API）、
@@ -219,3 +219,21 @@ SourceMerger ──▶ GazeNormalizer ──▶ GazeCalibrator ──▶ GazeSta
 - IPC 命令（`gaze_calib_start` / `gaze_calib_cancel` / `set_gaze_profile`）与侧栏「注视校准」页；
 - 关键约定：**开始标定前先把当前档案清空**（恒等），否则采到的是"已校准后"的值，
   再拟合就是二次校准。
+
+
+### 2026-11-02 · P2 会话/界面完成（待真机验证）
+
+| 落地 | 位置 |
+|---|---|
+| `IVROverlay` 圆点：动态加载 openvr_api.dll、`SetOverlayRaw` 贴抗锯齿白点、按视线角度挂到头显、按距离换算角半径 | `openvr/overlay.*` |
+| 会话状态机：开始即清空档案 → 每点 0.5 s 静置后开采 → 25 帧中位数/离散度达标即进下一点 → 拟合 → 落盘 → 热加载；超时（8 s/点）与失败都回滚到开始前的档案 | `gaze_calib/session.*` |
+| `tick` 由控制面每帧驱动（无独立线程），页面关掉也继续跑 | `web/ipc.cpp` `pump` |
+| 命令 `gaze_calib_start` / `gaze_calib_cancel` / `gaze_calib_clear`，`gaze_calib` 消息 2 Hz，`GET /api/gaze_calib` | `web/ipc.*` |
+| 校准页新增「注视点校准（VR 圆盘）」卡片：状态/进度/残差/档案版本 + 开始/取消/删除（三语） | `ui/` |
+| overlay 与会话随引擎生命周期创建，退出时 `cancel` + `close` | `cli/main.cpp` |
+
+已在本机验证：`/api/gaze_calib` 字段齐全、`gaze_calib_start` 返回 ack 并进入 running、
+overlay 创建成功（日志 `overlay 就绪`）、无注视数据时 8 s 后按预期失败并给出可操作原因、
+`probe_ipc.py` PASS（新增消息不影响既有类型）。
+
+**未验证**：真机里的圆点位置/大小/可见性，13 点实际手感，残差量级。这些只能进头显看。

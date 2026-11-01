@@ -411,6 +411,24 @@
               </div>
             </article>
 
+            <article class="card cal-dot">
+              <h2 data-i18n="calibration.dot.title">注视点校准（VR 圆盘）</h2>
+              <p class="hint" data-i18n="calibration.dot.hint">
+                戴着头显做 13 点标定：圆点会依次出现在中心、内环与外环，每点看住约 1 秒。
+                标定结果写进 gaze.ini，VRSS、注视光标与第三方读的都是同一份位置。
+              </p>
+              <div class="kv"><span data-i18n="calibration.dot.state">状态</span><b id="cal-dot-state">—</b></div>
+              <div class="kv"><span data-i18n="calibration.dot.progress">进度</span><b id="cal-dot-progress">—</b></div>
+              <div class="kv"><span data-i18n="calibration.dot.residual">残差</span><b id="cal-dot-residual">—</b></div>
+              <div class="kv"><span data-i18n="calibration.dot.profile">档案</span><b id="cal-dot-profile">—</b></div>
+              <p class="hint" id="cal-dot-message"></p>
+              <div class="out-actions">
+                <button class="btn primary" id="cal-dot-start" data-i18n="calibration.dot.start">开始标定</button>
+                <button class="btn" id="cal-dot-cancel" data-i18n="calibration.dot.cancel">取消</button>
+                <button class="btn ghost" id="cal-dot-clear" data-i18n="calibration.dot.clear">删除档案</button>
+              </div>
+            </article>
+
             <div class="cal-list" id="cal-list"></div>
             <div class="empty" id="cal-empty" hidden data-i18n="calibration.empty">没有匹配的形状</div>
             <p class="hint" data-i18n="calibration.hint">

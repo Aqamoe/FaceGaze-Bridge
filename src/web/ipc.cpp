@@ -8,6 +8,7 @@
 #include "params/avatar_config.hpp"
 #include "params/calibration.hpp"
 #include "params/catalog.hpp"
+#include "params/gaze_profile.hpp"
 #include "params/preview_tap.hpp"
 
 #ifdef _WIN32
@@ -446,6 +447,8 @@ IpcServer::IpcServer(IpcContext context) : ctx_(std::move(context)) {
         build_output_profiles(message);
         server_.send_text(conn, message);
         build_vrss(message);
+        server_.send_text(conn, message);
+        build_gaze_calib(message);
         server_.send_text(conn, message);
         send_backlog(conn);
     };
@@ -913,6 +916,41 @@ void IpcServer::build_vrss(std::string& out) {
     writer.key("last_error").str(snap.last_error.empty() ? snap.provider.last_error : snap.last_error);
     writer.key("area_state").str(snap.area_state);
     writer.key("area_detail").str(snap.area_detail);
+    writer.obj_end();
+}
+
+void IpcServer::build_gaze_calib(std::string& out) {
+    gaze_calib::Status snap;
+    if (ctx_.gaze_calib != nullptr) {
+        snap = ctx_.gaze_calib->status();
+    }
+    const GazeProfile profile = ctx_.engine != nullptr ? ctx_.engine->gaze_profile() : GazeProfile{};
+    const GazeProjection projection =
+        ctx_.engine != nullptr ? ctx_.engine->gaze_projection() : GazeProjection{};
+
+    out.clear();
+    JsonWriter writer{out};
+    writer.obj_begin();
+    writer.key("type").str("gaze_calib");
+    writer.key("state").str(gaze_calib::state_name(snap.state));
+    writer.key("target").integer(static_cast<long long>(snap.target));
+    writer.key("target_count").integer(static_cast<long long>(gaze_calib::kTargetCount));
+    writer.key("done").integer(static_cast<long long>(snap.done));
+    writer.key("samples").integer(static_cast<long long>(snap.samples));
+    writer.key("needed").integer(static_cast<long long>(snap.needed));
+    writer.key("progress").num(static_cast<double>(snap.progress), 3);
+    writer.key("message").str(snap.message);
+    writer.key("profile_version").integer(static_cast<long long>(profile.version));
+    writer.key("residual").num(static_cast<double>(profile.residual_p95), 4);
+    writer.key("source_kind").str(gaze_source_kind_name(profile.source_kind));
+    writer.key("created_utc").str(profile.created_utc);
+    writer.key("hmd_identity").str(profile.hmd_identity);
+    writer.key("ready").boolean(profile.ready());
+    writer.key("geometry").boolean(projection.valid);
+    // 当前注视点在哪个空间：用户最想知道的"现在到底有没有可用位置"
+    writer.key("point_space")
+        .str(ctx_.engine != nullptr ? gaze_space_name(ctx_.engine->current_gaze().space)
+                                    : "source");
     writer.obj_end();
 }
 
@@ -1757,6 +1795,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     bool steamvr_touched     = false;
     bool outputs_touched     = false;
     bool vrss_touched        = false;
+    bool gaze_calib_touched  = false;
     bool profiles_touched    = false;
     std::string modules_message;
     std::string ack_message;
@@ -2871,6 +2910,37 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             vrss_touched = true;
             ack_message  = "正在停止 VRSS 注视路径";
         }
+    } else if (has_type && type == "gaze_calib_start") {
+        if (ctx_.gaze_calib == nullptr) {
+            error = "注视标定不可用（没有控制面或 SteamVR overlay）";
+        } else {
+            std::string start_error;
+            if (ctx_.gaze_calib->start(start_error)) {
+                ok               = true;
+                gaze_calib_touched = true;
+                ack_message      = "开始注视标定，请戴上头显看圆点";
+            } else {
+                error = start_error;
+            }
+        }
+    } else if (has_type && type == "gaze_calib_cancel") {
+        if (ctx_.gaze_calib == nullptr) {
+            error = "注视标定不可用";
+        } else {
+            ctx_.gaze_calib->cancel();
+            ok                 = true;
+            gaze_calib_touched = true;
+            ack_message        = "已取消注视标定，档案保持原样";
+        }
+    } else if (has_type && type == "gaze_calib_clear") {
+        std::error_code ignored;
+        std::filesystem::remove(params::default_gaze_profile_path(), ignored);
+        if (ctx_.engine != nullptr) {
+            ctx_.engine->set_gaze_profile(GazeProfile{});
+        }
+        ok                 = true;
+        gaze_calib_touched = true;
+        ack_message        = "已删除注视标定档案";
     } else if (has_type && type == "ping") {
         server_.send_text(conn, R"({"type":"pong"})");
         return;
@@ -2967,6 +3037,11 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         build_vrss(message);
         server_.broadcast(message);
     }
+    if (gaze_calib_touched) {
+        std::string message;
+        build_gaze_calib(message);
+        server_.broadcast(message);
+    }
 }
 
 bool IpcServer::handle_http(const net::ws::HttpHead& head, std::string& body,
@@ -3037,6 +3112,11 @@ bool IpcServer::handle_http(const net::ws::HttpHead& head, std::string& body,
 
     if (head.path == "/api/gaze") {
         build_gaze(body);
+        return true;
+    }
+
+    if (head.path == "/api/gaze_calib") {
+        build_gaze_calib(body);
         return true;
     }
 
@@ -3563,6 +3643,23 @@ void IpcServer::pump(int timeout_ms) {
         }
         last_vrcft_phase_  = vrcft_phase;
         last_native_phase_ = native_phase;
+    }
+
+    if (ctx_.gaze_calib != nullptr) {
+        // 状态机每帧推进：采集需要看每一帧的注视，不能等 2 Hz 推送才动。
+        // 页面关掉也继续跑（标定中途切页面不该中断），所以不判 ready_count。
+        const auto calib_now = std::chrono::steady_clock::now();
+        ctx_.gaze_calib->tick(clock::now_ns(),
+                              ctx_.engine != nullptr ? ctx_.engine->current_gaze() : GazeState{});
+        const bool was_running = ctx_.gaze_calib->active();
+        if (calib_now - last_gaze_calib_ >= std::chrono::milliseconds(500) || was_running) {
+            last_gaze_calib_ = calib_now;
+            if (server_.ready_count() > 0) {
+                std::string message;
+                build_gaze_calib(message);
+                server_.broadcast(message);
+            }
+        }
     }
 
     if (ctx_.vrss != nullptr) {

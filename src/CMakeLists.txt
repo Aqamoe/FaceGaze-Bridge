@@ -83,7 +83,8 @@ target_link_libraries(fgb_config PUBLIC fgb_base)
 # SteamVR 启动项：只 vendor openvr.h，运行时从用户已安装的 SteamVR 目录
 # 动态加载 openvr_api.dll（不产生再分发义务，见 ADR-0020）。
 add_library(fgb_steamvr STATIC
-    openvr/steamvr.cpp)
+    openvr/steamvr.cpp
+    openvr/overlay.cpp)
 target_include_directories(fgb_steamvr PUBLIC "${CMAKE_SOURCE_DIR}/third_party")
 target_link_libraries(fgb_steamvr PUBLIC fgb_base)
 if(WIN32)
@@ -143,7 +144,8 @@ target_compile_definitions(fgb_engine PRIVATE FGB_VERSION="${PROJECT_VERSION}")
 
 # 控制面：WebSocket IPC + 本地静态页面
 add_library(fgb_web STATIC
-    web/ipc.cpp)
+    web/ipc.cpp
+    gaze_calib/session.cpp)
 target_link_libraries(fgb_web PUBLIC fgb_engine fgb_net fgb_process fgb_steamvr)
 if(WIN32)
     target_link_libraries(fgb_web PRIVATE ole32 comdlg32 shell32)

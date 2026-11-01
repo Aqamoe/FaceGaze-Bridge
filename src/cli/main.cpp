@@ -13,6 +13,8 @@
 #include "params/avatar_config.hpp"
 #include "params/calibration.hpp"
 #include "params/catalog.hpp"
+#include "gaze_calib/session.hpp"
+#include "openvr/overlay.hpp"
 #include "params/gaze_profile.hpp"
 #include "sinks/shm_sink.hpp"
 #include "sinks/udp_binary_sink.hpp"
@@ -1340,6 +1342,7 @@ int cmd_run(int argc, char** argv) {
     }
     // 注视管线（ADR-0042）：几何与标定档案在扇出之前注入引擎，任何 sink 拿到的都是
     // 同一份规范注视点。几何缺失只影响"方向→视口点"，不影响模块自带视口点的来源。
+    std::string gaze_identity; // 头显身份指纹：档案跟着它走，换头显要重标
     {
         fgb::vrss::HmdGeometry geometry;
         std::string geometry_error;
@@ -1363,6 +1366,10 @@ int cmd_run(int argc, char** argv) {
             }
             projection.valid = any && projection.eyes[0].valid() && projection.eyes[1].valid();
             engine.set_gaze_projection(projection);
+            char identity[96];
+            std::snprintf(identity, sizeof(identity), "%u:%u:%s", geometry.vendor,
+                          geometry.product, geometry.fingerprint.c_str());
+            gaze_identity = identity;
         } else {
             FGB_INFO("vrss", "几何不可用（%s），方向型来源只有方向、没有屏幕位置",
                      geometry_error.c_str());
@@ -1393,6 +1400,8 @@ int cmd_run(int argc, char** argv) {
     // 而用户最先想知道的就是"刚才为什么没数据"。
     std::unique_ptr<fgb::web::IpcServer> ipc;
     std::unique_ptr<fgb::vrss::Workflow> vrss_workflow;
+    fgb::overlay::GazeDot gaze_dot;
+    std::unique_ptr<fgb::gaze_calib::Session> gaze_session;
     if (panel_port != 0) {
         if (ui_dir.empty()) {
             ui_dir = default_ui_dir();
@@ -1425,6 +1434,18 @@ int cmd_run(int argc, char** argv) {
         ctx.calib       = calibration_raw;
         ctx.calib_path  = calibration_save_path;
         ctx.calib_loaded = calibration_loaded;
+
+        // 注视标定：overlay 与会话跟着引擎生命周期走（关窗继续、退出即销毁）。
+        // 它没有自己的线程，由控制面每帧推进状态机。
+        gaze_session = std::make_unique<fgb::gaze_calib::Session>();
+        gaze_session->configure(fgb::params::default_gaze_profile_path().string(),
+                                gaze_identity);
+        gaze_session->set_projection(engine.gaze_projection());
+        gaze_session->set_overlay(&gaze_dot);
+        gaze_session->set_apply([&engine](const fgb::GazeProfile& profile) {
+            engine.set_gaze_profile(profile);
+        });
+        ctx.gaze_calib = gaze_session.get();
 
         // VRSS 流程只在有控制面时创建：它需要页面来确认 MSAA、点启动与看状态。
         vrss_workflow = std::make_unique<fgb::vrss::Workflow>();
@@ -1505,6 +1526,10 @@ int cmd_run(int argc, char** argv) {
     }
 
     engine.stop();
+    if (gaze_session) {
+        gaze_session->cancel(); // 退出时收掉 overlay，不留一个悬空圆点
+    }
+    gaze_dot.close();
     if (vrss_workflow && !g_restart.load(std::memory_order_acquire)) {
         // 正常退出（含托盘「退出」）才停 provider；引擎重启要保住 NVIDIA 注册。
         vrss_workflow->stop();

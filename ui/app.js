@@ -220,6 +220,7 @@ const state = {
   outputs_dirty: false,
   pending_outputs_restart: false,
   vrss: null,
+  gaze_calib: null,
   vrss_dirty: false,
   pending_vrss_restart: false,
   pending_vrss_run: false,
@@ -408,6 +409,10 @@ function handle(message) {
       if (state.view === "vrss") {
         render_vrss();
       }
+      break;
+    case "gaze_calib":
+      state.gaze_calib = message;
+      render_gaze_calib();
       break;
     case "update":
       apply_update(message);
@@ -763,6 +768,37 @@ function render_vrss_steps(steps) {
     row.append(dot, text);
     host.append(row);
   }
+}
+
+function render_gaze_calib() {
+  const data = state.gaze_calib;
+  if (!data) {
+    return;
+  }
+  const running = data.state === "running";
+  const start = $("cal-dot-start");
+  const cancel = $("cal-dot-cancel");
+  if (start) {
+    start.disabled = running;
+  }
+  if (cancel) {
+    cancel.disabled = !running;
+  }
+  $("cal-dot-state").textContent = t(`calibration.dot.state.${data.state || "idle"}`);
+  const total = data.target_count || 13;
+  const done = data.done || 0;
+  $("cal-dot-progress").textContent = running
+    ? `${done}/${total} · ${data.samples || 0}/${(data.samples || 0) + (data.needed || 0)}`
+    : `${done}/${total}`;
+  const residual = Number(data.residual);
+  $("cal-dot-residual").textContent =
+    Number.isFinite(residual) && residual >= 0
+      ? `${(residual * 100).toFixed(2)}%`
+      : "—";
+  $("cal-dot-profile").textContent = data.ready
+    ? `v${data.profile_version} · ${data.source_kind || "—"}`
+    : t("calibration.dot.no_profile");
+  $("cal-dot-message").textContent = data.message || "";
 }
 
 function vrss_bool(value) {
@@ -4646,6 +4682,18 @@ function wire() {
     $("cal-eyelid-lo").value = value.toFixed(3);
     $("cal-eyelid-lo-v").textContent = value.toFixed(3);
     push_cal_eye();
+  });
+  $("cal-dot-start").addEventListener("click", () => send({ type: "gaze_calib_start" }));
+  $("cal-dot-cancel").addEventListener("click", () => send({ type: "gaze_calib_cancel" }));
+  $("cal-dot-clear").addEventListener("click", async () => {
+    const ok = await ask_confirm({
+      title: t("calibration.dot.clear"),
+      message: t("calibration.dot.clear_confirm"),
+      confirmText: t("calibration.dot.clear"),
+    });
+    if (ok) {
+      send({ type: "gaze_calib_clear" });
+    }
   });
   $("cal-eye-capture").addEventListener("click", () => {
     send({ type: "capture_calibration", shape: "", which: "center" });
