@@ -35,6 +35,7 @@
 #include "vrcft/module_library.hpp"
 #include "vrcft/module_registry.hpp"
 #include "vrcft/native_library.hpp"
+#include "gaze_calib/probe.hpp"
 #include "gaze_calib/session.hpp"
 #include "vrss/workflow.hpp"
 
@@ -72,6 +73,7 @@ struct IpcContext {
     VrssGazeSink* vrss_out = nullptr; // 可能为空（没有 VRSS 组件/控制面）
     vrss::Workflow* vrss   = nullptr; // 可能为空（没有控制面/未启用 VRSS）
     gaze_calib::Session* gaze_calib = nullptr; // 可能为空（没有控制面/SteamVR overlay）
+    gaze_calib::Probe* gaze_probe   = nullptr; // 注视点探针（头显里画两个点）
     FaceFilter* filter = nullptr; // 可能为空（未启用滤波）
 
     // 校准：tap 固定挂在校准之前；applier 即使没有档案也会挂一个空的（全透传），

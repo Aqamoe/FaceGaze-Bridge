@@ -799,6 +799,18 @@ function render_gaze_calib() {
     ? `v${data.profile_version} · ${data.source_kind || "—"}`
     : t("calibration.dot.no_profile");
   $("cal-dot-message").textContent = data.message || "";
+
+  const probe_button = $("cal-dot-probe");
+  if (probe_button) {
+    probe_button.textContent = data.probe_active
+      ? t("calibration.dot.probe_stop")
+      : t("calibration.dot.probe");
+    probe_button.disabled = running;
+  }
+  const probe_message = $("cal-dot-probe-message");
+  if (probe_message) {
+    probe_message.textContent = data.probe_active ? data.probe_message || "" : "";
+  }
 }
 
 function vrss_bool(value) {
@@ -861,14 +873,11 @@ function render_vrss() {
     sync_slider("v-xgain", calibration.x_gain ?? 1, 2);
     sync_slider("v-ygain", calibration.y_gain ?? 1, 2);
     sync_slider("v-xoffset", calibration.x_offset ?? 0, 2);
-    // 标定生效后这些手工微调不再参与换算（sink 会忽略），置灰避免"校准两次"
-    const calibrated = vrss.point_space === "calibrated";
-    for (const id of ["v-xgain", "v-ygain", "v-xoffset", "v-yoffset"]) {
-      $(id).disabled = calibrated;
-    }
+    // 标定生效后这四条仍然生效，但含义变成"显示侧微调"：注尺寸换算由档案负责，
+    // 它们只补驱动把区域放偏/放大的那一层。文案在 hint 里说清楚，不做硬性禁用。
     const calib_note = $("v-calib-note");
     if (calib_note) {
-      calib_note.hidden = !calibrated;
+      calib_note.hidden = vrss.point_space !== "calibrated";
     }
     sync_slider("v-yoffset", calibration.y_offset ?? 0, 2);
     sync_slider("v-stereo", calibration.stereo_offset ?? 0, 3);
@@ -4694,6 +4703,10 @@ function wire() {
   });
   $("cal-dot-start").addEventListener("click", () => send({ type: "gaze_calib_start" }));
   $("cal-dot-cancel").addEventListener("click", () => send({ type: "gaze_calib_cancel" }));
+  $("cal-dot-probe").addEventListener("click", () => {
+    const active = state.gaze_calib && state.gaze_calib.probe_active;
+    send({ type: active ? "gaze_probe_stop" : "gaze_probe_start" });
+  });
   $("cal-dot-clear").addEventListener("click", async () => {
     const ok = await ask_confirm({
       title: t("calibration.dot.clear"),

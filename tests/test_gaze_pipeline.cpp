@@ -270,3 +270,26 @@ FGB_TEST(gaze_profile_rejects_incomplete_file) {
     FGB_CHECK(!load_gaze_profile(path, loaded, error));
     FGB_CHECK(!loaded.ready());
 }
+
+// 投影与反投影必须严格互逆：探针把"系统认为的注视点"画回头显，靠的就是这条回路。
+FGB_TEST(gaze_projection_roundtrip) {
+    GazeProjection projection = GazeProjection::symmetric(1.1f, 0.9f);
+    // 再来一只不对称的（真实头显就是这样：左眼看得更靠左）
+    projection.eyes[0].tangent = {-1.303f, 0.916f, -0.936f, 0.936f};
+
+    const Vec3 dirs[] = {{0.0f, 0.0f, -1.0f}, {0.3f, 0.0f, -0.954f}, {0.0f, 0.4f, -0.916f},
+                         {-0.5f, -0.2f, -0.842f}};
+    for (const Vec3& dir : dirs) {
+        for (const EyeProjection& eye : projection.eyes) {
+            float x = 0.0f;
+            float y = 0.0f;
+            FGB_CHECK(project_dir_to_viewport(dir, eye, x, y));
+            Vec3 back{};
+            FGB_CHECK(unproject_viewport(Vec2{x, y}, eye, back));
+            const Vec3 expected = normalize(dir);
+            FGB_CHECK_NEAR(back.x, expected.x, 1e-4f);
+            FGB_CHECK_NEAR(back.y, expected.y, 1e-4f);
+            FGB_CHECK_NEAR(back.z, expected.z, 1e-4f);
+        }
+    }
+}

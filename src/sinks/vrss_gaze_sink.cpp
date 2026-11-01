@@ -217,21 +217,16 @@ bool VrssGazeSink::build_ndc(const GazeState& gaze, std::uint64_t now_ns,
         left_y  = -left_y;
         right_y = -right_y;
     }
-    // 已经过注视标定（space == calibrated）的位置不再套 gain/offset：
-    // 那几条滑块是"标定之前"临时用的，两套一起用等于校准两次，位置会整体偏掉
-    // （ADR-0042 §6：sink 不得自行校准）。stereo_offset 是显示侧补偿，仍然生效。
-    const bool manual_adjust = gaze.space != GazeSpace::calibrated;
-    const float x_gain      = manual_adjust ? config.x_gain : 1.0f;
-    const float y_gain      = manual_adjust ? config.y_gain : 1.0f;
-    const float x_offset    = manual_adjust ? config.x_offset : 0.0f;
-    const float y_offset    = manual_adjust ? config.y_offset : 0.0f;
-
-    const float left_ndc_x  = left_x * x_gain + x_offset + config.stereo_offset;
-    const float right_ndc_x = right_x * x_gain + x_offset - config.stereo_offset;
+    // 这里的 gain/offset 是**显示侧微调**，不是注视校准：注视数据由 GazeCalibrator 负责
+    // （ADR-0042 §6），而这几个参数补的是"驱动把区域放到哪"这一层——驱动对归一化位置的
+    // 缩放/零点与我们的视口坐标并不一致，实测表现为"中间准、越往边上越偏外圈"。
+    // 标定之后它们依然生效，只是量级很小；默认 1/0 表示不额外修正。
+    const float left_ndc_x  = left_x * config.x_gain + config.x_offset + config.stereo_offset;
+    const float right_ndc_x = right_x * config.x_gain + config.x_offset - config.stereo_offset;
     ndc[0] = clamp_ndc(left_ndc_x);
-    ndc[1] = clamp_ndc(left_y * y_gain + y_offset);
+    ndc[1] = clamp_ndc(left_y * config.y_gain + config.y_offset);
     ndc[2] = clamp_ndc(right_ndc_x);
-    ndc[3] = clamp_ndc(right_y * y_gain + y_offset);
+    ndc[3] = clamp_ndc(right_y * config.y_gain + config.y_offset);
     return true;
 }
 

@@ -65,11 +65,12 @@ bool Session::start(std::string& error) {
         error = "没有头显几何（先让 SteamVR 运行并导出几何）";
         return false;
     }
-    if (dot_ == nullptr) {
+    if (dots_ == nullptr) {
         error = "overlay 不可用";
         return false;
     }
-    if (!dot_->open(error)) {
+    // 标定只要一个白点；探针有它自己的一组彩色点（彼此 key 不冲突）
+    if (!dots_->open(1, std::vector<overlay::Color>{{255, 255, 255}}, error)) {
         return false;
     }
 
@@ -107,8 +108,8 @@ void Session::cancel() noexcept {
     collector_.reset();
     status_.state   = State::idle;
     status_.message = "已取消";
-    if (dot_ != nullptr) {
-        dot_->hide();
+    if (dots_ != nullptr) {
+        dots_->hide_all();
     }
     target_started_ns_ = 0;
 }
@@ -122,12 +123,12 @@ void Session::begin_target(std::uint64_t now_ns) noexcept {
 }
 
 void Session::place_dot() noexcept {
-    if (dot_ == nullptr || status_.target >= kTargetCount) {
+    if (dots_ == nullptr || status_.target >= kTargetCount) {
         return;
     }
     const Target& target = targets()[status_.target];
     std::string error;
-    if (!dot_->show_at(target.yaw_deg, target.pitch_deg, kDotRadiusDeg, kDotDistanceM, error)) {
+    if (!dots_->show(0, target.yaw_deg, target.pitch_deg, kDotRadiusDeg, kDotDistanceM, error)) {
         fail("摆放标定点失败：" + error);
         return;
     }
@@ -201,8 +202,8 @@ void Session::finish(std::uint64_t /*now_ns*/) noexcept {
     status_.residual        = result_.residual_p95;
     status_.progress        = 1.0f;
     status_.message         = "标定完成";
-    if (dot_ != nullptr) {
-        dot_->hide();
+    if (dots_ != nullptr) {
+        dots_->hide_all();
     }
     FGB_INFO(kTag, "标定完成：v%u，残差 P95 %.4f", result_.version,
              static_cast<double>(result_.residual_p95));
@@ -211,8 +212,8 @@ void Session::finish(std::uint64_t /*now_ns*/) noexcept {
 void Session::fail(std::string message) noexcept {
     status_.state   = State::failed;
     status_.message = std::move(message);
-    if (dot_ != nullptr) {
-        dot_->hide();
+    if (dots_ != nullptr) {
+        dots_->hide_all();
     }
     // 失败不留半套档案：回到开始前（可能是空）
     if (apply_) {
@@ -225,7 +226,7 @@ void Session::tick(std::uint64_t now_ns, const GazeState& gaze) noexcept {
     if (status_.state != State::running) {
         return;
     }
-    if (dot_ == nullptr) {
+    if (dots_ == nullptr) {
         fail("overlay 丢失");
         return;
     }

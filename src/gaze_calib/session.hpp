@@ -18,7 +18,7 @@
 #include <string>
 
 namespace fgb::overlay {
-class GazeDot;
+class Dots;
 }
 
 namespace fgb::gaze_calib {
@@ -50,7 +50,7 @@ public:
 
     void configure(std::string profile_path, std::string hmd_identity);
     void set_projection(const GazeProjection& projection) noexcept { projection_ = projection; }
-    void set_overlay(overlay::GazeDot* dot) noexcept { dot_ = dot; }
+    void set_overlay(overlay::Dots* dots) noexcept { dots_ = dots; }
     void set_apply(ApplyFn fn) { apply_ = std::move(fn); }
 
     // 开始标定：清空档案、打开 overlay、摆第一个点。失败时 error 说明原因。
@@ -74,7 +74,7 @@ private:
     std::string profile_path_;
     std::string hmd_identity_;
     GazeProjection projection_{};
-    overlay::GazeDot* dot_ = nullptr;
+    overlay::Dots* dots_ = nullptr;
     ApplyFn apply_;
 
     Collector collector_{};

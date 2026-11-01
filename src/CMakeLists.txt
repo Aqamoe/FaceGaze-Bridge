@@ -145,7 +145,8 @@ target_compile_definitions(fgb_engine PRIVATE FGB_VERSION="${PROJECT_VERSION}")
 # 控制面：WebSocket IPC + 本地静态页面
 add_library(fgb_web STATIC
     web/ipc.cpp
-    gaze_calib/session.cpp)
+    gaze_calib/session.cpp
+    gaze_calib/probe.cpp)
 target_link_libraries(fgb_web PUBLIC fgb_engine fgb_net fgb_process fgb_steamvr)
 if(WIN32)
     target_link_libraries(fgb_web PRIVATE ole32 comdlg32 shell32)

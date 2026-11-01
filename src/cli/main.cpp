@@ -13,6 +13,7 @@
 #include "params/avatar_config.hpp"
 #include "params/calibration.hpp"
 #include "params/catalog.hpp"
+#include "gaze_calib/probe.hpp"
 #include "gaze_calib/session.hpp"
 #include "openvr/overlay.hpp"
 #include "params/gaze_profile.hpp"
@@ -1400,8 +1401,9 @@ int cmd_run(int argc, char** argv) {
     // 而用户最先想知道的就是"刚才为什么没数据"。
     std::unique_ptr<fgb::web::IpcServer> ipc;
     std::unique_ptr<fgb::vrss::Workflow> vrss_workflow;
-    fgb::overlay::GazeDot gaze_dot;
+    fgb::overlay::Dots calib_dots; // 标定用的白点（探针自己的点由 Probe 持有）
     std::unique_ptr<fgb::gaze_calib::Session> gaze_session;
+    std::unique_ptr<fgb::gaze_calib::Probe> gaze_probe;
     if (panel_port != 0) {
         if (ui_dir.empty()) {
             ui_dir = default_ui_dir();
@@ -1441,11 +1443,16 @@ int cmd_run(int argc, char** argv) {
         gaze_session->configure(fgb::params::default_gaze_profile_path().string(),
                                 gaze_identity);
         gaze_session->set_projection(engine.gaze_projection());
-        gaze_session->set_overlay(&gaze_dot);
+        gaze_session->set_overlay(&calib_dots);
         gaze_session->set_apply([&engine](const fgb::GazeProfile& profile) {
             engine.set_gaze_profile(profile);
         });
         ctx.gaze_calib = gaze_session.get();
+
+        // 注视点探针：把系统认为的左右眼注视点画回头显，用来判断"偏的是数据还是显示路径"
+        gaze_probe = std::make_unique<fgb::gaze_calib::Probe>();
+        gaze_probe->set_projection(engine.gaze_projection());
+        ctx.gaze_probe = gaze_probe.get();
 
         // VRSS 流程只在有控制面时创建：它需要页面来确认 MSAA、点启动与看状态。
         vrss_workflow = std::make_unique<fgb::vrss::Workflow>();
@@ -1529,7 +1536,10 @@ int cmd_run(int argc, char** argv) {
     if (gaze_session) {
         gaze_session->cancel(); // 退出时收掉 overlay，不留一个悬空圆点
     }
-    gaze_dot.close();
+    if (gaze_probe) {
+        gaze_probe->stop();
+    }
+    calib_dots.close();
     if (vrss_workflow && !g_restart.load(std::memory_order_acquire)) {
         // 正常退出（含托盘「退出」）才停 provider；引擎重启要保住 NVIDIA 注册。
         vrss_workflow->stop();

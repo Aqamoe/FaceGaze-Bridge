@@ -291,9 +291,9 @@ FGB_TEST(vrss_stereo_offset_pulls_eyes_together) {
     FGB_CHECK_NEAR(ndc[2], 0.7, 1e-6);
 }
 
-// 已标定的位置不再套手工 gain/offset：两套一起用等于校准两次，位置会整体偏掉。
-// 显示侧的双眼内收必须保留（它修的是驱动行为，不是注视数据）。
-FGB_TEST(vrss_calibrated_gaze_ignores_manual_gain) {
+// 标定后的位置照样套 gain/offset——它们是**显示侧微调**（补驱动摆放区域的偏差），
+// 与注视校准不是一回事。双眼内收同理，两者必须同时可用。
+FGB_TEST(vrss_display_trim_applies_after_calibration) {
     GazeState gaze;
     gaze.point_viewport    = true;
     gaze.space             = GazeSpace::calibrated;
@@ -312,15 +312,15 @@ FGB_TEST(vrss_calibrated_gaze_ignores_manual_gain) {
 
     std::array<float, 4> ndc{};
     FGB_CHECK(VrssGazeSink::build_ndc(gaze, kNow, config, ndc));
-    // 左眼点 -0.5 → 不乘增益不加偏移，只加内收
-    FGB_CHECK_NEAR(ndc[0], -0.45, 1e-5);
-    FGB_CHECK_NEAR(ndc[1], 0.0, 1e-5);
-    FGB_CHECK_NEAR(ndc[2], 0.45, 1e-5);
-    FGB_CHECK_NEAR(ndc[3], 0.0, 1e-5);
-
-    // 未标定时仍然照旧：gain/offset 生效（老路径不能因为这次改动失效）
-    gaze.space = GazeSpace::viewport;
-    FGB_CHECK(VrssGazeSink::build_ndc(gaze, kNow, config, ndc));
+    // 左眼点 -0.5 → *2.0 + 0.1 + 内收 0.05
     FGB_CHECK_NEAR(ndc[0], -0.5f * 2.0f + 0.1f + 0.05f, 1e-5);
     FGB_CHECK_NEAR(ndc[1], 0.2f, 1e-5);
+    FGB_CHECK_NEAR(ndc[2], 1.0f, 1e-5); // 0.5*2+0.1-0.05=1.05 被夹到 1
+
+    // 未标定时同一套参数，结果一致：显示侧微调与注视空间无关
+    gaze.space = GazeSpace::viewport;
+    std::array<float, 4> ndc2{};
+    FGB_CHECK(VrssGazeSink::build_ndc(gaze, kNow, config, ndc2));
+    FGB_CHECK_NEAR(ndc2[0], ndc[0], 1e-6);
+    FGB_CHECK_NEAR(ndc2[1], ndc[1], 1e-6);
 }

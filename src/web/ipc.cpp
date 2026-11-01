@@ -963,6 +963,10 @@ void IpcServer::build_gaze_calib(std::string& out) {
     writer.key("point_space")
         .str(ctx_.engine != nullptr ? gaze_space_name(ctx_.engine->current_gaze().space)
                                     : "source");
+    // 探针：头显里那两个点是否在显示，以及它自己的一句话（没有可用注视点时会说原因）
+    writer.key("probe_active").boolean(ctx_.gaze_probe != nullptr && ctx_.gaze_probe->active());
+    writer.key("probe_message")
+        .str(ctx_.gaze_probe != nullptr ? ctx_.gaze_probe->message() : std::string{});
     writer.obj_end();
 }
 
@@ -2953,6 +2957,30 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         ok                 = true;
         gaze_calib_touched = true;
         ack_message        = "已删除注视标定档案";
+    } else if (has_type && type == "gaze_probe_start") {
+        if (ctx_.gaze_probe == nullptr) {
+            error = "注视点探针不可用（没有控制面或 SteamVR overlay）";
+        } else if (ctx_.gaze_calib != nullptr && ctx_.gaze_calib->active()) {
+            error = "标定进行中，先完成或取消再开探针";
+        } else {
+            std::string probe_error;
+            if (ctx_.gaze_probe->start(probe_error)) {
+                ok                 = true;
+                gaze_calib_touched = true;
+                ack_message        = "已开启注视点探针：青=左眼 品红=右眼";
+            } else {
+                error = probe_error;
+            }
+        }
+    } else if (has_type && type == "gaze_probe_stop") {
+        if (ctx_.gaze_probe != nullptr) {
+            ctx_.gaze_probe->stop();
+            ok                 = true;
+            gaze_calib_touched = true;
+            ack_message        = "已关闭注视点探针";
+        } else {
+            error = "注视点探针不可用";
+        }
     } else if (has_type && type == "ping") {
         server_.send_text(conn, R"({"type":"pong"})");
         return;
@@ -3664,6 +3692,11 @@ void IpcServer::pump(int timeout_ms) {
         ctx_.gaze_calib->tick(clock::now_ns(),
                               ctx_.engine != nullptr ? ctx_.engine->current_gaze() : GazeState{});
         const bool was_running = ctx_.gaze_calib->active();
+        if (ctx_.gaze_probe != nullptr && ctx_.gaze_probe->active()) {
+            // 探针点要跟着注视每帧动，否则看起来像"卡住"
+            ctx_.gaze_probe->tick(ctx_.engine != nullptr ? ctx_.engine->current_gaze()
+                                                         : GazeState{});
+        }
         if (calib_now - last_gaze_calib_ >= std::chrono::milliseconds(500) || was_running) {
             last_gaze_calib_ = calib_now;
             if (server_.ready_count() > 0) {

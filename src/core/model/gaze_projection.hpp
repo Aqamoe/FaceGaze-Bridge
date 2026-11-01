@@ -74,4 +74,30 @@ inline bool project_dir_to_viewport(Vec3 dir_local, const EyeProjection& eye, fl
     return std::isfinite(x) && std::isfinite(y);
 }
 
+// 视口点 → HMD 局部方向。探针要"把系统认为的注视点画回来"，就得反着算一次。
+// 与 project_dir_to_viewport 严格互逆（单测覆盖）。
+inline bool unproject_viewport(Vec2 uv, const EyeProjection& eye, Vec3& dir_local) noexcept {
+    if (!eye.valid()) {
+        return false;
+    }
+    const float* p = eye.tangent.data();
+    const float nx = p[0] + uv.x * (p[1] - p[0]);
+    const float ny = p[3] - uv.y * (p[3] - p[2]);
+    if (!std::isfinite(nx) || !std::isfinite(ny)) {
+        return false;
+    }
+    const float* r = eye.rotation.data();
+    // 眼科坐标 → HMD 局部：v_head = R · (nx, ny, -1)
+    const Vec3 local{nx, ny, -1.0f};
+    const Vec3 head{r[0] * local.x + r[1] * local.y + r[2] * local.z,
+                    r[3] * local.x + r[4] * local.y + r[5] * local.z,
+                    r[6] * local.x + r[7] * local.y + r[8] * local.z};
+    const float len = length(head);
+    if (!std::isfinite(len) || len <= 1e-6f) {
+        return false;
+    }
+    dir_local = head * (1.0f / len);
+    return true;
+}
+
 } // namespace fgb
