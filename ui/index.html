@@ -781,6 +781,9 @@
             <span data-i18n="vrss.settings.flip_y">Y 轴翻转</span>
             <label class="switch"><input type="checkbox" id="v-flip-y"></label>
           </div>
+          <p class="hint" id="v-calib-note" hidden data-i18n="vrss.settings.calibrated_note">
+            已加载注视标定档案：下面的增益与中心偏移不再参与换算，只保留「双眼内收」这一项显示侧补偿。
+          </p>
           <p class="hint" data-i18n="vrss.settings.calib_hint">
             位置 = 注视点 × 增益 + 中心偏移（单位为归一化坐标，1 = 半个视口宽/高）。看向左/右/上/下时区域偏了，先调中心偏移，再调增益；整体反向才勾 Y 轴翻转。右眼镜区偏右、左眼镜区偏左时，把「双眼内收」往正调，直到两眼重合。
           </p>

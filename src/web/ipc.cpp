@@ -887,6 +887,11 @@ void IpcServer::build_vrss(std::string& out) {
     writer.key("allow_source_points").boolean(ctx_.outputs.vrss_allow_source_points);
     writer.obj_end();
 
+    // 当前注视点处在哪个空间：标定生效后，页面要把手工微调置灰（两套一起用等于校准两次）
+    writer.key("point_space")
+        .str(gaze_space_name(ctx_.engine != nullptr ? ctx_.engine->current_gaze().space
+                                                    : GazeSpace::source));
+
     writer.key("sink");
     writer.obj_begin();
     if (ctx_.vrss_out != nullptr) {
@@ -925,6 +930,9 @@ void IpcServer::build_gaze_calib(std::string& out) {
         snap = ctx_.gaze_calib->status();
     }
     const GazeProfile profile = ctx_.engine != nullptr ? ctx_.engine->gaze_profile() : GazeProfile{};
+    // 引擎是唯一事实来源；但刚标定完、热加载还没走完的那几百毫秒里，
+    // 会话自己的结果比"未标定"更接近真相，先拿它兜一下。
+    const bool use_session_fallback = !profile.ready() && snap.profile_version != 0;
     const GazeProjection projection =
         ctx_.engine != nullptr ? ctx_.engine->gaze_projection() : GazeProjection{};
 
@@ -940,12 +948,16 @@ void IpcServer::build_gaze_calib(std::string& out) {
     writer.key("needed").integer(static_cast<long long>(snap.needed));
     writer.key("progress").num(static_cast<double>(snap.progress), 3);
     writer.key("message").str(snap.message);
-    writer.key("profile_version").integer(static_cast<long long>(profile.version));
-    writer.key("residual").num(static_cast<double>(profile.residual_p95), 4);
+    writer.key("profile_version")
+        .integer(static_cast<long long>(use_session_fallback ? snap.profile_version
+                                                            : profile.version));
+    writer.key("residual").num(static_cast<double>(use_session_fallback ? snap.residual
+                                                                       : profile.residual_p95),
+                               4);
     writer.key("source_kind").str(gaze_source_kind_name(profile.source_kind));
     writer.key("created_utc").str(profile.created_utc);
     writer.key("hmd_identity").str(profile.hmd_identity);
-    writer.key("ready").boolean(profile.ready());
+    writer.key("ready").boolean(profile.ready() || use_session_fallback);
     writer.key("geometry").boolean(projection.valid);
     // 当前注视点在哪个空间：用户最想知道的"现在到底有没有可用位置"
     writer.key("point_space")

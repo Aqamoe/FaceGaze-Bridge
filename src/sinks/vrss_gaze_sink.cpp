@@ -217,15 +217,21 @@ bool VrssGazeSink::build_ndc(const GazeState& gaze, std::uint64_t now_ns,
         left_y  = -left_y;
         right_y = -right_y;
     }
-    // 上游 UDP 路径不套 gain/offset，微调只能在这里做：ndc = point * gain + 中心偏移。
-    // stereo_offset 再给两眼一正一负的横移：正值内收，用来抵消驱动按"共享点"重投影时
-    // 自己加出来的双眼视差（实测两眼输入相同，头显里却左右分开）。
-    const float left_ndc_x  = left_x * config.x_gain + config.x_offset + config.stereo_offset;
-    const float right_ndc_x = right_x * config.x_gain + config.x_offset - config.stereo_offset;
+    // 已经过注视标定（space == calibrated）的位置不再套 gain/offset：
+    // 那几条滑块是"标定之前"临时用的，两套一起用等于校准两次，位置会整体偏掉
+    // （ADR-0042 §6：sink 不得自行校准）。stereo_offset 是显示侧补偿，仍然生效。
+    const bool manual_adjust = gaze.space != GazeSpace::calibrated;
+    const float x_gain      = manual_adjust ? config.x_gain : 1.0f;
+    const float y_gain      = manual_adjust ? config.y_gain : 1.0f;
+    const float x_offset    = manual_adjust ? config.x_offset : 0.0f;
+    const float y_offset    = manual_adjust ? config.y_offset : 0.0f;
+
+    const float left_ndc_x  = left_x * x_gain + x_offset + config.stereo_offset;
+    const float right_ndc_x = right_x * x_gain + x_offset - config.stereo_offset;
     ndc[0] = clamp_ndc(left_ndc_x);
-    ndc[1] = clamp_ndc(left_y * config.y_gain + config.y_offset);
+    ndc[1] = clamp_ndc(left_y * y_gain + y_offset);
     ndc[2] = clamp_ndc(right_ndc_x);
-    ndc[3] = clamp_ndc(right_y * config.y_gain + config.y_offset);
+    ndc[3] = clamp_ndc(right_y * y_gain + y_offset);
     return true;
 }
 

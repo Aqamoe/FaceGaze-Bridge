@@ -290,3 +290,37 @@ FGB_TEST(vrss_stereo_offset_pulls_eyes_together) {
     FGB_CHECK_NEAR(ndc[0], -0.7, 1e-6);
     FGB_CHECK_NEAR(ndc[2], 0.7, 1e-6);
 }
+
+// 已标定的位置不再套手工 gain/offset：两套一起用等于校准两次，位置会整体偏掉。
+// 显示侧的双眼内收必须保留（它修的是驱动行为，不是注视数据）。
+FGB_TEST(vrss_calibrated_gaze_ignores_manual_gain) {
+    GazeState gaze;
+    gaze.point_viewport    = true;
+    gaze.space             = GazeSpace::calibrated;
+    gaze.capture_ts_ns     = kNow;
+    gaze.left_point_valid  = true;
+    gaze.right_point_valid = true;
+    gaze.left_point_2d     = {0.25f, 0.5f};
+    gaze.right_point_2d    = {0.75f, 0.5f};
+
+    VrssSinkConfig config = point_config();
+    config.x_gain         = 2.0f;
+    config.y_gain         = 1.8f;
+    config.x_offset       = 0.1f;
+    config.y_offset       = 0.2f;
+    config.stereo_offset  = 0.05f;
+
+    std::array<float, 4> ndc{};
+    FGB_CHECK(VrssGazeSink::build_ndc(gaze, kNow, config, ndc));
+    // 左眼点 -0.5 → 不乘增益不加偏移，只加内收
+    FGB_CHECK_NEAR(ndc[0], -0.45, 1e-5);
+    FGB_CHECK_NEAR(ndc[1], 0.0, 1e-5);
+    FGB_CHECK_NEAR(ndc[2], 0.45, 1e-5);
+    FGB_CHECK_NEAR(ndc[3], 0.0, 1e-5);
+
+    // 未标定时仍然照旧：gain/offset 生效（老路径不能因为这次改动失效）
+    gaze.space = GazeSpace::viewport;
+    FGB_CHECK(VrssGazeSink::build_ndc(gaze, kNow, config, ndc));
+    FGB_CHECK_NEAR(ndc[0], -0.5f * 2.0f + 0.1f + 0.05f, 1e-5);
+    FGB_CHECK_NEAR(ndc[1], 0.2f, 1e-5);
+}

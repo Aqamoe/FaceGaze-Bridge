@@ -190,6 +190,12 @@ void Session::finish(std::uint64_t /*now_ns*/) noexcept {
         return;
     }
 
+    // 热加载：写盘成功只代表"下次启动能用"，现在这一局必须立刻切到新映射，
+    // 否则页面上会显示"已完成"但档案仍是"未标定"（消费者继续用旧/空档案）。
+    if (apply_) {
+        apply_(result_);
+    }
+
     status_.state           = State::done;
     status_.profile_version = result_.version;
     status_.residual        = result_.residual_p95;

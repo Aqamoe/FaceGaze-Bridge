@@ -861,6 +861,15 @@ function render_vrss() {
     sync_slider("v-xgain", calibration.x_gain ?? 1, 2);
     sync_slider("v-ygain", calibration.y_gain ?? 1, 2);
     sync_slider("v-xoffset", calibration.x_offset ?? 0, 2);
+    // 标定生效后这些手工微调不再参与换算（sink 会忽略），置灰避免"校准两次"
+    const calibrated = vrss.point_space === "calibrated";
+    for (const id of ["v-xgain", "v-ygain", "v-xoffset", "v-yoffset"]) {
+      $(id).disabled = calibrated;
+    }
+    const calib_note = $("v-calib-note");
+    if (calib_note) {
+      calib_note.hidden = !calibrated;
+    }
     sync_slider("v-yoffset", calibration.y_offset ?? 0, 2);
     sync_slider("v-stereo", calibration.stereo_offset ?? 0, 3);
     $("v-flip-y").checked = !!calibration.flip_y;
