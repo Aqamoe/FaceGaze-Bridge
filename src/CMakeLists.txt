@@ -94,7 +94,10 @@ add_library(fgb_process STATIC
     core/process/one_euro.cpp
     core/process/gaze_estimator.cpp
     core/process/gaze_normalizer.cpp
-    core/process/gaze_calibrator.cpp)
+    core/process/gaze_calibrator.cpp
+    gaze_calib/plan.cpp
+    gaze_calib/collector.cpp
+    gaze_calib/fit.cpp)
 target_link_libraries(fgb_process PUBLIC fgb_core)
 
 # VRSS 组件的公共部分：几何解析与输出换算。provider 进程控制/驱动探测在后续文件里。

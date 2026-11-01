@@ -32,7 +32,8 @@ add_executable(fgb-tests
     test_livelink.cpp
     test_steamvr.cpp
     test_vrss.cpp
-    test_gaze_pipeline.cpp)
+    test_gaze_pipeline.cpp
+    test_gaze_calib.cpp)
 
 target_include_directories(fgb-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(fgb-tests PRIVATE FGB_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
