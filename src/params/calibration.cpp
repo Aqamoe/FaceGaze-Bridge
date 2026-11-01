@@ -659,6 +659,10 @@ void CalibrationApplier::process(FaceFrame& frame) noexcept {
             const float pitch = (eye->gazePitchYawDeg.x - profile.eye_center_y) * profile.eye_gain_y;
             eye->gazePitchYawDeg.y = std::clamp(yaw, -60.0f, 60.0f);
             eye->gazePitchYawDeg.x = std::clamp(pitch, -60.0f, 60.0f);
+            // 校准只改角度、不改方向，会让读 dir 的消费端（VRSS、方向字段）拿到未校准的值，
+            // 而读角度的（面捕 look 参数）拿到校准后的值——同一只眼睛两套值。
+            // 角度是校准的权威来源，方向就必须由它派生（ADR-0042 P0）。
+            eye->gazeDirLocal = pitch_yaw_deg_to_dir(eye->gazePitchYawDeg.x, eye->gazePitchYawDeg.y);
         }
     }
 }

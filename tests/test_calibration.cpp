@@ -604,3 +604,52 @@ FGB_TEST(curve_legacy_profile_without_curve_column_loads_as_linear) {
     FGB_CHECK(jaw.curve == static_cast<std::uint8_t>(CurveKind::linear));
 }
 
+
+// 校准只改角度、不改方向，是历史 bug：面捕 look 参数读角度（已校准），
+// VRSS 与方向字段读 gazeDirLocal（还是原始值）——同一只眼睛两套值。
+// 方向必须由校准后的角度派生（ADR-0042 P0）。
+FGB_TEST(calibration_keeps_gaze_direction_in_sync_with_angles) {
+    FaceFrame frame            = FaceFrame::neutral();
+    frame.eyes.left.gazeValid  = true;
+    frame.eyes.right.gazeValid = true;
+    for (EyeState* eye : {&frame.eyes.left, &frame.eyes.right}) {
+        eye->gazePitchYawDeg = {5.0f, 10.0f};
+        eye->gazeDirLocal    = pitch_yaw_deg_to_dir(5.0f, 10.0f);
+    }
+
+    CalibrationProfile profile;
+    profile.has_eye      = true;
+    profile.eye_gain_x   = 2.0f;
+    profile.eye_gain_y   = 2.0f;
+    profile.eye_center_x = 2.0f; // yaw 中心
+    profile.eye_center_y = 1.0f; // pitch 中心
+
+    CalibrationApplier applier(profile);
+    applier.process(frame);
+
+    const float expect_yaw   = (10.0f - 2.0f) * 2.0f;
+    const float expect_pitch = (5.0f - 1.0f) * 2.0f;
+    FGB_CHECK_NEAR(frame.eyes.left.gazePitchYawDeg.y, expect_yaw, 1e-3f);
+    FGB_CHECK_NEAR(frame.eyes.left.gazePitchYawDeg.x, expect_pitch, 1e-3f);
+
+    // 角度 → 方向 → 角度 必须是同一个值，否则两套消费端会打架
+    const Vec2 back = dir_to_pitch_yaw_deg(frame.eyes.left.gazeDirLocal);
+    FGB_CHECK_NEAR(back.y, expect_yaw, 1e-3f);
+    FGB_CHECK_NEAR(back.x, expect_pitch, 1e-3f);
+}
+
+FGB_TEST(calibration_without_eye_block_leaves_direction_alone) {
+    FaceFrame frame            = FaceFrame::neutral();
+    frame.eyes.left.gazeValid  = true;
+    frame.eyes.left.gazePitchYawDeg = {5.0f, 10.0f};
+    frame.eyes.left.gazeDirLocal    = pitch_yaw_deg_to_dir(5.0f, 10.0f);
+    const Vec3 before               = frame.eyes.left.gazeDirLocal;
+
+    CalibrationProfile profile; // has_eye == false
+    CalibrationApplier applier(profile);
+    applier.process(frame);
+
+    FGB_CHECK_NEAR(frame.eyes.left.gazeDirLocal.x, before.x, 1e-6f);
+    FGB_CHECK_NEAR(frame.eyes.left.gazeDirLocal.y, before.y, 1e-6f);
+    FGB_CHECK_NEAR(frame.eyes.left.gazeDirLocal.z, before.z, 1e-6f);
+}

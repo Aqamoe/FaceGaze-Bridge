@@ -241,8 +241,13 @@ GazeState Engine::compute_gaze(const FaceFrame& frame) const noexcept {
     gaze.valid                = true;
     gaze.left_valid           = l_gaze;
     gaze.right_valid          = r_gaze;
-    gaze.left_dir_local       = l.gazeDirLocal;
-    gaze.right_dir_local      = r.gazeDirLocal;
+    // 方向与角度必须同源：角度是校准后的（CalibrationApplier 改的就是它），
+    // 直接搬 gazeDirLocal 会让"读角度的消费端已校准、读方向的还没校准"。
+    // 来源在合并时已经由方向推过一次角度，所以这里反向推回去不丢信息。
+    gaze.left_dir_local =
+        l_gaze ? pitch_yaw_deg_to_dir(l.gazePitchYawDeg.x, l.gazePitchYawDeg.y) : l.gazeDirLocal;
+    gaze.right_dir_local =
+        r_gaze ? pitch_yaw_deg_to_dir(r.gazePitchYawDeg.x, r.gazePitchYawDeg.y) : r.gazeDirLocal;
     gaze.capture_ts_ns        = stamp.captureTsNs != 0 ? stamp.captureTsNs : frame.captureTsNs;
     gaze.source               = stamp.source;
     gaze.source_mask          = frame.contributingSources;
@@ -265,13 +270,14 @@ GazeState Engine::compute_gaze(const FaceFrame& frame) const noexcept {
     if (l_gaze && r_gaze) {
         gaze.pitch_deg = 0.5f * (l.gazePitchYawDeg.x + r.gazePitchYawDeg.x);
         gaze.yaw_deg   = 0.5f * (l.gazePitchYawDeg.y + r.gazePitchYawDeg.y);
-        gaze.dir_local = normalize(l.gazeDirLocal + r.gazeDirLocal);
+        // 用上面派生过的逐眼方向合成，别再用原始的 gazeDirLocal
+        gaze.dir_local = normalize(gaze.left_dir_local + gaze.right_dir_local);
         gaze.confidence = 0.5f * (l.gazeConf + r.gazeConf);
     } else {
         const EyeState& use = l_gaze ? l : r;
         gaze.pitch_deg      = use.gazePitchYawDeg.x;
         gaze.yaw_deg        = use.gazePitchYawDeg.y;
-        gaze.dir_local      = use.gazeDirLocal;
+        gaze.dir_local      = l_gaze ? gaze.left_dir_local : gaze.right_dir_local;
         gaze.confidence     = use.gazeConf;
     }
 
