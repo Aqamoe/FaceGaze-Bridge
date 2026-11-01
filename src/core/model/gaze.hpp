@@ -11,6 +11,23 @@
 
 namespace fgb {
 
+// 逐眼 2D 点属于哪个空间。三态而不是布尔：要能区分"模块声明的"和"FGB 自己拟合出来的"，
+// 出问题时才回答得了"是模块给错了，还是标定拟合错了"（ADR-0042 §3）。
+enum class GazeSpace : std::uint8_t {
+    source     = 0, // 来源自己的坐标，不能当屏幕位置用
+    viewport   = 1, // 已在该眼视口坐标系：模块声明，或方向经 HMD 几何投影
+    calibrated = 2, // 经 GazeProfile 拟合（附 profile_version 与 residual）
+};
+
+inline const char* gaze_space_name(GazeSpace space) noexcept {
+    switch (space) {
+    case GazeSpace::source: return "source";
+    case GazeSpace::viewport: return "viewport";
+    case GazeSpace::calibrated: return "calibrated";
+    }
+    return "source";
+}
+
 struct GazeState {
     bool valid = false;
     Vec3 dir_local{0.0f, 0.0f, -1.0f}; // 合并/渲染方向，HMD 局部单位向量
@@ -40,7 +57,13 @@ struct GazeState {
     bool left_point_valid  = false;
     bool right_point_valid = false;
     // 点是否在规范空间（该眼显示视口归一化，ADR-0033）；false = 来源原始坐标
+    // 【派生字段】由 space 得出，只留作旧消费端的兼容判断，新代码请读 space。
     bool point_viewport    = false;
+    // 规范管线产出（ADR-0042）：这条数据处在哪个空间、用哪版档案、残差多少。
+    GazeSpace space        = GazeSpace::source;
+    std::uint32_t profile_version = 0;  // 0 = 未用档案（模块声明或几何投影）
+    float residual         = -1.0f;     // 拟合残差（视口宽比例）；< 0 = 未知
+    bool geometry_missing  = false;     // 有方向但没有头显几何，投影不出来
     Vec2 left_point_2d{0.0f, 0.0f};
     Vec2 right_point_2d{0.0f, 0.0f};
 

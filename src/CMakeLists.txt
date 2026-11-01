@@ -16,7 +16,8 @@ endif()
 
 add_library(fgb_core STATIC
     core/model/shape.cpp
-    core/model/frame.cpp)
+    core/model/frame.cpp
+    core/model/gaze_profile.cpp)
 target_link_libraries(fgb_core PUBLIC fgb_base)
 
 add_library(fgb_osc STATIC
@@ -68,6 +69,7 @@ add_library(fgb_params STATIC
     params/avatar_config.cpp
     params/oscquery.cpp
     params/preview_tap.cpp
+    params/gaze_profile.cpp
     params/calibration.cpp)
 target_link_libraries(fgb_params PUBLIC fgb_core fgb_base fgb_capture fgb_vrcft fgb_net)
 
@@ -90,7 +92,9 @@ endif()
 
 add_library(fgb_process STATIC
     core/process/one_euro.cpp
-    core/process/gaze_estimator.cpp)
+    core/process/gaze_estimator.cpp
+    core/process/gaze_normalizer.cpp
+    core/process/gaze_calibrator.cpp)
 target_link_libraries(fgb_process PUBLIC fgb_core)
 
 # VRSS 组件的公共部分：几何解析与输出换算。provider 进程控制/驱动探测在后续文件里。

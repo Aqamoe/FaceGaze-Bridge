@@ -155,7 +155,19 @@ void Engine::stop() noexcept {
     FGB_INFO(kTag, "引擎停止，共 %llu tick", static_cast<unsigned long long>(stats_.ticks));
 }
 
-GazeState Engine::compute_gaze(const FaceFrame& frame) const noexcept {
+GazeState Engine::compute_gaze(const FaceFrame& frame, std::uint64_t now_ns) {
+    GazeState gaze = assemble_gaze(frame);
+    // 顺序固定：先统一结构/有效性，再统一口径（视口点）。平滑与 fixation 在估计器里，
+    // 它们吃的是已经落到视口坐标的数据（ADR-0042 §1 不变量）。
+    normalizer_.apply(gaze, now_ns);
+    calibrator_.apply(gaze);
+    // 兼容字段跟着 space 走：老 sink 还在读 point_viewport，两处不一致就会出现
+    // "标定说能用、消费端说不能用"。等 P1b 把 sink 全切到 space 之后可以删掉。
+    gaze.point_viewport = gaze.space != GazeSpace::source;
+    return gaze;
+}
+
+GazeState Engine::assemble_gaze(const FaceFrame& frame) const noexcept {
     GazeState gaze;
 
     // 渲染注视优先用独立 gaze 通道；没有时才回退到眼睛反算。
@@ -314,7 +326,7 @@ void Engine::tick_once(std::uint64_t now_ns) {
         merged.sequence    = ++sequence_;
         last_frame_        = merged;
         snapshot_.publish(last_frame_);
-        last_gaze_ = compute_gaze(last_frame_);
+        last_gaze_ = compute_gaze(last_frame_, now_ns);
         gaze_estimator_.update(last_frame_, last_gaze_, now_ns);
     }
 

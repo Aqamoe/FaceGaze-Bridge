@@ -822,7 +822,9 @@ FGB_TEST(engine_points_only_source_does_not_fake_direction) {
     frame.gaze.left.confidence  = 0.9f;
     frame.gaze.right.confidence = 0.9f;
     frame.gaze.confidence       = 0.9f;
-    frame.gaze.captureTsNs      = 5000;
+    // 0 = 来源没给时间戳。这里刻意不用固定的小数值：注视管线会按 50 ms 判过期，
+    // 一个恒定的小 captureTsNs 在循环推进的 tick 后面就是"数据早就过期"。
+    frame.gaze.captureTsNs      = 0;
 
     for (int i = 0; i <= 24; ++i) {
         raw->push(frame);

@@ -13,6 +13,7 @@
 #include "params/avatar_config.hpp"
 #include "params/calibration.hpp"
 #include "params/catalog.hpp"
+#include "params/gaze_profile.hpp"
 #include "sinks/shm_sink.hpp"
 #include "sinks/udp_binary_sink.hpp"
 #include "sinks/vmc_sink.hpp"
@@ -1337,13 +1338,49 @@ int cmd_run(int argc, char** argv) {
         udp_out_raw   = udp_sink.get();
         engine.add_sink(std::move(udp_sink));
     }
-    if (vrss_out_enabled || panel_port != 0) {
-        // 2D 视口点不需要几何；有几何时方向型来源也能用。导出失败不阻止启动。
-        std::string vrss_geometry_error;
-        if (!fgb::vrss::load_geometry(fgb::vrss::run_dir() / "geometry.txt",
-                                      vrss_out_cfg.geometry, vrss_geometry_error)) {
-            FGB_INFO("vrss", "几何不可用（%s），只使用 2D 视口点", vrss_geometry_error.c_str());
+    // 注视管线（ADR-0042）：几何与标定档案在扇出之前注入引擎，任何 sink 拿到的都是
+    // 同一份规范注视点。几何缺失只影响"方向→视口点"，不影响模块自带视口点的来源。
+    {
+        fgb::vrss::HmdGeometry geometry;
+        std::string geometry_error;
+        const bool have_geometry = fgb::vrss::load_geometry(
+            fgb::vrss::run_dir() / "geometry.txt", geometry, geometry_error);
+        if (have_geometry) {
+            vrss_out_cfg.geometry = geometry;
+            // 逐眼投影交给注视管线：两条分支最后都要落到同一套视口坐标
+            fgb::GazeProjection projection;
+            bool any = false;
+            for (int i = 0; i < 2; ++i) {
+                const fgb::vrss::EyeGeometry& src = geometry.eyes[i];
+                fgb::EyeProjection& dst          = projection.eyes[i];
+                for (std::size_t k = 0; k < dst.tangent.size(); ++k) {
+                    dst.tangent[k] = src.projection[k];
+                }
+                for (std::size_t k = 0; k < dst.rotation.size(); ++k) {
+                    dst.rotation[k] = src.eye_to_head[k];
+                }
+                any = any || dst.valid();
+            }
+            projection.valid = any && projection.eyes[0].valid() && projection.eyes[1].valid();
+            engine.set_gaze_projection(projection);
+        } else {
+            FGB_INFO("vrss", "几何不可用（%s），方向型来源只有方向、没有屏幕位置",
+                     geometry_error.c_str());
         }
+
+        fgb::GazeProfile gaze_profile;
+        std::string profile_error;
+        const std::string profile_path = fgb::params::default_gaze_profile_path().string();
+        if (fgb::params::load_gaze_profile(profile_path, gaze_profile, profile_error)) {
+            engine.set_gaze_profile(gaze_profile);
+            FGB_INFO("gaze", "注视标定档案 v%u（%s，残差 %.4f）已加载", gaze_profile.version,
+                     fgb::gaze_source_kind_name(gaze_profile.source_kind),
+                     static_cast<double>(gaze_profile.residual_p95));
+        } else if (std::filesystem::exists(profile_path)) {
+            FGB_WARN("gaze", "注视标定档案不可用：%s", profile_error.c_str());
+        }
+    }
+    if (vrss_out_enabled || panel_port != 0) {
         vrss_out_cfg.enabled = vrss_out_enabled;
         auto vrss_sink = std::make_unique<fgb::VrssGazeSink>(vrss_out_cfg);
         vrss_out_raw   = vrss_sink.get();

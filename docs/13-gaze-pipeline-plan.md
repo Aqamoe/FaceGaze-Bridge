@@ -1,6 +1,6 @@
 # 13 · 注视管线实施计划（规范化 / 标定 / 稳定化）
 
-- 状态：**已确认（待实施）**
+- 状态：**实施中**（P0 ✅ 2026-11-02 · P1a ✅ 2026-11-02 · P2 未开始）
 - 日期：2026-11-02
 - 决策：[ADR-0042](adr/0042-unified-gaze-pipeline.md)
 - 关联：[ADR-0026](adr/0026-gaze-estimator-and-api.md)（注视估计与 API）、
@@ -87,8 +87,12 @@ SourceMerger ──▶ GazeNormalizer ──▶ GazeCalibrator ──▶ GazeSta
 | P1.4 | `GazeCalibrator`：按 `profile.source_kind` 选转换器（源点→仿射 / 角度→角度校正+几何投影 / viewport 直通）；无档案时按 §1.1 规则降级 | 新增 `src/core/process/gaze_calibrator.{hpp,cpp}` |
 | P1.5 | 引擎接线：两段挂在合并之后、`compute_gaze` 之前；`GazeEstimator` 保持在稳定化位置 | `src/engine/engine.{hpp,cpp}` |
 | P1.6 | 消费端改造：VRSS 只做点→NDC；WS/SHM/UDP 输出 `point_space`；面捕 look 读规范角度 | `sinks/*`、`params/v1_params.cpp` |
-| P1.7 | VRSS 参数收敛：删 `allow_source_points`、`flip_y`、四个 gain/offset；`stereo_offset` 更名为显示侧补偿并单列一节 | `outputs.*`、`vrss_gaze_sink.*`、`ui/` |
-| P1.8 | 单测：标签规则（4 种输入 × 期望标签）、无档案降级、单眼失效不连坐 | `tests/test_gaze_pipeline.cpp` |
+| P1.7 | **推迟到 P2 之后**：VRSS 参数收敛（删 `allow_source_points`、`flip_y`、四个 gain/offset；`stereo_offset` 归显示侧） | `outputs.*`、`vrss_gaze_sink.*`、`ui/` |
+| P1.8 | 单测：标签规则、单眼失效不连坐、档案分支不匹配不套用、档案读写往返 | `tests/test_gaze_pipeline.cpp` |
+
+> **排期修订（2026-11-02）**：P1.7 不能在 P2 之前做。`GazeProfile` 要到 P2 才有产出，
+> P1 阶段标定是恒等的——先删 VRSS 的位置补偿，用户当前已调好的 VRSS 会直接失效。
+> 顺序改为 **P1a 管线骨架（保留 VRSS 参数）→ P2 圆盘标定产出档案 → P1.7 拆参数**。
 
 **验收**：
 - `/api/gaze` 的 `point_space` 在四种情形下取值符合 §1.1；
@@ -164,3 +168,34 @@ SourceMerger ──▶ GazeNormalizer ──▶ GazeCalibrator ──▶ GazeSta
 - [ ] P3：`/api/gaze`/WS/SHM/UDP 字段一致；SDK 文档说明"不得自行校准"
 - [ ] 回归：`fgb-tests` 全绿；`probe_ipc`、`probe_ui`、`probe_vrss_flow` 通过
 - [ ] 真机：VRSS 高质量区跟随，两眼重合；面捕 look 与 VRSS 同源（同一帧改增益两者同时变）
+
+
+---
+
+## 9. 进度
+
+### 2026-11-02 · P0 完成（`db38bc9`）
+
+`CalibrationApplier` 校准角度后重算 `gazeDirLocal`；`compute_gaze` 回退分支的方向也由角度
+派生，合并方向不再混用原始值。2 个单测覆盖"角度→方向→角度"闭环与 `has_eye=false` 透传。
+
+### 2026-11-02 · P1a 完成
+
+| 落地 | 位置 |
+|---|---|
+| 空间三态 `GazeSpace` + `profile_version` / `residual` / `geometry_missing` | `core/model/gaze.hpp` |
+| 规范注视点管线（规范化 → 标定），`compute_gaze` 拆成 `assemble_gaze` + 两段 | `core/process/gaze_normalizer.*`、`core/process/gaze_calibrator.*`、`engine/engine.*` |
+| 逐眼投影与"方向→视口点"唯一实现 | `core/model/gaze_projection.hpp`（`project_dir_to_viewport`） |
+| 标定档案结构 + `gaze.ini` 读写（原子替换、坏行只丢该行） | `core/model/gaze_profile.*`、`params/gaze_profile.*` |
+| 启动时注入几何与档案（几何同时喂 VRSS 与管线） | `cli/main.cpp` |
+| `/api/gaze` 输出 `point_space`(三态) / `profile_version` / `residual` / `geometry_missing` | `web/ipc.cpp` |
+| 10 个单测：标签、过期、镜像、投影、缺几何、无档案降级、分支不匹配、档案往返 | `tests/test_gaze_pipeline.cpp` |
+
+已知取舍（P2 之前保持不变）：
+
+- VRSS 的 `allow_source_points` / `flip_y` / 四个位置参数仍在，位置校准仍由它们 + 未来的档案
+  两处负责；P1.7 会删除前两者，把 `stereo_offset` 归为显示侧补偿。
+- 方向型来源现在会由管线产出逐眼视口点，VRSS 走的是"点分支"而不是自己的方向分支；
+  两条路径的公式已统一到 `project_dir_to_viewport`，数值一致（P1.7 再删旧路径）。
+- 过期判定（50 ms）从 VRSS 上移到规范化层：语义不变，但来源如果给的是硬件时钟而不是引擎
+  时钟，会被判过期——与 VRSS 原来的行为一致，不新增风险面。

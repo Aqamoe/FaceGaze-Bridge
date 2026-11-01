@@ -8,8 +8,12 @@
 #pragma once
 
 #include "core/cont/seqlock.hpp"
+#include "core/model/gaze_profile.hpp"
+#include "core/model/gaze_projection.hpp"
 #include "core/process/face_processor.hpp"
+#include "core/process/gaze_calibrator.hpp"
 #include "core/process/gaze_estimator.hpp"
+#include "core/process/gaze_normalizer.hpp"
 #include "engine/source_merger.hpp"
 #include "engine/tick_stats.hpp"
 #include "sinks/sink.hpp"
@@ -73,6 +77,14 @@ public:
 
     FaceFrame latest() const;
     GazeState current_gaze() const;
+
+    // 注视管线（ADR-0042）：档案与几何都由控制面注入，引擎只负责按帧跑。
+    void set_gaze_profile(const GazeProfile& profile) noexcept { calibrator_.set_profile(profile); }
+    void set_gaze_projection(const GazeProjection& projection) noexcept {
+        calibrator_.set_projection(projection);
+    }
+    GazeProfile gaze_profile() const noexcept { return calibrator_.profile(); }
+    GazeProjection gaze_projection() const noexcept { return calibrator_.projection(); }
     TickStats::Snapshot tick_stats() const noexcept { return tick_stats_.snapshot(); }
     EngineStats stats() const noexcept {
         // frames_in 由合并器统计（它是真正 poll 每个源的地方）
@@ -82,7 +94,10 @@ public:
     }
 
 private:
-    GazeState compute_gaze(const FaceFrame& frame) const noexcept;
+    // 合并后的原始注视（两条分支各自的字段，未规范化）
+    GazeState assemble_gaze(const FaceFrame& frame) const noexcept;
+    // 规范注视点：assemble → 规范化 → 标定（ADR-0042 §1 的固定顺序）
+    GazeState compute_gaze(const FaceFrame& frame, std::uint64_t now_ns);
 
     EngineConfig config_;
     std::vector<std::unique_ptr<ISource>> sources_;
@@ -90,6 +105,8 @@ private:
     std::vector<std::unique_ptr<IFaceProcessor>> processors_;
     SourceMerger merger_;
     GazeEstimator gaze_estimator_;
+    GazeNormalizer normalizer_;
+    GazeCalibrator calibrator_;
     TickStats tick_stats_;
     std::uint64_t last_tick_ns_ = 0;
 

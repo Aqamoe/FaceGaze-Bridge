@@ -1,6 +1,7 @@
 # ADR-0042 · 统一注视管线：规范化 / 标定 / 稳定化
 
-- 状态：**已确认（待实施）**（2026-11-02）
+- 状态：**实施中**——P0（角度/方向同源）与 P1a（规范化 + 标定骨架、`gaze.ini`、
+  `/api/gaze` 三态）已落地 2026-11-02；P2 圆盘标定与 P1.7 参数收敛未做
 - 日期：2026-11-02
 - 影响：`src/core/model/gaze.hpp`、`src/core/process/`（新增 normalizer / calibrator）、
   `src/engine/engine.cpp`、`src/params/calibration.*`、`src/sinks/*`、`src/web/ipc.*`、

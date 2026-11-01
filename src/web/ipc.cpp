@@ -959,9 +959,13 @@ void IpcServer::build_gaze(std::string& out) {
     // 逐眼点有效性：只给 2D 点的源 left/right_valid 为假，这几个字段才是真信号
     writer.key("left_point_valid").boolean(gaze.left_point_valid);
     writer.key("right_point_valid").boolean(gaze.right_point_valid);
-    // 点的坐标系：viewport = 该眼视口归一化（ADR-0033，可直接用于 foveation）；
-    // source = 来源自己的原始坐标，只能展示/看趋势
-    writer.key("point_space").str(gaze.point_viewport ? "viewport" : "source");
+    // 点的坐标系（ADR-0042 §3）：viewport = 该眼视口归一化（模块声明或几何投影）；
+    // calibrated = 过 FGB 拟合映射；source = 来源原始坐标，只能展示/看趋势
+    writer.key("point_space").str(gaze_space_name(gaze.space));
+    writer.key("profile_version")
+        .integer(static_cast<long long>(gaze.profile_version));
+    writer.key("residual").num(static_cast<double>(gaze.residual), 4);
+    writer.key("geometry_missing").boolean(gaze.geometry_missing);
     writer.key("left_point_2d").arr_begin();
     writer.num(gaze.left_point_2d.x, 4);
     writer.num(gaze.left_point_2d.y, 4);
