@@ -1,0 +1,166 @@
+# 13 · 注视管线实施计划（规范化 / 标定 / 稳定化）
+
+- 状态：**已确认（待实施）**
+- 日期：2026-11-02
+- 决策：[ADR-0042](adr/0042-unified-gaze-pipeline.md)
+- 关联：[ADR-0026](adr/0026-gaze-estimator-and-api.md)（注视估计与 API）、
+  [ADR-0033](adr/0033-gaze-point-2d-space.md)（2D 点坐标约定）、
+  [ADR-0041](adr/0041-vrss-source-space-points.md)（VRSS 遇到来源空间点）、
+  [01-architecture §10](01-architecture.md#10-校准管线)（校准管线）、
+  [12 · VRSS 融合](12-vrss-integration-plan.md)
+
+---
+
+## 0. 目标与边界
+
+### 0.1 目标
+
+1. 全链路只有**一个**规范注视点（`GazeState`），sink 只读、不再各自换算。
+2. 全链路只有**一处**注视校准（`GazeProfile`），由 VR 圆盘标定拟合，带残差。
+3. 注视源的两条分支（模块 2D 点 / 面捕角度+方向）在规范化后**同构**，下游不再分支。
+4. 校准结果可解释：每眼残差、档案版本、来源空间都在数据里，出问题能定位到层。
+
+### 0.2 明确不做
+
+| 不做 | 原因 |
+|---|---|
+| 世界坐标反投影 / 视线命中点 | 需要完整内参与畸变模型；2D 点没有深度 |
+| 漂移补偿（后台缓慢修正零点） | 先有稳定标定，再谈漂移；否则两种修正互相打架 |
+| 注视点预测（速度外推） | M5.4，与本次正交 |
+| 每应用（per-game）偏移 | 显示侧补偿（`stereo_offset`）已够；按应用分档会把两套参数问题搬回来 |
+| 在 FGB 里做镜头畸变校正 | 畸变由合成器施加，标定在畸变前空间做（ADR-0033 §1） |
+
+---
+
+## 1. 管线与不变量
+
+```
+SourceMerger ──▶ GazeNormalizer ──▶ GazeCalibrator ──▶ GazeStabilizer ──▶ GazeState
+                （结构/有效性）      （口径/视口点）      （死区/平滑/注视判定）      │
+                                                                        ┌────────┴────────┐
+                                                                   VRSS · WS/SHM/UDP · 面捕 look · /api/gaze
+```
+
+不变量（违反即视为 bug，单测覆盖）：
+
+1. **顺序固定**：规范化 → 标定 → 稳定化。平滑不得在标定之前。
+2. **标定是纯函数**：`map(raw) → viewport`，不带状态、不做时间相关决策。
+3. **空间标签只降不升**：没有经过拟合映射的数据不得标 `viewport` 或 `calibrated`。
+4. **单眼失效不连坐**：一眼无效时另一眼照常输出，镜像规则只在 sink 侧、且保持 `< 150 ms`。
+5. **sink 不做校准**：sink 里出现 gain/offset/flip 就是违规。
+
+### 1.1 输出空间标签规则
+
+| 情形 | `point_space` |
+|---|---|
+| 经 `GazeProfile` 拟合映射 | `calibrated`（附 `profile_version`、`residual`） |
+| 模块声明 `FGB_ATTR_POINT_VIEWPORT` 且直通 | `viewport` |
+| 角度/方向经 HMD 几何投影 | `viewport`（几何换算不是标定） |
+| 以上都不成立 | `source`（VRSS 等消费端拒绝使用） |
+
+---
+
+## 2. P0 · 止血：角度与方向不同源
+
+**为什么先做**：这是现存 bug，且会让 P1 的验收数据不可信——调 `[eye] gain` 时
+`/api/gaze` 的方向不变，会让人误判标定没生效。
+
+| # | 内容 | 位置 |
+|---|---|---|
+| P0.1 | 校准角度后由角度重算方向：`gazeDirLocal = pitch_yaw_to_dir(校正后角度)`；方向与角度必须同源 | `src/params/calibration.cpp` L655-663 |
+| P0.2 | 回退分支不再"角度用校准值、方向用原始值"，统一由同一个方向函数派生 | `src/engine/engine.cpp` L244-245 |
+| P0.3 | 单测：给定 gain/center，`dir_local` 与 `pitch/yaw` 满足同一三角函数关系 | `tests/test_calibration.cpp` |
+| P0.4 | VRSS 的 `x_gain/y_gain/x_offset/y_offset` 默认归 1/0，UI 标注"临时补偿，将由注视校准取代" | `ui/index.html`、`i18n.js` |
+
+**验收**：改 `calibration.ini [eye] gain_x` 后，`/api/gaze` 的 `dir_local` 与 `yaw_deg`
+同步变化，比值符合增益；`fgb-tests` 全绿。
+
+---
+
+## 3. P1 · 规范层：结构与口径分开
+
+| # | 内容 | 位置 |
+|---|---|---|
+| P1.1 | `GazeState` 增字段：`point_space`（枚举三态）、`profile_version`、`residual`、`geometry_missing` | `src/core/model/gaze.hpp` |
+| P1.2 | `GazeNormalizer`：统一结构、跨眼镜像、单眼失效、过期判定、空间标签（不做单位换算） | 新增 `src/core/process/gaze_normalizer.{hpp,cpp}` |
+| P1.3 | `GazeProfile` 结构 + 读写（`gaze.ini`，带版本、残差、HMD 身份） | 新增 `src/params/gaze_profile.{hpp,cpp}` |
+| P1.4 | `GazeCalibrator`：按 `profile.source_kind` 选转换器（源点→仿射 / 角度→角度校正+几何投影 / viewport 直通）；无档案时按 §1.1 规则降级 | 新增 `src/core/process/gaze_calibrator.{hpp,cpp}` |
+| P1.5 | 引擎接线：两段挂在合并之后、`compute_gaze` 之前；`GazeEstimator` 保持在稳定化位置 | `src/engine/engine.{hpp,cpp}` |
+| P1.6 | 消费端改造：VRSS 只做点→NDC；WS/SHM/UDP 输出 `point_space`；面捕 look 读规范角度 | `sinks/*`、`params/v1_params.cpp` |
+| P1.7 | VRSS 参数收敛：删 `allow_source_points`、`flip_y`、四个 gain/offset；`stereo_offset` 更名为显示侧补偿并单列一节 | `outputs.*`、`vrss_gaze_sink.*`、`ui/` |
+| P1.8 | 单测：标签规则（4 种输入 × 期望标签）、无档案降级、单眼失效不连坐 | `tests/test_gaze_pipeline.cpp` |
+
+**验收**：
+- `/api/gaze` 的 `point_space` 在四种情形下取值符合 §1.1；
+- 2D-only 源（PICO）在没有档案时仍报 `source`，VRSS 拒绝发送且原因来自 `GazeCalibrator`；
+- 有任意一版手工档案（哪怕恒等仿射）时，同源数据报 `calibrated` 并能驱动 VRSS；
+- `tools/probe_ipc.py` 通过，`point_space` 出现在 `/api/gaze`。
+
+---
+
+## 4. P2 · 圆盘标定：采集、拟合、残差
+
+| # | 内容 | 位置 |
+|---|---|---|
+| P2.1 | OpenVR overlay 封装：创建/销毁、贴图、跟随头显、可见性 | 新增 `src/openvr/overlay.{hpp,cpp}` |
+| P2.2 | 标定界面：淡色圆盘 + 当前目标点 + 进度 + 中止；13 点（中心 + 内环 4 + 外环 8） | 新增 `src/gaze_calib/overlay_ui.{hpp,cpp}` |
+| P2.3 | 采集：每点 800 ms，取中位数；仅采 `fixation == true` 且头部角速度低于阈值；每点至少 N 帧否则判该点无效 | 新增 `src/gaze_calib/collector.{hpp,cpp}` |
+| P2.4 | 拟合：每眼仿射（6 参数，正规方程）→ 残差 P95 > 3% 视口宽时试单应（8 参数）→ 仍超标判"不适合直接标定" | 新增 `src/gaze_calib/fit.{hpp,cpp}` |
+| P2.5 | 角度分支：先角度 gain/center 校正，再经几何投影，然后拟合一次线性修正 | 同上 |
+| P2.6 | 落盘与复用：`gaze.ini` 原子写；HMD 身份或不匹配时提示重标 | `src/params/gaze_profile.cpp` |
+| P2.7 | 侧栏「注视校准」页：开始/中止/进度、每眼残差、档案版本与时间、恢复默认 | `ui/`（三语） |
+| P2.8 | 单测：合成数据（已知仿射 + 噪声）反解参数、残差计算、单应分支、退化输入（点共线）不崩 | `tests/test_gaze_calib.cpp` |
+
+**验收（真机）**：
+- 白墙/远景下 13 点采集 30 秒内完成，每眼残差 P95 < 3% 视口宽；
+- 头显内四方向 + 中心，高质量区/光标跟到位，两眼不分离；
+- 连续两次标定，同一点的位置差异 < 2% 视口宽；
+- 拔掉头显或 SteamVR 未开时，标定页明确提示（不进入采集）。
+
+---
+
+## 5. P3 · 契约收敛与文档
+
+| # | 内容 |
+|---|---|
+| P3.1 | `/api/gaze`、WS `gaze`：新增 `point_space`、`profile_version`、`residual`、`geometry_missing`；SHM/UDP 用属性位表达同一件事（不改布局） |
+| P3.2 | `sdk/docs/gaze-service.md`：写清"消费端只读规范点，不得自行校准"；给出四种 `point_space` 的处理建议 |
+| P3.3 | 删除 `calibration.ini [eye]` 的写入路径（保留读取兼容一个版本）；`outputs.ini [vrss]` 清理已弃键 |
+| P3.4 | `docs/01` §10、`docs/09` §5/§11、`docs/02` §4 同步；ADR-0033 增补"FGB 侧标定"的修订说明 |
+| P3.5 | 探针：`tools/probe_ipc.py` 输出 `point_space`/`residual`；新增 `tools/probe_gaze_calib.py`（回放档案、校验映射单调） |
+
+---
+
+## 6. 待定事项
+
+| # | 问题 | 倾向 |
+|---|---|---|
+| Q1 | 标定页是否用注视停留（dwell）确认，还是手柄/键鼠点「开始」 | 先用键鼠+倒计时；dwell 需先有稳定光标，因果循环 |
+| Q2 | 13 点是否够；是否需要第二遍随机 3 点做验证 | 13 点先做，验证遍用 3 点常驻（成本低） |
+| Q3 | 角度分支要不要二次项（01 §10.2 曾设想 2 次项） | 先仿射；残差超标再升级，避免自由度换拟合噪声 |
+| Q4 | `gaze.ini` 是否随头显身份分档（一套档案多头盔） | 首版单档案 + 身份指纹提示；分档等有第二台头显的实测再说 |
+
+---
+
+## 7. 风险
+
+| 风险 | 级别 | 缓解 |
+|---|---|---|
+| 原始点型来源（PICO）两眼 dx 随深度变化 0.10–0.30，仿射残差可能超标 | 高 | §4 P2.4 的降级规则；UI 明示"该来源不适合直接标定"，退回中点+显示侧补偿 |
+| `point_space` 语义扩张属于对外契约变更 | 中 | `calibrated` 是新增值，旧消费者按"非 source 即可用"仍正确；SDK 文档同步 |
+| 标定期间头动导致点飞、拟合出坏映射 | 中 | 头显角速度阈值 + 每点中位数 + 残差门槛，三重拦截 |
+| overlay 在 PICO 串流 / 部分 runtime 上不可用 | 中 | 真机验收项；不可用时降级为桌面全屏窗口标定并标注精度较低 |
+| 迁移期两套参数并存（`[eye]` 与新档案） | 中 | P1 就把 `[eye]` 降级为"角度粗调"并在 UI 标注哪套生效；P3 删除 |
+| 规范层引入额外延迟（120 Hz 热路径） | 低 | 两段都是纯算术（< 2 µs），零分配；`tick_stats` 现有 p95 可对照 |
+
+---
+
+## 8. 验收清单
+
+- [ ] P0：`dir_local` 与角度同源，改增益两者一起动
+- [ ] P1：`point_space` 四态符合 §1.1；VRSS 只做点→NDC；sink 里搜不到 gain/offset
+- [ ] P2：13 点标定完成 ≤ 40 s，每眼残差 P95 < 3%，四方向与中心都到位
+- [ ] P2：连续两次标定差异 < 2%；退化输入不崩
+- [ ] P3：`/api/gaze`/WS/SHM/UDP 字段一致；SDK 文档说明"不得自行校准"
+- [ ] 回归：`fgb-tests` 全绿；`probe_ipc`、`probe_ui`、`probe_vrss_flow` 通过
+- [ ] 真机：VRSS 高质量区跟随，两眼重合；面捕 look 与 VRSS 同源（同一帧改增益两者同时变）

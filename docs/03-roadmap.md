@@ -328,7 +328,8 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 | 5.7 | 委托式 ETFR（`XR_VARJO_foveated_rendering` 声明） | 3 | 低 |
 | 5.8 | 与 1 个串流方案对接验证（ALVR 优先，开源可改） | 4 | 中 |
 | 5.9 | NVIDIA VRSS2（可变速率超采样/注视点抗锯齿）：独立页面、六步流程、驱动探测与 provider | 8 | 高 |
-| | **合计** | **34** | |
+| 5.10 | 统一注视管线（规范化 / 标定 / 稳定化）+ VR 圆盘标定 + `GazeProfile` | 8 | 高 |
+| | **合计** | **42** | |
 
 > **进度（2026-10-30）**：5.1 基础 `GazeEstimator`（角速度扫视 / 80 ms 注视迟滞）与
 > 5.2 `/api/gaze` + 30 Hz WebSocket `gaze` 推送已完成，状态页有注视卡片；
@@ -348,6 +349,12 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > 同日收口 ADR-0030 的「2D 点坐标约定」开放问题 → [ADR-0033](adr/0033-gaze-point-2d-space.md)：
 > 该眼显示视口归一化 `[0,1]`／左上原点／畸变前／逐眼独立／越界保留／NaN 逐眼否掉，
 > 映射责任在模块，宿主只做合法性校验与越界告警（连续 30 帧）。
+> 2026-11-02：5.9 落地并提交（`c39557e`）。真机暴露的问题促成 5.10：注视有两条输入分支
+> （模块 2D 点 / 面捕角度+方向）、三套表示（合并方向 / 逐眼方向 / 逐眼点）、两处校准
+> （`calibration.ini [eye]` 按度数、`outputs.ini [vrss]` 按 NDC），且 `CalibrationApplier`
+> 只缩放了角度、没重算方向 → 面捕 look 已校准而 VRSS 方向路径未校准。
+> → [ADR-0042](adr/0042-unified-gaze-pipeline.md) 定下三段式管线与唯一校准档案，
+> 实施分解见 [13 · 注视管线](13-gaze-pipeline-plan.md)（P0 止血 → P1 规范层 → P2 圆盘标定 → P3 契约）。
 > 见 [ADR-0026](adr/0026-gaze-estimator-and-api.md)、[注视服务](../sdk/docs/gaze-service.md)。
 
 **验收**：在 1 个原本不支持眼追的 Unity OpenXR 游戏里，`XR_EXT_eye_gaze_interaction` 能返回 FGB 的注视数据且延迟 < 30 ms。

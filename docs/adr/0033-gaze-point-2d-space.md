@@ -2,6 +2,10 @@
 
 - 状态：**已实施**（2026-10-31）。**后续**：[ADR-0034](0034-native-module-v2-only.md)
   把位名改为 `FGB_ATTR_LEFT/RIGHT_POINT` 与 `FGB_ATTR_POINT_VIEWPORT`，坐标约定本身不变
+- **修订（2026-11-02）**：[ADR-0042](0042-unified-gaze-pipeline.md) 允许 FGB 侧对"来源空间"的
+  点做圆盘标定映射，但产出的空间标签必须是新增的 `calibrated`，**不得标成 `viewport`**——
+  本文 §2「映射责任在模块」的结论不变，只是承认模块做不到时宿主可以补偿，并且必须在数据里
+  把"模块声明的"和"宿主算的"区分开
 - 日期：2026-10-31
 - 影响：`sdk/fgb_module_api.h`、`sdk/fgb_shared_frame.h`、`sdk/fgb_udp_frame.h`、
   `src/sources/native_gaze_parse.hpp`、`ui/`（状态页 2D 框）、`docs/05`、`docs/08`
