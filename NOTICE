@@ -98,17 +98,46 @@ Runtime itself (Evergreen) is installed by Windows/Edge and is not bundled.
 
 ### OpenVR — BSD-3-Clause
 
-The SteamVR autostart integration vendors only the `openvr.h` header from
-Valve's OpenVR SDK. `openvr_api.dll` is not redistributed; it is loaded at
-runtime from the user's installed SteamVR.
+The SteamVR autostart integration vendors the `openvr.h` header from Valve's
+OpenVR SDK. For the optional VRSS component, `runtime/vrss/` also contains
+`openvr_api.dll` and `openvr_api.lib` so the standalone provider can read HMD
+geometry without depending on the user's SteamVR install.
 
     Copyright (c) 2015, Valve Corporation
     All rights reserved.
     Licensed under the BSD 3-Clause License.
     https://github.com/ValveSoftware/openvr
 
-The full license is in `third_party/openvr/LICENSE` and
-`licenses/openvr-LICENSE.txt`.
+The full license is in `third_party/openvr/LICENSE`,
+`third_party/vrss/openvr/LICENSE`, `licenses/openvr-LICENSE.txt` and
+`licenses/vrss-openvr-LICENSE.txt`.
+
+### VRSS-Tuner — MIT
+
+The optional VRSS component vendors the gaze provider from VRSS-Tuner. It is
+built as a separate executable (`runtime/vrss/fgb-vrss-provider.exe`) and is
+disabled by default.
+
+    VRSS Tuner
+    Copyright (c) 2026 challenger0303 and contributors
+    Licensed under the MIT License
+    https://github.com/challenger0303/VRSS-Tuner
+
+The full license is in `licenses/vrss-tuner-LICENSE.txt`; the vendored commit
+and local patches are recorded in `third_party/vrss/PATCHES.md`.
+
+### NVIDIA NVAPI — NVIDIA license
+
+The VRSS provider compiles against the NVAPI headers and import library from
+the NVIDIA NVAPI SDK (`third_party/vrss/nvapi`). No NVIDIA driver binary is
+redistributed or modified; the provider uses the NVIDIA driver already
+installed on the user's machine.
+
+    Copyright (c) NVIDIA Corporation. All rights reserved.
+    See `licenses/vrss-nvapi-LICENSE.txt` (NVIDIA NVAPI SDK license).
+
+This software is not affiliated with, endorsed by, or sponsored by NVIDIA.
+NVIDIA and NVAPI are trademarks of NVIDIA Corporation.
 
 ### Microsoft Visual C++ Redistributable
 

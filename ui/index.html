@@ -43,6 +43,10 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 8-8M4 12a8 8 0 0 0 8 8M12 4a8 8 0 0 1 0 16"/><circle cx="12" cy="12" r="2.2"/></svg>
         <span data-i18n="nav.output">输出</span>
       </button>
+      <button class="nav-item" data-page="vrss">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z"/><path d="M12 7v5l3 2"/></svg>
+        <span data-i18n="nav.vrss">VRSS</span>
+      </button>
       <button class="nav-item" data-page="logs">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M5 10h14M5 14h9M5 18h6"/></svg>
         <span data-i18n="nav.logs">日志</span>
@@ -644,6 +648,141 @@
             <button class="btn" id="o-save-restart" data-i18n="output.save_restart">保存并重启引擎</button>
           </div>
         </div>
+      </section>
+
+      <!-- VRSS 可变速率超采样（注视点抗锯齿） -->
+      <section class="page" data-page="vrss">
+        <article class="card">
+          <div class="toolbar">
+            <div class="grow">
+              <h2 data-i18n="vrss.title">VRSS 可变速率超采样</h2>
+              <p class="hint" data-i18n="vrss.subtitle">
+                注视点抗锯齿；实验特性，需要 NVIDIA + SteamVR + VRChat MSAA。
+              </p>
+            </div>
+            <span class="chip" id="v-state">—</span>
+            <button class="btn primary" id="v-run" data-i18n="vrss.run">一键启用</button>
+            <button class="btn ghost" id="v-stop" data-i18n="vrss.stop">停止</button>
+          </div>
+
+          <div class="v-steps" id="v-steps"></div>
+
+          <div class="out-actions">
+            <button class="btn ghost" id="v-confirm" data-i18n="vrss.confirm_msaa">
+              我已开启 MSAA 并允许 VRSS
+            </button>
+            <button class="btn ghost" id="v-launch" data-i18n="vrss.launch_vrchat">
+              启动 VRChat
+            </button>
+          </div>
+
+          <p class="hint" data-i18n="vrss.warn">
+            必须先让 VRChat 开启 MSAA x4，并在 NVIDIA 配置中允许 VRChat 使用 VRSS。
+            本功能只做中央超采样抗锯齿，不承诺帧率收益。
+          </p>
+          <p class="hint" data-i18n="vrss.warn_identity">
+            PICO / 串流等没有 EDID 的头显：必须用本页「启动 VRChat」，它会注入与 provider
+            相同的 HMD 身份；直接从 Steam 启动不会连接，验证步骤会一直显示 consumer 0。
+          </p>
+          <p class="hint" id="v-error"></p>
+        </article>
+
+        <article class="card">
+          <h2 data-i18n="vrss.status.title">运行状态</h2>
+          <div class="out-row"><span data-i18n="vrss.status.driver">驱动</span>
+            <span id="v-driver-status">—</span></div>
+          <div class="out-row"><span data-i18n="vrss.status.setup">环境</span>
+            <span id="v-setup-status">—</span></div>
+          <div class="out-row"><span data-i18n="vrss.status.provider">Provider</span>
+            <span id="v-provider-status">—</span></div>
+          <div class="out-row"><span data-i18n="vrss.status.area">抗锯齿范围</span>
+            <span id="v-area-status">—</span></div>
+        </article>
+
+        <article class="card v-settings">
+          <h2 data-i18n="vrss.settings.title">设置与微调</h2>
+          <div class="out-row">
+            <span data-i18n="vrss.settings.enable">启用 VRSS 注视输出</span>
+            <label class="switch"><input type="checkbox" id="v-enabled"></label>
+          </div>
+          <div class="out-row"><span data-i18n="vrss.settings.port">端口</span>
+            <input type="number" id="v-port" min="1" max="65535"></div>
+          <div class="out-row"><span data-i18n="vrss.settings.rate">帧率</span>
+            <input type="number" id="v-rate" min="1" max="120"></div>
+          <div class="out-row">
+            <span data-i18n="vrss.settings.auto_launch">一键流程自动启动 VRChat</span>
+            <label class="switch"><input type="checkbox" id="v-auto"></label>
+          </div>
+          <div class="out-row v-range-row">
+            <span data-i18n="vrss.settings.area">抗锯齿范围（%）</span>
+            <div class="v-range">
+              <input type="range" id="v-area" min="1" max="100" step="1">
+              <input type="number" id="v-area-number" min="1" max="100" step="1" value="12">
+              <b id="v-area-value">12%</b>
+            </div>
+          </div>
+          <p class="hint" data-i18n="vrss.settings.area_hint">
+            正常范围 10–15%。写入 NVIDIA 的 VRChat profile，重启 VRChat 后生效。
+          </p>
+          <div class="out-row v-range-row">
+            <span data-i18n="vrss.settings.x_gain">X 增益</span>
+            <div class="v-range">
+              <input type="range" id="v-xgain" min="0.1" max="2" step="0.01" value="1">
+              <b id="v-xgain-v">1.00</b>
+            </div>
+          </div>
+          <div class="out-row v-range-row">
+            <span data-i18n="vrss.settings.y_gain">Y 增益</span>
+            <div class="v-range">
+              <input type="range" id="v-ygain" min="0.1" max="2" step="0.01" value="1">
+              <b id="v-ygain-v">1.00</b>
+            </div>
+          </div>
+          <div class="out-row v-range-row">
+            <span data-i18n="vrss.settings.x_offset">X 中心偏移</span>
+            <div class="v-range">
+              <input type="range" id="v-xoffset" min="-1" max="1" step="0.01" value="0">
+              <b id="v-xoffset-v">0.00</b>
+            </div>
+          </div>
+          <div class="out-row v-range-row">
+            <span data-i18n="vrss.settings.y_offset">Y 中心偏移</span>
+            <div class="v-range">
+              <input type="range" id="v-yoffset" min="-1" max="1" step="0.01" value="0">
+              <b id="v-yoffset-v">0.00</b>
+            </div>
+          </div>
+          <div class="out-row v-range-row">
+            <span data-i18n="vrss.settings.stereo">双眼内收</span>
+            <div class="v-range">
+              <input type="range" id="v-stereo" min="-0.5" max="0.5" step="0.005" value="0">
+              <b id="v-stereo-v">0.000</b>
+            </div>
+          </div>
+          <div class="out-row">
+            <span data-i18n="vrss.settings.flip_y">Y 轴翻转</span>
+            <label class="switch"><input type="checkbox" id="v-flip-y"></label>
+          </div>
+          <p class="hint" data-i18n="vrss.settings.calib_hint">
+            位置 = 注视点 × 增益 + 中心偏移（单位为归一化坐标，1 = 半个视口宽/高）。看向左/右/上/下时区域偏了，先调中心偏移，再调增益；整体反向才勾 Y 轴翻转。右眼镜区偏右、左眼镜区偏左时，把「双眼内收」往正调，直到两眼重合。
+          </p>
+          <div class="out-row">
+            <span data-i18n="vrss.settings.allow_source">使用未标定的原始 2D 点（实验）</span>
+            <label class="switch"><input type="checkbox" id="v-allow-source"></label>
+          </div>
+          <p class="hint" data-i18n="vrss.settings.allow_source_hint">
+            只在注视源给不出视口坐标时使用：取两眼中点当位置。必须先有 MSAA，再在头显里确认上下左右四个方向都跟随；偏了就调 X/Y 增益与左右眼偏移。
+          </p>
+          <div class="out-actions">
+            <button class="btn primary" id="v-save" data-i18n="vrss.settings.save">保存</button>
+            <button class="btn" id="v-save-restart" data-i18n="vrss.settings.save_restart">保存并重启引擎</button>
+            <button class="btn" id="v-apply-area" data-i18n="vrss.settings.apply_area">应用抗锯齿范围（需 UAC）</button>
+            <button class="btn ghost" id="v-reset-gain" data-i18n="vrss.settings.reset">恢复默认增益</button>
+          </div>
+          <p class="hint" data-i18n="vrss.settings.hint">
+            微调在 FGB 输出侧生效；provider 的 UDP 路径不套用它的校准文件。
+          </p>
+        </article>
       </section>
 
       <!-- 日志 -->

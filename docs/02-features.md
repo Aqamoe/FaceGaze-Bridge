@@ -347,6 +347,7 @@ FGB 站在中间：统一采集 → 统一校准 → 统一分发。这正是"Br
 | **A. OpenXR API Layer** | 作为 layer 插在游戏与 runtime 之间，拦截 `xrEndFrame`/`xrCreateSwapchain` | ✅ 高 | 中（依赖游戏） | 低（不改进程内存） |
 | **B. D3D/Vulkan 钩子 + VRS** | 注入目标进程，拦截 `ExecuteCommandLists`，每帧注入 shading rate image | ⚠️ 中 | 高（若游戏吃 VRS） | **高**（反作弊拦截、崩溃、兼容性） |
 | **C. 引擎内 SDK** | 提供 Unity/UE 插件，游戏自己调 | ✅ 高 | 最高 | 无（但要开发者接入） |
+| **D. NVIDIA VRSS2 驱动级 gaze provider** | 不注入游戏；用 NVAPI 私有 gaze 表注册 provider，驱动按注视位置做中央超采样（**注视点抗锯齿**，不是注视点渲染） | ✅ 条件成立（精确驱动合同 + MSAA + 管理员） | 画质（中央抗锯齿），不承诺帧率 | 高（未文档化 API、驱动版本锁定、需要 UAC） |
 
 ### 5.2 路径 A：OpenXR API Layer（推荐首选）
 
@@ -437,9 +438,10 @@ FGB 的机会：
 | "给不支持眼追的游戏加眼追" | ✅ 成立（OpenXR Layer 注入） |
 | "让支持的引擎做注视点渲染" | ✅ 成立（委托 `XR_VARJO_foveated_rendering`） |
 | "给任意游戏强制开注视点渲染" | ⚠️ 仅 D3D11/12/Vulkan 游戏，且反作弊环境下不可用 |
-| "复刻 NVIDIA VRSS（中央超采样）" | ❌ 不成立，驱动级能力 |
-| "省 50% GPU 算力" | ❌ 夸张，现实 10–25%，且只在像素受限场景 |
-| "让 VRChat 支持注视点渲染" | ❌ 不成立（EAC；且 VRChat 本身无眼追输入） |
+| "为 VRChat 开启 NVIDIA VRSS（中央超采样/注视点抗锯齿）" | ✅ 成立（驱动级 gaze provider，不需要注入；需 MSAA + 驱动合同 + 管理员） |
+| "复刻 NVIDIA VRSS（中央超采样）" | ⚠️ 通过未文档化 NVAPI 私有 gaze 表可以做到，但只对精确审计过的驱动镜像有效 |
+| "省 50% GPU 算力" | ❌ 夸张，现实 10–25%，且只在像素受限场景；VRSS 反而通常增加开销 |
+| "让 VRChat 支持注视点渲染" | ❌ 注视点渲染仍不成立（EAC）；VRSS 只做中央超采样抗锯齿 |
 
 **这份表格要放进产品页和 FAQ。** 过度承诺是这类工具最常见的死法。
 

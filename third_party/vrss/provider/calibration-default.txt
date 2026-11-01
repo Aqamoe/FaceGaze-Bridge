@@ -1,0 +1,4 @@
+left_deg=0
+right_deg=0
+x_gain=1
+y_gain=1

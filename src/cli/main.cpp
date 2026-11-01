@@ -17,7 +17,11 @@
 #include "sinks/udp_binary_sink.hpp"
 #include "sinks/vmc_sink.hpp"
 #include "sinks/vrchat_sink.hpp"
+#include "sinks/vrss_gaze_sink.hpp"
 #include "sinks/ws_json_sink.hpp"
+#include "vrss/geometry.hpp"
+#include "vrss/paths.hpp"
+#include "vrss/workflow.hpp"
 #include "capture/capture_file.hpp"
 #include "sources/livelink_source.hpp"
 #include "sources/native_host_source.hpp"
@@ -143,6 +147,8 @@ void print_usage() {
                  "  --ws-out-all            发全部 88 个形状（默认只发 > 0.01 的有效形状）\n"
                  "  --udp-out <host:port>   UDP 二进制输出（一帧一个数据报）\n"
                  "  --udp-out-rate <hz>     UDP 二进制帧率，0 = 每 tick (默认 0)\n"
+                 "  --vrss-out <端口>       VRSS 注视输出（UdpGazeV1 → 127.0.0.1:<端口>，默认 5556）\n"
+                 "  --vrss-rate <hz>        VRSS 帧率，1..120（默认 90，provider 150 ms 过期）\n"
                  "  --outputs-config <路径> 输出设置文件（默认 %%LOCALAPPDATA%%\\FaceGazeBridge\\outputs.ini）\n"
                  "  --no-saved-outputs      本次忽略已保存的输出设置（命令行参数仍然生效）\n"
                  "  --eye-mode <模式>       parameters | native | both (默认 parameters)\n"
@@ -382,6 +388,10 @@ int cmd_run(int argc, char** argv) {
     bool udp_out_enabled           = false;
     fgb::UdpBinarySink* udp_out_raw = nullptr;
 
+    fgb::VrssSinkConfig vrss_out_cfg;
+    bool vrss_out_enabled            = false;
+    fgb::VrssGazeSink* vrss_out_raw = nullptr;
+
     std::string shm_name;
     fgb::ShmSink* shm_out_raw = nullptr;
     // 可重复出现，顺序即合并优先级：排前面的通道优先
@@ -478,6 +488,17 @@ int cmd_run(int argc, char** argv) {
         udp_out_cfg.port = saved_outputs.udp_port;
         udp_out_cfg.min_interval_ns =
             saved_outputs.udp_rate_hz == 0 ? 0 : 1'000'000'000ULL / saved_outputs.udp_rate_hz;
+
+        vrss_out_enabled         = saved_outputs.vrss_enabled;
+        vrss_out_cfg.port        = saved_outputs.vrss_port;
+        vrss_out_cfg.rate_hz     = saved_outputs.vrss_rate_hz;
+        vrss_out_cfg.x_gain      = saved_outputs.vrss_x_gain;
+        vrss_out_cfg.y_gain      = saved_outputs.vrss_y_gain;
+        vrss_out_cfg.x_offset    = saved_outputs.vrss_x_offset;
+        vrss_out_cfg.y_offset    = saved_outputs.vrss_y_offset;
+        vrss_out_cfg.stereo_offset = saved_outputs.vrss_stereo_offset;
+        vrss_out_cfg.flip_y      = saved_outputs.vrss_flip_y;
+        vrss_out_cfg.allow_source_points = saved_outputs.vrss_allow_source_points;
     }
 
     for (int i = 2; i < argc; ++i) {
@@ -701,6 +722,23 @@ int cmd_run(int argc, char** argv) {
                 return 2;
             }
             udp_out_cfg.min_interval_ns = hz == 0 ? 0 : 1'000'000'000ULL / hz;
+        } else if (arg == "--vrss-out") {
+            const auto v = next_value(arg);
+            std::uint16_t port = 0;
+            if (v.empty() || !parse_uint16(v, port) || port == 0) {
+                std::fprintf(stderr, "--vrss-out 需要端口（例如 5556）\n");
+                return 2;
+            }
+            vrss_out_cfg.port = port;
+            vrss_out_enabled  = true;
+        } else if (arg == "--vrss-rate") {
+            const auto v = next_value(arg);
+            std::uint16_t hz = 0;
+            if (v.empty() || !parse_uint16(v, hz) || hz < 1 || hz > 120) {
+                std::fprintf(stderr, "--vrss-rate 需要在 1..120\n");
+                return 2;
+            }
+            vrss_out_cfg.rate_hz = static_cast<int>(hz);
         } else if (arg == "--vrchat") {
             const auto v = next_value(arg);
             if (v.empty() || !parse_host_port(v, vrchat_cfg.host, vrchat_cfg.port)) {
@@ -1299,12 +1337,25 @@ int cmd_run(int argc, char** argv) {
         udp_out_raw   = udp_sink.get();
         engine.add_sink(std::move(udp_sink));
     }
+    if (vrss_out_enabled || panel_port != 0) {
+        // 2D 视口点不需要几何；有几何时方向型来源也能用。导出失败不阻止启动。
+        std::string vrss_geometry_error;
+        if (!fgb::vrss::load_geometry(fgb::vrss::run_dir() / "geometry.txt",
+                                      vrss_out_cfg.geometry, vrss_geometry_error)) {
+            FGB_INFO("vrss", "几何不可用（%s），只使用 2D 视口点", vrss_geometry_error.c_str());
+        }
+        vrss_out_cfg.enabled = vrss_out_enabled;
+        auto vrss_sink = std::make_unique<fgb::VrssGazeSink>(vrss_out_cfg);
+        vrss_out_raw   = vrss_sink.get();
+        engine.add_sink(std::move(vrss_sink));
+    }
     fgb::clock::raise_timer_resolution();
 
     // 控制面先于引擎启动：这样"引擎启动 / 头像绑定 / 模块握手"这几行日志也能进 UI 的日志页。
     // 反过来的话，界面连上时这些事都已经发生过一遍，日志页永远是空的——
     // 而用户最先想知道的就是"刚才为什么没数据"。
     std::unique_ptr<fgb::web::IpcServer> ipc;
+    std::unique_ptr<fgb::vrss::Workflow> vrss_workflow;
     if (panel_port != 0) {
         if (ui_dir.empty()) {
             ui_dir = default_ui_dir();
@@ -1317,6 +1368,7 @@ int cmd_run(int argc, char** argv) {
         ctx.shm_out     = shm_out_raw;
         ctx.ws_out      = ws_out_raw;
         ctx.udp_out     = udp_out_raw;
+        ctx.vrss_out    = vrss_out_raw;
         ctx.filter      = filter_raw;
         ctx.source_name  = join_names(source_names);
         ctx.source_names = source_names;
@@ -1336,6 +1388,13 @@ int cmd_run(int argc, char** argv) {
         ctx.calib       = calibration_raw;
         ctx.calib_path  = calibration_save_path;
         ctx.calib_loaded = calibration_loaded;
+
+        // VRSS 流程只在有控制面时创建：它需要页面来确认 MSAA、点启动与看状态。
+        vrss_workflow = std::make_unique<fgb::vrss::Workflow>();
+        vrss_workflow->configure(vrss_out_enabled, vrss_out_cfg.port,
+                                 saved_outputs.vrss_auto_launch_vrchat,
+                                 saved_outputs.vrss_area_percent);
+        ctx.vrss = vrss_workflow.get();
 
         ctx.modules          = module_registry.get();
         ctx.running_modules  = running_modules;
@@ -1409,6 +1468,10 @@ int cmd_run(int argc, char** argv) {
     }
 
     engine.stop();
+    if (vrss_workflow && !g_restart.load(std::memory_order_acquire)) {
+        // 正常退出（含托盘「退出」）才停 provider；引擎重启要保住 NVIDIA 注册。
+        vrss_workflow->stop();
+    }
     fgb::clock::restore_timer_resolution();
 
     const auto st = engine.stats();

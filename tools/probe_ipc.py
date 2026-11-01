@@ -151,6 +151,12 @@ def main():
           f"R={gaze_http.get('right_pitch_deg')}/{gaze_http.get('right_yaw_deg')} "
           f"vergence={gaze_http.get('vergence_distance')}")
 
+    status, _, body = http_get("/api/vrss")
+    vrss_http = json.loads(body)
+    print(f"HTTP /api/vrss -> {status}：enabled={vrss_http.get('enabled')} "
+          f"state={vrss_http.get('state')} steps={len(vrss_http.get('steps') or [])} "
+          f"driver={vrss_http.get('driver', {}).get('contract')}")
+
     status, _, page = http_get("/")
     print(f"HTTP / -> {status}，{len(page)} 字节，引用 app.js: {b'app.js' in page}")
     status, _, script = http_get("/app.js")

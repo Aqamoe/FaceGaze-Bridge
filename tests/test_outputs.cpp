@@ -50,6 +50,17 @@ config::OutputOptions sample() {
     out.udp_host     = "127.0.0.4";
     out.udp_port     = 9301;
     out.udp_rate_hz  = 90;
+    out.vrss_enabled = true;
+    out.vrss_port    = 5557;
+    out.vrss_rate_hz = 120;
+    out.vrss_x_gain  = 1.05f;
+    out.vrss_y_gain  = 1.10f;
+    out.vrss_x_offset  = 0.15f;
+    out.vrss_y_offset  = -0.25f;
+    out.vrss_stereo_offset = 0.075f;
+    out.vrss_flip_y    = true;
+    out.vrss_area_percent = 12.5f;
+    out.vrss_auto_launch_vrchat = true;
     return out;
 }
 
@@ -92,6 +103,31 @@ FGB_TEST(outputs_validate_rejects_bad_values) {
     options            = {};
     options.udp_enabled = true;
     options.udp_host    = "";
+    FGB_CHECK(!config::validate_outputs(options, error));
+
+    options            = {};
+    options.vrss_enabled = true;
+    options.vrss_rate_hz = 0;
+    FGB_CHECK(!config::validate_outputs(options, error));
+
+    options            = {};
+    options.vrss_enabled = true;
+    options.vrss_x_gain  = 0.05f;
+    FGB_CHECK(!config::validate_outputs(options, error));
+
+    options            = {};
+    options.vrss_enabled = true;
+    options.vrss_x_offset = 1.5f;
+    FGB_CHECK(!config::validate_outputs(options, error));
+
+    options            = {};
+    options.vrss_enabled = true;
+    options.vrss_area_percent = 0.0f;
+    FGB_CHECK(!config::validate_outputs(options, error));
+
+    options            = {};
+    options.vrss_enabled = true;
+    options.vrss_area_percent = 101.0f;
     FGB_CHECK(!config::validate_outputs(options, error));
 }
 

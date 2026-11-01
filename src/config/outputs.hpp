@@ -40,6 +40,27 @@ struct OutputOptions {
     std::uint16_t udp_port = 9102;
     int udp_rate_hz        = 0; // 0 = 每 tick
 
+    // NVIDIA VRSS（可变速率超采样/注视点抗锯齿）。provider 是独立进程，
+    // 这里只存 FGB 侧的输出与微调参数；端口固定回环。
+    bool vrss_enabled          = false;
+    std::uint16_t vrss_port    = 5556;
+    int vrss_rate_hz           = 90;
+    float vrss_x_gain          = 1.0f;
+    float vrss_y_gain          = 1.0f;
+    // 中心偏移（归一化单位，NDC）：正 x = 右、正 y = 上。
+    // 和增益一起构成一次仿射校正：ndc = point * gain + offset。
+    float vrss_x_offset        = 0.0f;
+    float vrss_y_offset        = 0.0f;
+    // 双眼对称补偿：正值内收（左眼右移、右眼左移），抵消驱动侧的双眼视差。
+    float vrss_stereo_offset   = 0.0f;
+    bool vrss_flip_y           = false;
+    // 中央超采样区域，写入 NVIDIA 的 VRChat profile（1..100，常用 10..15）。
+    float vrss_area_percent    = 12.0f;
+    bool vrss_auto_launch_vrchat = false;
+    // 实验：允许把"来源空间"的原始逐眼 2D 点按两眼中点喂给 VRSS。
+    // 默认关：ADR-0033 说这类点不是屏幕位置，必须真机四方向确认后才算可用。
+    bool vrss_allow_source_points = false;
+
     bool operator==(const OutputOptions&) const = default;
 };
 

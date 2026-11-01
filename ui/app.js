@@ -219,6 +219,10 @@ const state = {
   restarting: false,
   outputs_dirty: false,
   pending_outputs_restart: false,
+  vrss: null,
+  vrss_dirty: false,
+  pending_vrss_restart: false,
+  pending_vrss_run: false,
   output_profiles: { profiles: [], active: "", dir: "" },
   profile_pending: null, // {action, name}：ack 回来时用本地化文案提示
   update_info: null,
@@ -243,6 +247,7 @@ const PAGE_META = {
   params: ["page.params.title", "page.params.sub"],
   calibration: ["page.calibration.title", "page.calibration.sub"],
   output: ["page.output.title", "page.output.sub"],
+  vrss: ["page.vrss.title", "page.vrss.sub"],
   logs: ["page.logs.title", "page.logs.sub"],
   settings: ["page.settings.title", "page.settings.sub"],
 };
@@ -398,6 +403,12 @@ function handle(message) {
       };
       render_output_profiles();
       break;
+    case "vrss":
+      state.vrss = message;
+      if (state.view === "vrss") {
+        render_vrss();
+      }
+      break;
     case "update":
       apply_update(message);
       break;
@@ -430,6 +441,9 @@ function handle(message) {
         if (message.command === "set_outputs" || message.command === "apply_output_profile") {
           state.pending_outputs_restart = false;
         }
+        if (message.command === "set_vrss") {
+          state.pending_vrss_run = false;
+        }
         if (message.command === "export_diagnostics") {
           $("diag-busy").hidden = true;
           $("diag-export").disabled = false;
@@ -444,6 +458,17 @@ function handle(message) {
         show_toast(t("output.saved"));
         if (state.pending_outputs_restart) {
           state.pending_outputs_restart = false;
+          send({ type: "restart_engine" });
+        }
+      } else if (message.command === "set_vrss") {
+        state.vrss_dirty = false;
+        show_toast(t("vrss.settings.saved"));
+        if (state.pending_vrss_run) {
+          state.pending_vrss_run = false;
+          send({ type: "vrss_run" });
+        }
+        if (state.pending_vrss_restart) {
+          state.pending_vrss_restart = false;
           send({ type: "restart_engine" });
         }
       } else if (message.command === "apply_output_profile") {
@@ -712,6 +737,167 @@ function save_outputs(restart) {
   state.pending_outputs_restart = !!restart;
   set_outputs_dirty(true);
   send(collect_outputs());
+}
+
+// ---------- VRSS 可变速率超采样 ----------
+
+const VRSS_STEPS = ["env", "driver", "driver_audit", "admin", "provider", "vrchat", "verify"];
+
+function render_vrss_steps(steps) {
+  const host = $("v-steps");
+  host.innerHTML = "";
+  const by_id = new Map((steps || []).map((step) => [step.id, step]));
+  for (const id of VRSS_STEPS) {
+    const step = by_id.get(id) || { state: "pending", detail: "" };
+    const row = document.createElement("div");
+    row.className = `v-step ${step.state}`;
+    const dot = document.createElement("i");
+    dot.className = "v-dot";
+    const text = document.createElement("div");
+    text.className = "v-step-text";
+    const title = document.createElement("b");
+    title.textContent = t(`vrss.step.${id}`);
+    const detail = document.createElement("span");
+    detail.textContent = step.detail || t(`vrss.step_state.${step.state}`);
+    text.append(title, detail);
+    row.append(dot, text);
+    host.append(row);
+  }
+}
+
+function vrss_bool(value) {
+  return value ? t("vrss.status.yes") : t("vrss.status.no");
+}
+
+function render_vrss() {
+  const vrss = state.vrss || {};
+  $("v-state").textContent = t(`vrss.state.${vrss.state || "off"}`);
+  render_vrss_steps(vrss.steps || []);
+  $("v-error").textContent = vrss.last_error || "";
+
+  const driver = vrss.driver || {};
+  if (driver.supported) {
+    $("v-driver-status").textContent = `${driver.version || ""} · ${driver.contract || ""}`;
+  } else if (driver.nvidia) {
+    $("v-driver-status").textContent = t("vrss.status.driver_unsupported");
+  } else {
+    $("v-driver-status").textContent = t("vrss.status.driver_missing");
+  }
+
+  const setup = vrss.setup || {};
+  $("v-setup-status").textContent =
+    `SteamVR ${vrss_bool(setup.steamvr)} · ` +
+    `${t("vrss.status.geometry")} ${vrss_bool(setup.geometry)} · ` +
+    `${t("vrss.status.admin")} ${vrss_bool(setup.admin)} · ` +
+    `VRChat ${vrss_bool(setup.vrchat_running)}`;
+
+  const provider = vrss.provider || {};
+  const sink = vrss.sink || {};
+  // 发出的包数与"为什么没发"必须一起显示：只有 sent 会让人以为在跑。
+  const sink_bits = [];
+  if (sink.messages !== undefined) {
+    sink_bits.push(`sink ${sink.messages || 0}`);
+  }
+  if (sink.message && sink.reason !== "ok") {
+    sink_bits.push(sink.message);
+  }
+  $("v-provider-status").textContent =
+    `${provider.registered ? t("vrss.status.registered") : t("vrss.status.unregistered")} · ` +
+    `consumer ${provider.consumer_count || 0} · sent ${provider.sent || 0} · ` +
+    `failures ${provider.submit_failures || 0}` +
+    (sink_bits.length ? ` · ${sink_bits.join(" · ")}` : "");
+
+  const area_detail = vrss.area_detail || "";
+  $("v-area-status").textContent =
+    `${vrss.calibration?.area ?? 12}% · ` +
+    t(`vrss.area_state.${vrss.area_state || "idle"}`) +
+    (area_detail ? `（${area_detail}）` : "");
+
+  if (!state.vrss_dirty) {
+    const calibration = vrss.calibration || {};
+    $("v-enabled").checked = !!vrss.enabled;
+    $("v-port").value = calibration.port || 5556;
+    $("v-rate").value = calibration.rate || 90;
+    $("v-auto").checked = !!calibration.auto_launch_vrchat;
+    $("v-area").value = calibration.area ?? 12;
+    $("v-area-number").value = Math.round($("v-area").value);
+    $("v-area-value").textContent = `${Math.round($("v-area").value)}%`;
+    sync_slider("v-xgain", calibration.x_gain ?? 1, 2);
+    sync_slider("v-ygain", calibration.y_gain ?? 1, 2);
+    sync_slider("v-xoffset", calibration.x_offset ?? 0, 2);
+    sync_slider("v-yoffset", calibration.y_offset ?? 0, 2);
+    sync_slider("v-stereo", calibration.stereo_offset ?? 0, 3);
+    $("v-flip-y").checked = !!calibration.flip_y;
+    $("v-allow-source").checked = !!calibration.allow_source_points;
+  }
+}
+
+function set_vrss_dirty(dirty) {
+  state.vrss_dirty = dirty;
+}
+
+function collect_vrss() {
+  return {
+    type: "set_vrss",
+    enabled: $("v-enabled").checked,
+    port: Number($("v-port").value),
+    rate: Number($("v-rate").value),
+    auto_launch_vrchat: $("v-auto").checked,
+    area: Number($("v-area").value),
+    x_gain: Number($("v-xgain").value),
+    y_gain: Number($("v-ygain").value),
+    x_offset: Number($("v-xoffset").value),
+    y_offset: Number($("v-yoffset").value),
+    stereo_offset: Number($("v-stereo").value),
+    flip_y: $("v-flip-y").checked,
+    allow_source_points: $("v-allow-source").checked,
+  };
+}
+
+function save_vrss(restart) {
+  state.pending_vrss_restart = !!restart;
+  set_vrss_dirty(true);
+  send(collect_vrss());
+}
+
+function run_vrss() {
+  // 一键启用应该真的能用：没勾启用时先把开关打开保存，再发流程命令。
+  if (!$("v-enabled").checked) {
+    $("v-enabled").checked = true;
+    state.pending_vrss_run = true;
+    set_vrss_dirty(true);
+    send(collect_vrss());
+    return;
+  }
+  send({ type: "vrss_run" });
+}
+
+function reset_vrss_gain() {
+  // 恢复默认 = 纯换算：增益 1、中心偏移 0、不翻转。
+  for (const [id, value] of [["v-xgain", 1], ["v-ygain", 1], ["v-xoffset", 0], ["v-yoffset", 0],
+                             ["v-stereo", 0]]) {
+    $(id).value = value;
+    paint_range($(id));
+    $(`${id}-v`).textContent = Number(value).toFixed(id === "v-stereo" ? 3 : 2);
+  }
+  $("v-flip-y").checked = false;
+  save_vrss(true);
+}
+
+function apply_vrss_area() {
+  send({ type: "set_vrss_area", percent: Number($("v-area").value) });
+}
+
+function sync_vrss_area(source) {
+  let value = Number(source.value);
+  if (!Number.isFinite(value)) {
+    value = 12;
+  }
+  value = Math.min(100, Math.max(1, Math.round(value)));
+  $("v-area").value = value;
+  $("v-area-number").value = value;
+  $("v-area-value").textContent = `${value}%`;
+  set_vrss_dirty(true);
 }
 
 // ---------- 输出预设 ----------
@@ -4276,6 +4462,9 @@ async function switch_page(page) {
   if (page === "status") {
     render_params(state.values);
   }
+  if (page === "vrss") {
+    render_vrss();
+  }
   if (page === "library") {
     render_library();
   }
@@ -4298,6 +4487,42 @@ function wire() {
   document.querySelectorAll(".nav-item").forEach((item) => {
     item.addEventListener("click", () => switch_page(item.dataset.page));
   });
+
+  $("v-run").addEventListener("click", run_vrss);
+  $("v-stop").addEventListener("click", async () => {
+    const ok = await ask_confirm({
+      title: t("vrss.stop"),
+      message: t("vrss.stop_confirm"),
+      danger: true,
+    });
+    if (ok) {
+      send({ type: "vrss_stop" });
+    }
+  });
+  $("v-confirm").addEventListener("click", () => send({ type: "vrss_confirm_msaa" }));
+  $("v-launch").addEventListener("click", () => send({ type: "vrss_launch_vrchat" }));
+  $("v-save").addEventListener("click", () => save_vrss(false));
+  $("v-save-restart").addEventListener("click", () => save_vrss(true));
+  $("v-reset-gain").addEventListener("click", reset_vrss_gain);
+  $("v-apply-area").addEventListener("click", apply_vrss_area);
+  $("v-area").addEventListener("input", () => sync_vrss_area($("v-area")));
+  $("v-area-number").addEventListener("input", () => sync_vrss_area($("v-area-number")));
+  for (const id of ["v-enabled", "v-port", "v-rate", "v-auto", "v-area", "v-area-number",
+                    "v-flip-y", "v-allow-source"]) {
+    const node = $(id);
+    node.addEventListener("input", () => set_vrss_dirty(true));
+    node.addEventListener("change", () => set_vrss_dirty(true));
+  }
+  // 四条微调滑杆：拖的时候实时刷新数值标签，保存后立即生效
+  for (const [id, digits] of [["v-xgain", 2], ["v-ygain", 2], ["v-xoffset", 2], ["v-yoffset", 2],
+                              ["v-stereo", 3]]) {
+    const node = $(id);
+    node.addEventListener("input", () => {
+      paint_range(node);
+      $(`${id}-v`).textContent = Number(node.value).toFixed(digits);
+      set_vrss_dirty(true);
+    });
+  }
 
   // 静态滑杆先画一次进度；校准页的行是动态建的，在 make_range 里画
   document.querySelectorAll('input[type="range"]').forEach((node) => {

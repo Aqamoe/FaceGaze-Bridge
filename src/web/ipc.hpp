@@ -29,11 +29,13 @@
 #include "sinks/udp_binary_sink.hpp"
 #include "sinks/vmc_sink.hpp"
 #include "sinks/vrchat_sink.hpp"
+#include "sinks/vrss_gaze_sink.hpp"
 #include "sinks/ws_json_sink.hpp"
 #include "sources/vrcft_source.hpp"
 #include "vrcft/module_library.hpp"
 #include "vrcft/module_registry.hpp"
 #include "vrcft/native_library.hpp"
+#include "vrss/workflow.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -66,6 +68,8 @@ struct IpcContext {
     ShmSink* shm_out   = nullptr; // 可能为空（没开 --shm）
     WsJsonSink* ws_out = nullptr; // 可能为空（没开 --ws-out）
     UdpBinarySink* udp_out = nullptr; // 可能为空（没开 --udp-out）
+    VrssGazeSink* vrss_out = nullptr; // 可能为空（没有 VRSS 组件/控制面）
+    vrss::Workflow* vrss   = nullptr; // 可能为空（没有控制面/未启用 VRSS）
     FaceFilter* filter = nullptr; // 可能为空（未启用滤波）
 
     // 校准：tap 固定挂在校准之前；applier 即使没有档案也会挂一个空的（全透传），
@@ -151,6 +155,7 @@ private:
     void start_diagnostics_export(const std::filesystem::path& output = {});
     // 更新状态的唯一出口：快照 → update 消息。晚连上的界面靠 on_open 里补发一次。
     void build_update(std::string& out) const;
+    void build_vrss(std::string& out);
     void broadcast_update();
     void tick_auto_update();
     // 校准档案变了就广播：多个页面/探针连上来时各自显示一致的状态
@@ -255,6 +260,7 @@ private:
     std::string last_native_phase_ = "idle";
     std::shared_ptr<PickerState> picker_;
     std::chrono::steady_clock::time_point last_library_push_{};
+    std::chrono::steady_clock::time_point last_vrss_{};
 };
 
 } // namespace fgb::web

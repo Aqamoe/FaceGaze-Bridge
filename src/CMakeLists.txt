@@ -93,6 +93,18 @@ add_library(fgb_process STATIC
     core/process/gaze_estimator.cpp)
 target_link_libraries(fgb_process PUBLIC fgb_core)
 
+# VRSS 组件的公共部分：几何解析与输出换算。provider 进程控制/驱动探测在后续文件里。
+# 不依赖 engine，避免 engine -> vrss -> engine 的环。
+add_library(fgb_vrss STATIC
+    vrss/geometry.cpp
+    vrss/paths.cpp
+    vrss/runtime.cpp
+    vrss/workflow.cpp)
+target_link_libraries(fgb_vrss PUBLIC fgb_core fgb_config)
+if(WIN32)
+    target_link_libraries(fgb_vrss PRIVATE shell32 advapi32 ws2_32)
+endif()
+
 # VMC 协议的共享部分（blendshape 名字表）：输入和输出都用它，
 # 各自维护一份就会出现"能收不能发"。
 add_library(fgb_vmc STATIC
@@ -105,6 +117,7 @@ add_library(fgb_engine STATIC
     sinks/vmc_sink.cpp
     sinks/shm_sink.cpp
     sinks/udp_binary_sink.cpp
+    sinks/vrss_gaze_sink.cpp
     sinks/ws_json_sink.cpp
     sources/vmc_source.cpp
     sources/osc_target.cpp
@@ -116,7 +129,7 @@ add_library(fgb_engine STATIC
     sources/replay_source.cpp
     engine/engine.cpp)
 target_link_libraries(fgb_engine PUBLIC fgb_core fgb_osc fgb_net fgb_vrcft fgb_params fgb_capture
-                                      fgb_config fgb_process fgb_vmc)
+                                      fgb_config fgb_process fgb_vmc fgb_vrss)
 target_include_directories(fgb_engine PUBLIC "${CMAKE_SOURCE_DIR}/sdk")
 # 原生模块的 FgbInitParams::host_version 用它填（模块据此做日志/适配提示）
 target_compile_definitions(fgb_engine PRIVATE FGB_VERSION="${PROJECT_VERSION}")
@@ -218,6 +231,77 @@ if(WIN32 AND FGB_BUILD_SAMPLE_MODULE)
     fgb_add_sample_module(fgb-sample-openness
         "${CMAKE_SOURCE_DIR}/sdk/samples/native-openness/native_openness.cpp"
         "fgb-sample-openness")
+endif()
+
+# 可选组件：NVIDIA VRSS 可变速率超采样（注视点抗锯齿）的驱动级 provider。
+# 独立 exe，不链接进 fgb-cli：它需要管理员令牌、调用未文档化的 NVAPI 私有表。
+option(FGB_BUILD_VRSS "Build the optional NVIDIA VRSS provider" ON)
+if(WIN32 AND FGB_BUILD_VRSS)
+    set(FGB_VRSS_ROOT "${CMAKE_SOURCE_DIR}/third_party/vrss")
+    add_executable(fgb-vrss-provider "${FGB_VRSS_ROOT}/provider/provider.cpp")
+    target_include_directories(fgb-vrss-provider PRIVATE
+        "${FGB_VRSS_ROOT}/provider" "${FGB_VRSS_ROOT}/nvapi")
+    target_compile_features(fgb-vrss-provider PRIVATE cxx_std_17)
+    target_compile_options(fgb-vrss-provider PRIVATE /utf-8 /EHsc /W3)
+    target_compile_definitions(fgb-vrss-provider PRIVATE
+        UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
+    set_target_properties(fgb-vrss-provider PROPERTIES
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        OUTPUT_NAME "fgb-vrss-provider")
+    target_link_directories(fgb-vrss-provider PRIVATE "${FGB_VRSS_ROOT}/nvapi/amd64")
+    target_link_libraries(fgb-vrss-provider PRIVATE
+        "${FGB_VRSS_ROOT}/nvapi/amd64/nvapi64.lib"
+        "${FGB_VRSS_ROOT}/openvr/openvr_api.lib"
+        psapi version)
+    add_custom_command(TARGET fgb-vrss-provider POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${FGB_VRSS_ROOT}/openvr/openvr_api.dll"
+                "$<TARGET_FILE_DIR:fgb-vrss-provider>/openvr_api.dll"
+        COMMENT "复制 openvr_api.dll 到 VRSS provider 旁")
+
+    add_executable(fgb-export-geometry "${FGB_VRSS_ROOT}/provider/export_openvr_geometry.cpp")
+    target_include_directories(fgb-export-geometry PRIVATE "${FGB_VRSS_ROOT}/provider")
+    target_compile_features(fgb-export-geometry PRIVATE cxx_std_17)
+    target_compile_options(fgb-export-geometry PRIVATE /utf-8 /EHsc /W3)
+    target_compile_definitions(fgb-export-geometry PRIVATE
+        UNICODE _UNICODE _CRT_SECURE_NO_WARNINGS)
+    set_target_properties(fgb-export-geometry PROPERTIES
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+        OUTPUT_NAME "fgb-export-geometry")
+    target_link_libraries(fgb-export-geometry PRIVATE
+        "${FGB_VRSS_ROOT}/openvr/openvr_api.lib")
+    add_custom_command(TARGET fgb-export-geometry POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${FGB_VRSS_ROOT}/openvr/openvr_api.dll"
+                "$<TARGET_FILE_DIR:fgb-export-geometry>/openvr_api.dll"
+        COMMENT "复制 openvr_api.dll 到几何导出器旁")
+
+    # 开发构建也要能直接跑：把 runtime/vrss 放在 fgb-cli 旁，和 dist 的布局一致。
+    add_custom_target(fgb-vrss-runtime ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:fgb-vrss-provider>/runtime/vrss"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:fgb-vrss-provider>"
+                "$<TARGET_FILE_DIR:fgb-vrss-provider>/runtime/vrss/fgb-vrss-provider.exe"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:fgb-export-geometry>"
+                "$<TARGET_FILE_DIR:fgb-vrss-provider>/runtime/vrss/fgb-export-geometry.exe"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${FGB_VRSS_ROOT}/openvr/openvr_api.dll"
+                "$<TARGET_FILE_DIR:fgb-vrss-provider>/runtime/vrss/openvr_api.dll"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${FGB_VRSS_ROOT}/provider/calibration-default.txt"
+                "$<TARGET_FILE_DIR:fgb-vrss-provider>/runtime/vrss/calibration.txt"
+        DEPENDS fgb-vrss-provider fgb-export-geometry)
+
+    install(TARGETS fgb-vrss-provider fgb-export-geometry RUNTIME DESTINATION runtime/vrss)
+    install(FILES "${FGB_VRSS_ROOT}/openvr/openvr_api.dll" DESTINATION runtime/vrss)
+    install(FILES "${FGB_VRSS_ROOT}/provider/calibration-default.txt"
+            DESTINATION runtime/vrss RENAME calibration.txt)
+    install(FILES "${FGB_VRSS_ROOT}/LICENSE" DESTINATION licenses RENAME vrss-tuner-LICENSE.txt)
+    install(FILES "${FGB_VRSS_ROOT}/openvr/LICENSE" DESTINATION licenses RENAME vrss-openvr-LICENSE.txt)
+    install(FILES "${FGB_VRSS_ROOT}/nvapi/License.txt" DESTINATION licenses RENAME vrss-nvapi-LICENSE.txt)
+    install(FILES "${FGB_VRSS_ROOT}/PATCHES.md" DESTINATION runtime/vrss)
 endif()
 
 # ---- 发布包：用户双击就能跑 ----

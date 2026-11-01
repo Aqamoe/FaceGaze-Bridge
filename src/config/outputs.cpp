@@ -3,6 +3,7 @@
 #include "config/ini.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <system_error>
 #include <vector>
@@ -165,6 +166,40 @@ bool apply_output_entry(const IniEntry& entry, OutputOptions& out, std::string& 
                 return false;
             }
         }
+        return true;
+    }
+    if (entry.section == "vrss") {
+        if (entry.key == "enabled") {
+            out.vrss_enabled = parse_bool(entry.value, out.vrss_enabled);
+        } else if (entry.key == "port") {
+            if (!parse_uint16_value(entry.value, out.vrss_port)) {
+                bad_error = "vrss.port 必须是 1..65535";
+                return false;
+            }
+        } else if (entry.key == "rate") {
+            if (!parse_int_value(entry.value, 1, 120, out.vrss_rate_hz)) {
+                bad_error = "vrss.rate 必须在 1..120";
+                return false;
+            }
+        } else if (entry.key == "x_gain") {
+            out.vrss_x_gain = parse_float(entry.value, out.vrss_x_gain);
+        } else if (entry.key == "y_gain") {
+            out.vrss_y_gain = parse_float(entry.value, out.vrss_y_gain);
+        } else if (entry.key == "x_offset") {
+            out.vrss_x_offset = parse_float(entry.value, out.vrss_x_offset);
+        } else if (entry.key == "y_offset") {
+            out.vrss_y_offset = parse_float(entry.value, out.vrss_y_offset);
+        } else if (entry.key == "stereo_offset") {
+            out.vrss_stereo_offset = parse_float(entry.value, out.vrss_stereo_offset);
+        } else if (entry.key == "flip_y") {
+            out.vrss_flip_y = parse_bool(entry.value, out.vrss_flip_y);
+        } else if (entry.key == "area") {
+            out.vrss_area_percent = parse_float(entry.value, out.vrss_area_percent);
+        } else if (entry.key == "auto_launch_vrchat") {
+            out.vrss_auto_launch_vrchat = parse_bool(entry.value, out.vrss_auto_launch_vrchat);
+        } else if (entry.key == "allow_source_points") {
+            out.vrss_allow_source_points = parse_bool(entry.value, out.vrss_allow_source_points);
+        }
     }
     return true;
 }
@@ -194,6 +229,20 @@ void write_output_sections(IniWriter& writer, const OutputOptions& options) {
     writer.kv_bool("enabled", options.udp_enabled);
     writer.kv("target", format_target(options.udp_host, options.udp_port));
     writer.kv("rate", std::to_string(options.udp_rate_hz));
+
+    writer.section("vrss");
+    writer.kv_bool("enabled", options.vrss_enabled);
+    writer.kv("port", std::to_string(options.vrss_port));
+    writer.kv("rate", std::to_string(options.vrss_rate_hz));
+    writer.kv("x_gain", options.vrss_x_gain, 3);
+    writer.kv("y_gain", options.vrss_y_gain, 3);
+    writer.kv("x_offset", options.vrss_x_offset, 3);
+    writer.kv("y_offset", options.vrss_y_offset, 3);
+    writer.kv("stereo_offset", options.vrss_stereo_offset, 3);
+    writer.kv_bool("flip_y", options.vrss_flip_y);
+    writer.kv("area", options.vrss_area_percent, 1);
+    writer.kv_bool("auto_launch_vrchat", options.vrss_auto_launch_vrchat);
+    writer.kv_bool("allow_source_points", options.vrss_allow_source_points);
 }
 
 // .tmp → 原子替换；调用方负责先把内容写完
@@ -310,6 +359,34 @@ bool validate_outputs(const OutputOptions& options, std::string& error) {
         }
         if (options.udp_rate_hz < 0 || options.udp_rate_hz > 1000) {
             error = "UDP 帧率必须在 0..1000";
+            return false;
+        }
+    }
+    if (options.vrss_enabled || options.vrss_port != 5556) {
+        if (options.vrss_port == 0) {
+            error = "VRSS 端口不能为 0";
+            return false;
+        }
+        if (options.vrss_rate_hz < 1 || options.vrss_rate_hz > 120) {
+            error = "VRSS 帧率必须在 1..120";
+            return false;
+        }
+        if (options.vrss_x_gain < 0.1f || options.vrss_x_gain > 2.0f ||
+            options.vrss_y_gain < 0.1f || options.vrss_y_gain > 2.0f) {
+            error = "VRSS 增益必须在 0.1..2.0";
+            return false;
+        }
+        if (std::abs(options.vrss_x_offset) > 1.0f ||
+            std::abs(options.vrss_y_offset) > 1.0f) {
+            error = "VRSS 中心偏移必须在 -1..1";
+            return false;
+        }
+        if (std::abs(options.vrss_stereo_offset) > 0.5f) {
+            error = "VRSS 双眼补偿必须在 -0.5..0.5";
+            return false;
+        }
+        if (options.vrss_area_percent < 1.0f || options.vrss_area_percent > 100.0f) {
+            error = "VRSS 抗锯齿范围必须在 1..100%";
             return false;
         }
     }

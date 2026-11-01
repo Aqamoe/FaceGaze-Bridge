@@ -3,6 +3,7 @@
 #include "base/diagnostics.hpp"
 #include "base/json.hpp"
 #include "base/log.hpp"
+#include "base/clock.hpp"
 #include "net/update_check.hpp"
 #include "params/avatar_config.hpp"
 #include "params/calibration.hpp"
@@ -37,6 +38,31 @@ using json::JsonWriter;
 namespace {
 
 constexpr char kTag[] = "ipc";
+
+const char* vrss_step_id(vrss::StepId id) {
+    switch (id) {
+    case vrss::StepId::Env: return "env";
+    case vrss::StepId::Driver: return "driver";
+    case vrss::StepId::DriverAudit: return "driver_audit";
+    case vrss::StepId::Admin: return "admin";
+    case vrss::StepId::Provider: return "provider";
+    case vrss::StepId::Vrchat: return "vrchat";
+    case vrss::StepId::Verify: return "verify";
+    }
+    return "env";
+}
+
+const char* vrss_step_state(vrss::StepState state) {
+    switch (state) {
+    case vrss::StepState::Pending: return "pending";
+    case vrss::StepState::Running: return "running";
+    case vrss::StepState::Pass: return "pass";
+    case vrss::StepState::Fail: return "fail";
+    case vrss::StepState::Blocked: return "blocked";
+    case vrss::StepState::Skipped: return "skipped";
+    }
+    return "pending";
+}
 
 // 模块库的安装相位从"下载中/安装中"落到"空闲/失败"就是这次装完了。
 // 成功与否看落到哪一端，界面和服务端用同一条判断，谁也不猜。
@@ -419,6 +445,8 @@ IpcServer::IpcServer(IpcContext context) : ctx_(std::move(context)) {
         server_.send_text(conn, message);
         build_output_profiles(message);
         server_.send_text(conn, message);
+        build_vrss(message);
+        server_.send_text(conn, message);
         send_backlog(conn);
     };
 
@@ -780,6 +808,112 @@ void IpcServer::build_status(std::string& out) {
     build_metrics(metrics);
     out.assign(R"({"type":"status",)");
     out.append(metrics, 1, metrics.size() - 1); // 跳过 metrics 自己的 '{'
+}
+
+void IpcServer::build_vrss(std::string& out) {
+    vrss::WorkflowSnapshot snap;
+    if (ctx_.vrss != nullptr) {
+        snap = ctx_.vrss->snapshot();
+    } else {
+        snap.enabled = ctx_.outputs.vrss_enabled;
+        snap.state   = ctx_.outputs.vrss_enabled ? "blocked" : "off";
+        for (std::size_t i = 0; i < snap.steps.size(); ++i) {
+            snap.steps[i].id = static_cast<vrss::StepId>(i);
+        }
+    }
+    out.clear();
+    JsonWriter writer{out};
+    writer.obj_begin();
+    writer.key("type").str("vrss");
+    writer.key("enabled").boolean(snap.enabled);
+    writer.key("state").str(snap.state);
+
+    writer.key("steps").arr_begin();
+    for (const vrss::StepStatus& step : snap.steps) {
+        writer.obj_begin();
+        writer.key("id").str(vrss_step_id(step.id));
+        writer.key("state").str(vrss_step_state(step.state));
+        writer.key("detail").str(step.detail);
+        writer.obj_end();
+    }
+    writer.arr_end();
+
+    writer.key("provider");
+    writer.obj_begin();
+    writer.key("running").boolean(snap.provider.running);
+    writer.key("registered").boolean(snap.provider.registered);
+    writer.key("fresh").boolean(snap.provider.fresh);
+    writer.key("pid").integer(snap.provider.pid);
+    writer.key("consumer_count").integer(snap.provider.consumer_count);
+    writer.key("sent").integer(static_cast<long long>(snap.provider.sent));
+    writer.key("submit_failures").integer(static_cast<long long>(snap.provider.submit_failures));
+    writer.key("delivery_state").str(snap.provider.delivery_state);
+    writer.key("age_s").num(snap.provider.age_seconds, 2);
+    writer.obj_end();
+
+    writer.key("driver");
+    writer.obj_begin();
+    writer.key("nvidia").boolean(snap.driver.nvidia);
+    writer.key("supported").boolean(snap.driver.supported);
+    writer.key("experimental").boolean(snap.driver.experimental);
+    writer.key("version").str(snap.driver.version);
+    writer.key("contract").str(snap.driver.contract);
+    writer.key("message").str(snap.driver.message);
+    writer.obj_end();
+
+    writer.key("setup");
+    writer.obj_begin();
+    writer.key("steamvr").boolean(snap.steamvr);
+    writer.key("geometry").boolean(snap.geometry);
+    writer.key("admin").boolean(snap.admin);
+    writer.key("vrchat_running").boolean(snap.vrchat_running);
+    writer.obj_end();
+
+    writer.key("calibration");
+    writer.obj_begin();
+    writer.key("port").integer(static_cast<long long>(ctx_.outputs.vrss_port));
+    writer.key("rate").integer(ctx_.outputs.vrss_rate_hz);
+    writer.key("area").num(ctx_.outputs.vrss_area_percent, 1);
+    writer.key("x_gain").num(ctx_.outputs.vrss_x_gain, 3);
+    writer.key("y_gain").num(ctx_.outputs.vrss_y_gain, 3);
+    writer.key("x_offset").num(ctx_.outputs.vrss_x_offset, 3);
+    writer.key("y_offset").num(ctx_.outputs.vrss_y_offset, 3);
+    writer.key("stereo_offset").num(ctx_.outputs.vrss_stereo_offset, 3);
+    writer.key("flip_y").boolean(ctx_.outputs.vrss_flip_y);
+    writer.key("auto_launch_vrchat").boolean(ctx_.outputs.vrss_auto_launch_vrchat);
+    writer.key("allow_source_points").boolean(ctx_.outputs.vrss_allow_source_points);
+    writer.obj_end();
+
+    writer.key("sink");
+    writer.obj_begin();
+    if (ctx_.vrss_out != nullptr) {
+        const VrssSinkStatus sink = ctx_.vrss_out->status();
+        writer.key("enabled").boolean(sink.enabled);
+        writer.key("messages").integer(static_cast<long long>(sink.messages));
+        writer.key("errors").integer(static_cast<long long>(sink.errors));
+        writer.key("suppressed").integer(static_cast<long long>(sink.suppressed));
+        writer.key("no_data").integer(static_cast<long long>(sink.no_data));
+        writer.key("reason").str(vrss_no_data_code(sink.reason));
+        writer.key("message").str(vrss_no_data_message(sink.reason));
+        writer.key("ndc").arr_begin();
+        for (float v : sink.ndc) {
+            writer.num(v, 3);
+        }
+        writer.arr_end();
+        writer.key("ndc_age_s")
+            .num(sink.ndc_ts_ns == 0
+                     ? -1.0
+                     : static_cast<double>(clock::now_ns() - sink.ndc_ts_ns) / 1e9,
+                 2);
+    } else {
+        writer.key("message").str("VRSS 注视输出没有启动（引擎启动时未启用）");
+    }
+    writer.obj_end();
+
+    writer.key("last_error").str(snap.last_error.empty() ? snap.provider.last_error : snap.last_error);
+    writer.key("area_state").str(snap.area_state);
+    writer.key("area_detail").str(snap.area_detail);
+    writer.obj_end();
 }
 
 void IpcServer::build_gaze(std::string& out) {
@@ -1618,6 +1752,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     bool calibration_changed = false;
     bool steamvr_touched     = false;
     bool outputs_touched     = false;
+    bool vrss_touched        = false;
     bool profiles_touched    = false;
     std::string modules_message;
     std::string ack_message;
@@ -2593,6 +2728,145 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         } else {
             error = "unknown level";
         }
+    } else if (has_type && type == "set_vrss") {
+        config::OutputOptions next = ctx_.outputs;
+        bool enabled = next.vrss_enabled;
+        bool auto_launch = next.vrss_auto_launch_vrchat;
+        double port = next.vrss_port;
+        double rate = next.vrss_rate_hz;
+        double x_gain = next.vrss_x_gain;
+        double y_gain = next.vrss_y_gain;
+        double x_offset = next.vrss_x_offset;
+        double y_offset = next.vrss_y_offset;
+        double stereo_offset = next.vrss_stereo_offset;
+        bool flip_y = next.vrss_flip_y;
+        double area = next.vrss_area_percent;
+        bool allow_source = next.vrss_allow_source_points;
+        json::field_bool(text, "enabled", enabled);
+        json::field_bool(text, "auto_launch_vrchat", auto_launch);
+        json::field_bool(text, "allow_source_points", allow_source);
+        json::field_number(text, "port", port);
+        json::field_number(text, "rate", rate);
+        json::field_number(text, "x_gain", x_gain);
+        json::field_number(text, "y_gain", y_gain);
+        json::field_number(text, "x_offset", x_offset);
+        json::field_number(text, "y_offset", y_offset);
+        json::field_number(text, "stereo_offset", stereo_offset);
+        json::field_bool(text, "flip_y", flip_y);
+        json::field_number(text, "area", area);
+        if (port < 1 || port > 65535) {
+            error = "VRSS 端口必须是 1..65535";
+        } else {
+            next.vrss_enabled          = enabled;
+            next.vrss_auto_launch_vrchat = auto_launch;
+            next.vrss_port             = static_cast<std::uint16_t>(port);
+            next.vrss_rate_hz          = static_cast<int>(rate);
+            next.vrss_x_gain           = static_cast<float>(x_gain);
+            next.vrss_y_gain           = static_cast<float>(y_gain);
+            next.vrss_x_offset         = static_cast<float>(x_offset);
+            next.vrss_y_offset         = static_cast<float>(y_offset);
+            next.vrss_stereo_offset    = static_cast<float>(stereo_offset);
+            next.vrss_flip_y           = flip_y;
+            next.vrss_area_percent     = static_cast<float>(area);
+            next.vrss_allow_source_points = allow_source;
+            if (!config::validate_outputs(next, error)) {
+                // validate_outputs 已经写好原因
+            } else if (ctx_.outputs_path.empty() ||
+                       !config::save_outputs(ctx_.outputs_path, next, error)) {
+                if (error.empty()) {
+                    error = "VRSS 设置路径不可用";
+                }
+            } else {
+                ctx_.outputs = next;
+                if (ctx_.vrss_out != nullptr) {
+                    // 开关、端口、帧率与微调都实时生效，不必重启引擎。
+                    VrssSinkConfig sink_config = ctx_.vrss_out->config();
+                    sink_config.enabled        = next.vrss_enabled;
+                    sink_config.port           = next.vrss_port;
+                    sink_config.rate_hz        = next.vrss_rate_hz;
+                    sink_config.x_gain         = next.vrss_x_gain;
+                    sink_config.y_gain         = next.vrss_y_gain;
+                    sink_config.x_offset       = next.vrss_x_offset;
+                    sink_config.y_offset       = next.vrss_y_offset;
+                    sink_config.stereo_offset  = next.vrss_stereo_offset;
+                    sink_config.flip_y         = next.vrss_flip_y;
+                    sink_config.allow_source_points = next.vrss_allow_source_points;
+                    ctx_.vrss_out->set_config(sink_config);
+                }
+                if (ctx_.vrss != nullptr) {
+                    ctx_.vrss->configure(next.vrss_enabled, next.vrss_port,
+                                         next.vrss_auto_launch_vrchat,
+                                         next.vrss_area_percent);
+                }
+                ok           = true;
+                vrss_touched = true;
+                outputs_touched = true;
+                ack_message  = "VRSS 设置已保存并立即生效";
+            }
+        }
+    } else if (has_type && type == "set_vrss_area") {
+        double percent = ctx_.outputs.vrss_area_percent;
+        json::field_number(text, "percent", percent);
+        if (percent < 1.0 || percent > 100.0) {
+            error = "VRSS 抗锯齿范围必须在 1..100%";
+        } else {
+            config::OutputOptions next = ctx_.outputs;
+            next.vrss_area_percent = static_cast<float>(percent);
+            if (ctx_.outputs_path.empty() ||
+                !config::save_outputs(ctx_.outputs_path, next, error)) {
+                if (error.empty()) {
+                    error = "VRSS 设置路径不可用";
+                }
+            } else {
+                ctx_.outputs = next;
+                if (ctx_.vrss == nullptr) {
+                    error = "VRSS 流程不可用";
+                } else {
+                    ctx_.vrss->apply_area(next.vrss_area_percent);
+                    ok           = true;
+                    vrss_touched = true;
+                    ack_message  = "正在写入 NVIDIA VRChat profile；重启 VRChat 后生效";
+                }
+            }
+        }
+    } else if (has_type && type == "vrss_run") {
+        if (ctx_.vrss == nullptr) {
+            error = "VRSS 流程不可用";
+        } else if (!ctx_.vrss->enabled()) {
+            error = "请先启用 VRSS";
+        } else {
+            ctx_.vrss->start();
+            ok           = true;
+            vrss_touched = true;
+            ack_message  = "正在执行 VRSS 流程";
+        }
+    } else if (has_type && type == "vrss_confirm_msaa") {
+        if (ctx_.vrss == nullptr) {
+            error = "VRSS 流程不可用";
+        } else {
+            ctx_.vrss->confirm_msaa();
+            ok           = true;
+            vrss_touched = true;
+            ack_message  = "已确认 MSAA / VRSS 允许，继续下一步";
+        }
+    } else if (has_type && type == "vrss_launch_vrchat") {
+        if (ctx_.vrss == nullptr) {
+            error = "VRSS 流程不可用";
+        } else {
+            ctx_.vrss->request_launch_vrchat();
+            ok           = true;
+            vrss_touched = true;
+            ack_message  = "正在启动 VRChat";
+        }
+    } else if (has_type && type == "vrss_stop") {
+        if (ctx_.vrss == nullptr) {
+            error = "VRSS 流程不可用";
+        } else {
+            ctx_.vrss->stop();
+            ok           = true;
+            vrss_touched = true;
+            ack_message  = "正在停止 VRSS 注视路径";
+        }
     } else if (has_type && type == "ping") {
         server_.send_text(conn, R"({"type":"pong"})");
         return;
@@ -2684,6 +2958,11 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         build_steamvr(message);
         server_.broadcast(message);
     }
+    if (vrss_touched) {
+        std::string message;
+        build_vrss(message);
+        server_.broadcast(message);
+    }
 }
 
 bool IpcServer::handle_http(const net::ws::HttpHead& head, std::string& body,
@@ -2754,6 +3033,11 @@ bool IpcServer::handle_http(const net::ws::HttpHead& head, std::string& body,
 
     if (head.path == "/api/gaze") {
         build_gaze(body);
+        return true;
+    }
+
+    if (head.path == "/api/vrss") {
+        build_vrss(body);
         return true;
     }
 
@@ -3275,6 +3559,21 @@ void IpcServer::pump(int timeout_ms) {
         }
         last_vrcft_phase_  = vrcft_phase;
         last_native_phase_ = native_phase;
+    }
+
+    if (ctx_.vrss != nullptr) {
+        // lease 心跳与 provider 状态刷新不依赖页面是否连着：关窗后追踪要继续，
+        // provider 不能因为界面断开而 15 秒后自退。
+        const auto vrss_now = std::chrono::steady_clock::now();
+        if (vrss_now - last_vrss_ >= std::chrono::seconds(2)) {
+            ctx_.vrss->refresh();
+            last_vrss_ = vrss_now;
+            if (server_.ready_count() > 0) {
+                std::string message;
+                build_vrss(message);
+                server_.broadcast(message);
+            }
+        }
     }
 
     if (server_.ready_count() == 0) {
