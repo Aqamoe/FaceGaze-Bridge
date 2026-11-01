@@ -34,6 +34,11 @@ private:
     SeqLock<GazeProfile> profile_snapshot_{};
     GazeProfile engine_copy_{};   // 只由引擎线程读写：读快照失败时沿用上一帧
     GazeProjection projection_{}; // 单次整块写入，值语义即可
+    // 饱和时的"最后一对好位置"：传感器到极限后，继续按新值算只会让两眼越走越开，
+    // 保持上一对有效位置比给一个假位置更接近事实。
+    Vec2 last_left_{0.0f, 0.0f};
+    Vec2 last_right_{0.0f, 0.0f};
+    bool have_last_ = false;
 };
 
 } // namespace fgb

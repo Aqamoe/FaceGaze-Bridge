@@ -260,3 +260,23 @@ overlay 创建成功（日志 `overlay 就绪`）、无注视数据时 8 s 后�
   `project_dir_to_viewport` 严格互逆（单测覆盖）；
 - 判断方法：点若落在你真正看的方向上 → 数据没问题，剩下的偏差调显示侧；
   点本身偏 → 重标或换映射。
+
+
+### 2026-11-02 · 来源可达范围不足 [0,1]（PICO 只有 0.31..0.74）
+
+实测：PICO 原生逐眼点的水平/垂直都到不了 0/1，只在中段 0.31..0.74 之间有效；
+再往外看数值贴边不再变化。后果是**边缘位置被截断**：区域走到某个角度就停住，
+而且两眼各自的边界略有差异，于是两个点"分开"——看起来像标定错了，其实是数据没了。
+
+处理（本轮）：
+
+| 措施 | 位置 |
+|---|---|
+| 档案记录标定时实际见过的每眼输入范围 `input_bounds`（min/max × 2 轴） | `GazeProfile`、`Session::finish`、`gaze.ini` |
+| 运行时判定饱和（贴边 4% 跨度内）→ `GazeState.saturated` | `GazeCalibrator::apply` |
+| 饱和时**冻结在最后一对有效位置**，不让两眼按各自的边界越走越开 | 同上（`last_left_/last_right_`） |
+| `/api/gaze` 暴露 `raw_left_point`/`raw_right_point`/`raw_point_valid`/`saturated` | `web/ipc.cpp` |
+| 探针在饱和时提示"已到传感器范围边缘，位置保持不变" | `gaze_calib/probe.cpp` |
+
+**注意**：`input_bounds` 要重标一次（v2）才会写进档案；v1 档案没有这份范围，
+饱和检测不会生效（其余行为不变）。

@@ -73,7 +73,9 @@ void Probe::tick(const GazeState& gaze) noexcept {
         dots_.show(i, angles.y, angles.x, kRadiusDeg, kDistanceM, error);
     }
     showing_ = true;
-    message_ = "青=左眼 品红=右眼";
+    // 饱和时位置会保持不动（两眼各自的输入边界不同，继续按新值算会越走越开）
+    message_ = gaze.saturated ? "已到传感器范围边缘，位置保持不变（青=左眼 品红=右眼）"
+                              : "青=左眼 品红=右眼";
 }
 
 } // namespace fgb::gaze_calib

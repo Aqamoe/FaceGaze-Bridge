@@ -45,6 +45,11 @@ struct GazeProfile {
     std::string hmd_identity;  // 头显身份指纹；与当前几何不一致时提示重标
     std::array<GazeEyeMap, 2> eyes{}; // 0 = 左，1 = 右
     float residual_p95 = -1.0f;       // 拟合残差（视口宽比例）；< 0 = 未知
+    // 标定时实际见过的每眼输入范围（min_x, max_x, min_y, max_y）。
+    // 有些来源的可达范围远小于 [0,1]（实测 PICO 原生点只在 0.31..0.74），
+    // 到边界就意味着"传感器到极限了"，运行时要据此标记饱和而不是假装还在跟随。
+    std::array<std::array<float, 4>, 2> input_bounds{};
+    bool have_bounds = false;
 
     bool ready() const noexcept {
         return version != 0 && source_kind != GazeSourceKind::none &&

@@ -61,6 +61,12 @@ struct GazeState {
     bool point_viewport    = false;
     // 规范管线产出（ADR-0042）：这条数据处在哪个空间、用哪版档案、残差多少。
     GazeSpace space        = GazeSpace::source;
+    // 标定前的原始点（只做诊断/饱和判定用；消费端不要拿它当屏幕位置）
+    Vec2 raw_left_point_2d{0.0f, 0.0f};
+    Vec2 raw_right_point_2d{0.0f, 0.0f};
+    bool raw_point_valid   = false;
+    // 原始值贴到输入范围边界：传感器已经到极限，再往外看也不会有新数据
+    bool saturated         = false;
     std::uint32_t profile_version = 0;  // 0 = 未用档案（模块声明或几何投影）
     float residual         = -1.0f;     // 拟合残差（视口宽比例）；< 0 = 未知
     bool geometry_missing  = false;     // 有方向但没有头显几何，投影不出来

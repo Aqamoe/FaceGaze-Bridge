@@ -1,5 +1,6 @@
 #include "core/process/gaze_calibrator.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace fgb {
@@ -49,6 +50,13 @@ void GazeCalibrator::apply(GazeState& gaze) noexcept {
 
     const bool has_points = gaze.left_point_valid || gaze.right_point_valid;
     const bool has_dirs   = gaze.left_valid || gaze.right_valid;
+
+    // 原始点留档：诊断与饱和判定都要看"标定前的值"，映射之后就看不到边界了
+    if (has_points && gaze.space == GazeSpace::source) {
+        gaze.raw_left_point_2d  = gaze.left_point_2d;
+        gaze.raw_right_point_2d = gaze.right_point_2d;
+        gaze.raw_point_valid    = true;
+    }
 
     GazeSourceKind branch = GazeSourceKind::none;
 
@@ -122,6 +130,36 @@ void GazeCalibrator::apply(GazeState& gaze) noexcept {
         gaze.profile_version = profile.version;
         gaze.residual        = profile.residual_p95;
         gaze.point_viewport  = true;
+    }
+
+    // 饱和判定：原始值贴到标定时见过的边界，就说明传感器到极限了。
+    // 这时如果继续按新值算，两眼会因为各自的边界不同而越走越开（实测就是这样），
+    // 所以冻结在最后一对有效位置上，并打上标记让探针/页面说清楚。
+    if (profile.have_bounds && gaze.raw_point_valid && branch == GazeSourceKind::points) {
+        const auto near_bound = [](float value, float lo, float hi) {
+            const float span = hi - lo;
+            const float eps  = span > 1e-6f ? std::max(0.004f, span * 0.04f) : 0.004f;
+            return value <= lo + eps || value >= hi - eps;
+        };
+        const bool left_sat = gaze.left_point_valid &&
+                              (near_bound(gaze.raw_left_point_2d.x, profile.input_bounds[0][0],
+                                          profile.input_bounds[0][1]) ||
+                               near_bound(gaze.raw_left_point_2d.y, profile.input_bounds[0][2],
+                                          profile.input_bounds[0][3]));
+        const bool right_sat = gaze.right_point_valid &&
+                               (near_bound(gaze.raw_right_point_2d.x, profile.input_bounds[1][0],
+                                           profile.input_bounds[1][1]) ||
+                                near_bound(gaze.raw_right_point_2d.y, profile.input_bounds[1][2],
+                                           profile.input_bounds[1][3]));
+        gaze.saturated = left_sat || right_sat;
+        if (gaze.saturated && have_last_) {
+            gaze.left_point_2d  = last_left_;
+            gaze.right_point_2d = last_right_;
+        } else if (!gaze.saturated && gaze.left_point_valid && gaze.right_point_valid) {
+            last_left_  = gaze.left_point_2d;
+            last_right_ = gaze.right_point_2d;
+            have_last_  = true;
+        }
     }
 }
 

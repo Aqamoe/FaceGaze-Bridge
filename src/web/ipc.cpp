@@ -1016,6 +1016,17 @@ void IpcServer::build_gaze(std::string& out) {
     // 点的坐标系（ADR-0042 §3）：viewport = 该眼视口归一化（模块声明或几何投影）；
     // calibrated = 过 FGB 拟合映射；source = 来源原始坐标，只能展示/看趋势
     writer.key("point_space").str(gaze_space_name(gaze.space));
+    // 标定前的原始点 + 饱和标记：来源到不了 [0,1] 时，这是判断"边缘为什么不动"的唯一依据
+    writer.key("raw_point_valid").boolean(gaze.raw_point_valid);
+    writer.key("raw_left_point").arr_begin();
+    writer.num(gaze.raw_left_point_2d.x, 4);
+    writer.num(gaze.raw_left_point_2d.y, 4);
+    writer.arr_end();
+    writer.key("raw_right_point").arr_begin();
+    writer.num(gaze.raw_right_point_2d.x, 4);
+    writer.num(gaze.raw_right_point_2d.y, 4);
+    writer.arr_end();
+    writer.key("saturated").boolean(gaze.saturated);
     writer.key("profile_version")
         .integer(static_cast<long long>(gaze.profile_version));
     writer.key("residual").num(static_cast<double>(gaze.residual), 4);

@@ -5,6 +5,8 @@
 #include "openvr/overlay.hpp"
 #include "params/gaze_profile.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
@@ -183,6 +185,34 @@ void Session::finish(std::uint64_t /*now_ns*/) noexcept {
     if (!build_profile(branch_, left, right, version, utc_now(), hmd_identity_, result_)) {
         fail("组装档案失败");
         return;
+    }
+
+    // 记录标定时实际见过的输入范围：有些来源永远到不了 [0,1]（实测 PICO 原生点
+    // 只有 0.31..0.74），运行时要靠这份范围判断"是不是已经贴到传感器极限"。
+    if (branch_ == GazeSourceKind::points) {
+        std::array<std::array<float, 4>, 2> bounds{};
+        for (auto& eye : bounds) {
+            eye = {1.0f, 0.0f, 1.0f, 0.0f}; // min_x, max_x, min_y, max_y
+        }
+        bool any = false;
+        for (std::size_t i = 0; i < kTargetCount; ++i) {
+            const TargetSamples samples = collector_.result(i);
+            if (!samples.ok) {
+                continue;
+            }
+            any = true;
+            const std::array<Vec2, 2> points{samples.left, samples.right};
+            for (std::size_t eye = 0; eye < 2; ++eye) {
+                bounds[eye][0] = std::min(bounds[eye][0], points[eye].x);
+                bounds[eye][1] = std::max(bounds[eye][1], points[eye].x);
+                bounds[eye][2] = std::min(bounds[eye][2], points[eye].y);
+                bounds[eye][3] = std::max(bounds[eye][3], points[eye].y);
+            }
+        }
+        if (any) {
+            result_.input_bounds = bounds;
+            result_.have_bounds  = true;
+        }
     }
 
     std::string save_error;

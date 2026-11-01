@@ -71,6 +71,23 @@ bool load_gaze_profile(const std::string& path, GazeProfile& profile, std::strin
                 profile.hmd_identity = entry.value;
             } else if (entry.key == "residual_p95") {
                 finite_or(config::parse_float(entry.value, -1.0f), -1.0f, profile.residual_p95);
+            } else if (entry.key == "input_bounds") {
+                // "lminx lmaxx lminy lmaxy rminx rmaxx rminy rmaxy"
+                float v[8] = {};
+                if (parse_floats(entry.value, v, 8)) {
+                    bool finite = true;
+                    for (float value : v) {
+                        finite = finite && std::isfinite(value);
+                    }
+                    if (finite) {
+                        for (std::size_t eye = 0; eye < 2; ++eye) {
+                            for (std::size_t axis = 0; axis < 4; ++axis) {
+                                profile.input_bounds[eye][axis] = v[eye * 4 + axis];
+                            }
+                        }
+                        profile.have_bounds = true;
+                    }
+                }
             }
             return;
         }
@@ -145,6 +162,19 @@ bool save_gaze_profile(const std::string& path, const GazeProfile& profile, std:
     writer.kv("created_utc", profile.created_utc);
     writer.kv("hmd_identity", profile.hmd_identity);
     writer.kv("residual_p95", static_cast<double>(profile.residual_p95), 5);
+    if (profile.have_bounds) {
+        char bounds[160];
+        std::snprintf(bounds, sizeof(bounds), "%.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f",
+                      static_cast<double>(profile.input_bounds[0][0]),
+                      static_cast<double>(profile.input_bounds[0][1]),
+                      static_cast<double>(profile.input_bounds[0][2]),
+                      static_cast<double>(profile.input_bounds[0][3]),
+                      static_cast<double>(profile.input_bounds[1][0]),
+                      static_cast<double>(profile.input_bounds[1][1]),
+                      static_cast<double>(profile.input_bounds[1][2]),
+                      static_cast<double>(profile.input_bounds[1][3]));
+        writer.kv("input_bounds", std::string_view{bounds});
+    }
 
     for (int i = 0; i < 2; ++i) {
         const GazeEyeMap& eye = profile.eyes[static_cast<std::size_t>(i)];

@@ -240,6 +240,9 @@ FGB_TEST(gaze_profile_roundtrip) {
     profile.eyes[1].active = true;
     profile.eyes[1].e = 0.9f;
     profile.eyes[1].f = 0.01f;
+    profile.have_bounds      = true;
+    profile.input_bounds[0]  = {0.31f, 0.74f, 0.32f, 0.71f};
+    profile.input_bounds[1]  = {0.30f, 0.73f, 0.31f, 0.70f};
 
     const std::string path = temp_path("gaze.ini");
     std::string error;
@@ -255,6 +258,9 @@ FGB_TEST(gaze_profile_roundtrip) {
     FGB_CHECK_NEAR(loaded.eyes[0].a, 1.1f, 1e-5f);
     FGB_CHECK_NEAR(loaded.eyes[1].e, 0.9f, 1e-5f);
     FGB_CHECK(loaded.ready());
+    FGB_CHECK(loaded.have_bounds);
+    FGB_CHECK_NEAR(loaded.input_bounds[0][1], 0.74f, 1e-4f);
+    FGB_CHECK_NEAR(loaded.input_bounds[1][2], 0.31f, 1e-4f);
 }
 
 FGB_TEST(gaze_profile_rejects_incomplete_file) {
@@ -292,4 +298,56 @@ FGB_TEST(gaze_projection_roundtrip) {
             FGB_CHECK_NEAR(back.z, expected.z, 1e-4f);
         }
     }
+}
+
+// 来源的可达范围不到 [0,1]（实测 PICO 原生点只有 0.31..0.74）：贴到边界时判饱和，
+// 并冻结在最后一对有效位置上——否则两眼各自的边界不同，会越走越开。
+FGB_TEST(gaze_calibrator_freezes_when_input_saturates) {
+    GazeCalibrator calibrator;
+
+    GazeProfile profile;
+    profile.version        = 2;
+    profile.source_kind    = GazeSourceKind::points;
+    profile.have_bounds    = true;
+    profile.input_bounds[0] = {0.31f, 0.74f, 0.31f, 0.74f};
+    profile.input_bounds[1] = {0.31f, 0.74f, 0.31f, 0.74f};
+    profile.eyes[0].active = true;
+    profile.eyes[0].a = 1.0f;
+    profile.eyes[1].active = true;
+    profile.eyes[1].a = 1.0f;
+    calibrator.set_profile(profile);
+
+    GazeState inside;
+    inside.capture_ts_ns     = kNow;
+    inside.left_point_valid  = true;
+    inside.right_point_valid = true;
+    inside.left_point_2d     = {0.52f, 0.52f};
+    inside.right_point_2d    = {0.52f, 0.52f};
+    calibrator.apply(inside);
+    FGB_CHECK(!inside.saturated);
+    FGB_CHECK(inside.raw_point_valid);
+    FGB_CHECK_NEAR(inside.raw_left_point_2d.x, 0.52f, 1e-6f);
+
+    // 走到边界：判饱和，位置保持上一次
+    GazeState edge;
+    edge.capture_ts_ns     = kNow;
+    edge.left_point_valid  = true;
+    edge.right_point_valid = true;
+    edge.left_point_2d     = {0.74f, 0.52f};
+    edge.right_point_2d    = {0.55f, 0.52f}; // 右眼还没到边界：这正是"分开"的来源
+    calibrator.apply(edge);
+    FGB_CHECK(edge.saturated);
+    FGB_CHECK_NEAR(edge.left_point_2d.x, inside.left_point_2d.x, 1e-6f);
+    FGB_CHECK_NEAR(edge.right_point_2d.x, inside.right_point_2d.x, 1e-6f);
+
+    // 回到范围内：恢复跟随
+    GazeState back;
+    back.capture_ts_ns     = kNow;
+    back.left_point_valid  = true;
+    back.right_point_valid = true;
+    back.left_point_2d     = {0.60f, 0.52f};
+    back.right_point_2d    = {0.60f, 0.52f};
+    calibrator.apply(back);
+    FGB_CHECK(!back.saturated);
+    FGB_CHECK_NEAR(back.left_point_2d.x, 0.60f, 1e-6f);
 }
