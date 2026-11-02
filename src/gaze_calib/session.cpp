@@ -107,7 +107,10 @@ bool Session::start(std::string& error) {
     status_.target   = 0;
     status_.message  = "请注视圆点";
     target_started_ns_ = 0; // 由第一帧 tick 填，避免用过期时钟
-    FGB_INFO(kTag, "开始注视标定：%d 点", static_cast<int>(kTargetCount));
+    const RingAngles ring = ring_angles(span_);
+    FGB_INFO(kTag, "开始注视标定：%d 点（%s：内环 %.0f° / 外环 %.0f°）",
+             static_cast<int>(kTargetCount), span_name(span_),
+             static_cast<double>(ring.inner), static_cast<double>(ring.outer));
     return true;
 }
 
@@ -136,7 +139,7 @@ void Session::place_dot() noexcept {
     if (dots_ == nullptr || status_.target >= kTargetCount) {
         return;
     }
-    const Target& target = targets()[status_.target];
+    const Target& target = targets(span_)[status_.target];
     std::string error;
     if (!dots_->show(0, target.yaw_deg, target.pitch_deg, kDotRadiusDeg, kDotDistanceM, error)) {
         fail("摆放标定点失败：" + error);
@@ -173,8 +176,8 @@ void Session::finish(std::uint64_t /*now_ns*/) noexcept {
         }
         Vec2 left_target{};
         Vec2 right_target{};
-        if (!target_viewport(targets()[i], projection_.eyes[0], left_target) ||
-            !target_viewport(targets()[i], projection_.eyes[1], right_target)) {
+        if (!target_viewport(targets(span_)[i], projection_.eyes[0], left_target) ||
+            !target_viewport(targets(span_)[i], projection_.eyes[1], right_target)) {
             fail("目标无法投影到视口（几何无效）");
             return;
         }
@@ -204,8 +207,9 @@ void Session::finish(std::uint64_t /*now_ns*/) noexcept {
         result_.have_trim = true;
     }
 
-    // 记录标定时实际见过的输入范围：有些来源永远到不了 [0,1]（实测 PICO 原生点
-    // 只有 0.31..0.74），运行时要靠这份范围判断"是不是已经贴到传感器极限"。
+    // 记录标定时实际见过的输入范围：不是"传感器量程"，而是"这套点位覆盖到的范围"。
+    // 运行期只用它判"值贴在见过的极值上"，**还要再配上值连续多帧不变**才算饱和
+    // （GazeCalibrator::apply）——出框就冻结会把正常看边缘也截断。
     if (branch_ == GazeSourceKind::points) {
         std::array<std::array<float, 4>, 2> bounds{};
         for (auto& eye : bounds) {

@@ -18,6 +18,7 @@
 #include "base/json.hpp"
 #include "base/process_stats.hpp"
 #include "config/outputs.hpp"
+#include "config/settings.hpp"
 #include "core/process/one_euro.hpp"
 #include "engine/engine.hpp"
 #include "net/update_manager.hpp"
@@ -94,6 +95,11 @@ struct IpcContext {
     std::filesystem::path outputs_path;
     // 命名输出预设的目录；空表示界面上的预设功能不可用
     std::filesystem::path outputs_profiles_dir;
+
+    // 运行设置（滤波 / 日志级别 / 标定范围）：启动时由命令行加载，界面改一次写一次。
+    // 空路径表示"这次没有设置文件可写"（只在极简测试环境出现），此时只改内存。
+    config::EngineSettings settings;
+    std::filesystem::path settings_path;
 
     std::filesystem::path ui_dir;    // 静态页面根目录，空表示不发页面
     std::filesystem::path exe_dir;   // 产品 exe 所在目录；app.vrmanifest 在它旁边
@@ -181,6 +187,9 @@ private:
     void poll_picker();
     void start_picker();
     void after_module_change(bool ok, const std::string& message);
+    // 把 ctx_.settings 写回 settings.ini；返回空串表示成功（没有路径可写也算成功）。
+    // 界面没有"保存"按钮，所以每个改设置的命令都要走这里，否则重启就回到默认值。
+    std::string persist_settings();
 
     // 删除 / 安装 / 更新要替换 DLL，而 Windows 不允许改写正在被加载的文件。
     // 以前的做法是弹窗让用户自己去实例行点「停止」；现在由这三个协助函数代劳。

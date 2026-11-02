@@ -6,6 +6,7 @@
 #include "capture/capture_file.hpp"
 #include "config/osc_map.hpp"
 #include "config/outputs.hpp"
+#include "config/settings.hpp"
 #include "core/process/one_euro.hpp"
 #include "net/update_check.hpp"
 #include "openvr/steamvr.hpp"
@@ -367,6 +368,18 @@ std::string join_names(const std::vector<std::string>& names) {
 }
 
 int cmd_run(int argc, char** argv) {
+    // 界面里的设置（settings.ini）先读出来当默认值，再让命令行覆盖：
+    // 命令行说的是"这一次"，界面选的是"以后每次"。读不到不是错误——第一次运行没有这个文件。
+    fgb::config::EngineSettings settings;
+    const std::filesystem::path settings_path = fgb::config::default_settings_path();
+    {
+        std::string settings_error;
+        if (!fgb::config::load_settings(settings_path, settings, settings_error) &&
+            std::filesystem::exists(settings_path)) {
+            std::fprintf(stderr, "设置文件不可用：%s\n", settings_error.c_str());
+        }
+    }
+
     fgb::VmcSourceConfig vmc_cfg;
     fgb::LiveLinkSourceConfig livelink_cfg;
     std::uint16_t osc_port_override = 0;
@@ -375,13 +388,12 @@ int cmd_run(int argc, char** argv) {
     fgb::ReplayConfig replay_cfg;
     std::string record_path;
     std::string calibration_path;
-    bool filter_enabled   = false;
+    bool filter_enabled   = settings.filter_enabled;
     bool open_ui          = false;
     std::uint16_t panel_port = 0;
     std::filesystem::path ui_dir;
-    float filter_min_cutoff = 1.0f;
-    float filter_beta       = 0.5f;
-    fgb::VrchatSinkConfig vrchat_cfg;
+    float filter_min_cutoff = settings.filter_min_cutoff;
+    float filter_beta       = settings.filter_beta;    fgb::VrchatSinkConfig vrchat_cfg;
     fgb::VmcSinkConfig vmc_out_cfg;
     bool vmc_out_enabled      = false;
     fgb::VmcSink* vmc_out_raw = nullptr;
@@ -846,7 +858,27 @@ int cmd_run(int argc, char** argv) {
         }
     }
 
-    fgb::log::set_level(verbose ? fgb::log::Level::debug : fgb::log::Level::info);
+    // 日志级别：命令行 --verbose 是临时排障手段，优先于界面选过的值；
+    // 界面选过的值写在 settings.ini，下次启动仍然生效。
+    if (verbose) {
+        fgb::log::set_level(fgb::log::Level::debug);
+    } else if (!settings.log_level.empty()) {
+        fgb::log::Level level = fgb::log::Level::info;
+        if (settings.log_level == "trace") {
+            level = fgb::log::Level::trace;
+        } else if (settings.log_level == "debug") {
+            level = fgb::log::Level::debug;
+        } else if (settings.log_level == "warn") {
+            level = fgb::log::Level::warn;
+        } else if (settings.log_level == "error") {
+            level = fgb::log::Level::error;
+        } else if (settings.log_level == "off") {
+            level = fgb::log::Level::off;
+        }
+        fgb::log::set_level(level);
+    } else {
+        fgb::log::set_level(fgb::log::Level::info);
+    }
 
     if (open_ui && panel_port == 0) {
         panel_port = 8787; // --ui 隐含控制面
@@ -1462,6 +1494,9 @@ int cmd_run(int argc, char** argv) {
         ctx.calib       = calibration_raw;
         ctx.calib_path  = calibration_save_path;
         ctx.calib_loaded = calibration_loaded;
+        // 界面上的运行设置：写回同一个文件（界面改一次写一次），下次启动生效
+        ctx.settings      = settings;
+        ctx.settings_path = settings_path;
 
         // 注视标定：overlay 与会话跟着引擎生命周期走（关窗继续、退出即销毁）。
         // 它没有自己的线程，由控制面每帧推进状态机。
@@ -1470,6 +1505,8 @@ int cmd_run(int argc, char** argv) {
                                 gaze_identity);
         gaze_session->set_projection(engine.gaze_projection());
         gaze_session->set_overlay(&calib_dots);
+        // 标定范围（外环 32°/20°）：界面上选过就沿用，没选过用默认的 wide
+        gaze_session->set_span(fgb::gaze_calib::span_from_name(settings.gaze_calib_span));
         gaze_session->set_apply([&engine](const fgb::GazeProfile& profile) {
             engine.set_gaze_profile(profile);
         });

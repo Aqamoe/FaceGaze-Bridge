@@ -820,6 +820,18 @@ function render_gaze_calib() {
   $("cal-dot-profile").textContent = data.ready
     ? gaze_profile_line(data)
     : t("calibration.dot.no_profile");
+  const span = $("cal-dot-span");
+  if (span) {
+    // 标定进行中不让改：点位已经摆过、样本也在采，换了会让这一轮对不上
+    if (running) {
+      span.disabled = true;
+    } else {
+      span.disabled = false;
+      if (document.activeElement !== span) {
+        span.value = data.span === "narrow" ? "narrow" : "wide";
+      }
+    }
+  }
   $("cal-dot-message").textContent = data.message || "";
 
   const probe_button = $("cal-dot-probe");
@@ -1207,9 +1219,16 @@ function render_status(status) {
   render_sources(status.sources || []);
   render_role_hint();
 
+  // 日志级别：下拉框要显示引擎"真正在用的那一档"。只在用户自己点过之后才更新，
+  // 重启或带 --verbose 启动后界面就会和实际级别对不上。
+  const level_select = $("s-level");
+  if (level_select && status.log_level && document.activeElement !== level_select &&
+      [...level_select.options].some((option) => option.value === status.log_level)) {
+    level_select.value = status.log_level;
+  }
+
   const filter = status.filter || {};
-  const enabled = $("f-enabled");
-  const cutoff = $("f-cutoff");
+  const enabled = $("f-enabled");  const cutoff = $("f-cutoff");
   const beta = $("f-beta");
   const available = !!filter.available;
 
@@ -2967,7 +2986,7 @@ async function ensure_face_loaded() {
     }
     const map = await map_response.json();
     // 模型文件名以映射表为准：换资产时只改 face_map.model，页面不用动
-    const model_name = map.model || "head_v1.fgbface";
+    const model_name = map.model || "head_v2.fgbface";
     const model_response = await fetch(`face/${model_name}`, { cache: "force-cache" });
     if (!model_response.ok) {
       throw new Error(`${model_name} HTTP ${model_response.status}`);
@@ -4866,6 +4885,9 @@ function wire() {
   });
   $("cal-dot-start").addEventListener("click", () => send({ type: "gaze_calib_start" }));
   $("cal-dot-cancel").addEventListener("click", () => send({ type: "gaze_calib_cancel" }));
+  $("cal-dot-span").addEventListener("change", () => {
+    send({ type: "set_gaze_calib_span", span: $("cal-dot-span").value });
+  });
   $("cal-dot-probe").addEventListener("click", () => {
     const active = state.gaze_calib && state.gaze_calib.probe_active;
     send({ type: active ? "gaze_probe_stop" : "gaze_probe_start" });

@@ -350,9 +350,12 @@ FGB_TEST(gaze_projection_roundtrip) {
     }
 }
 
-// 来源的可达范围不到 [0,1]（实测 PICO 原生点只有 0.31..0.74）：贴到边界时判饱和，
-// 并冻结在最后一对有效位置上——否则两眼各自的边界不同，会越走越开。
-FGB_TEST(gaze_calibrator_freezes_when_input_saturates) {
+// 饱和 = "贴边" 且 "值被钉住"，两个条件缺一不可。
+//
+// 只用"出框"判饱和会把标定采样范围当成传感器量程：标定窗口只有屏幕中间一块
+// （13 点圆盘 ±35° 也只到 x 0.27..0.90），正常看一眼边缘就出框 → 位置被锁在中心
+// 小矩形里，正是"标定后反而到不了边缘"的症状。
+FGB_TEST(gaze_calibrator_freezes_only_when_raw_is_pinned) {
     GazeCalibrator calibrator;
 
     GazeProfile profile;
@@ -367,37 +370,105 @@ FGB_TEST(gaze_calibrator_freezes_when_input_saturates) {
     profile.eyes[1].a = 1.0f;
     calibrator.set_profile(profile);
 
-    GazeState inside;
-    inside.capture_ts_ns     = kNow;
-    inside.left_point_valid  = true;
-    inside.right_point_valid = true;
-    inside.left_point_2d     = {0.52f, 0.52f};
-    inside.right_point_2d    = {0.52f, 0.52f};
+    const auto frame = [](float left_x, float right_x) {
+        GazeState gaze;
+        gaze.capture_ts_ns     = kNow;
+        gaze.left_point_valid  = true;
+        gaze.right_point_valid = true;
+        gaze.left_point_2d     = {left_x, 0.52f};
+        gaze.right_point_2d    = {right_x, 0.52f};
+        return gaze;
+    };
+
+    // 先来一帧范围内：建立"最后一对好位置"，也让上一帧原始值有意义
+    GazeState inside = frame(0.52f, 0.52f);
     calibrator.apply(inside);
     FGB_CHECK(!inside.saturated);
     FGB_CHECK(inside.raw_point_valid);
     FGB_CHECK_NEAR(inside.raw_left_point_2d.x, 0.52f, 1e-6f);
 
-    // 走到边界：判饱和，位置保持上一次
-    GazeState edge;
-    edge.capture_ts_ns     = kNow;
-    edge.left_point_valid  = true;
-    edge.right_point_valid = true;
-    edge.left_point_2d     = {0.74f, 0.52f};
-    edge.right_point_2d    = {0.55f, 0.52f}; // 右眼还没到边界：这正是"分开"的来源
-    calibrator.apply(edge);
-    FGB_CHECK(edge.saturated);
-    FGB_CHECK_NEAR(edge.left_point_2d.x, inside.left_point_2d.x, 1e-6f);
-    FGB_CHECK_NEAR(edge.right_point_2d.x, inside.right_point_2d.x, 1e-6f);
+    // 出框但值还在变（正常看屏幕边缘）：不判饱和，位置照常跟随
+    GazeState reaching = frame(0.90f, 0.88f);
+    calibrator.apply(reaching);
+    FGB_CHECK(!reaching.saturated);
+    FGB_CHECK_NEAR(reaching.left_point_2d.x, 0.90f, 1e-6f);
+    FGB_CHECK_NEAR(reaching.right_point_2d.x, 0.88f, 1e-6f);
+
+    // 贴边且被钉住：连续 kSaturatedHoldFrames 帧同一个值才判饱和
+    for (int i = 0; i + 1 < GazeCalibrator::kSaturatedHoldFrames; ++i) {
+        GazeState spinning = frame(0.90f, 0.88f);
+        calibrator.apply(spinning);
+        FGB_CHECK(!spinning.saturated); // 还没到帧数，不能提前冻结
+    }
+    GazeState pinned = frame(0.90f, 0.88f);
+    calibrator.apply(pinned);
+    FGB_CHECK(pinned.saturated);
+
+    // 冻结后位置保持"最后一处非饱和位置"，两眼一起停（不会各按各的边界越走越开）
+    GazeState held = frame(0.90f, 0.62f);
+    calibrator.apply(held);
+    FGB_CHECK(held.saturated);
+    FGB_CHECK_NEAR(held.left_point_2d.x, pinned.left_point_2d.x, 1e-6f);
+    FGB_CHECK_NEAR(held.right_point_2d.x, pinned.right_point_2d.x, 1e-6f);
 
     // 回到范围内：恢复跟随
-    GazeState back;
-    back.capture_ts_ns     = kNow;
-    back.left_point_valid  = true;
-    back.right_point_valid = true;
-    back.left_point_2d     = {0.60f, 0.52f};
-    back.right_point_2d    = {0.60f, 0.52f};
+    GazeState back = frame(0.60f, 0.60f);
     calibrator.apply(back);
     FGB_CHECK(!back.saturated);
     FGB_CHECK_NEAR(back.left_point_2d.x, 0.60f, 1e-6f);
+}
+
+// 极值参照 = 本会话观测到的包络，而不是档案里的标定窗口。
+//
+// 窄范围标定的窗口只有屏幕中间一块（左眼 0.42..0.75）。用户真正看到更远之后，
+// 窗口边缘处的稳定注视不该再被判成"传感器到极限"——否则又回到"标定后只能在中
+// 间一小块里动"的老问题上。
+FGB_TEST(gaze_calibrator_learns_wider_range_than_profile_bounds) {
+    GazeCalibrator calibrator;
+
+    GazeProfile profile;
+    profile.version         = 3;
+    profile.source_kind     = GazeSourceKind::points;
+    profile.have_bounds     = true;
+    profile.input_bounds[0] = {0.42f, 0.75f, 0.31f, 0.69f};
+    profile.input_bounds[1] = {0.25f, 0.58f, 0.31f, 0.69f};
+    profile.eyes[0].active  = true;
+    profile.eyes[0].a       = 1.0f;
+    profile.eyes[1].active  = true;
+    profile.eyes[1].a       = 1.0f;
+    calibrator.set_profile(profile);
+
+    const auto frame = [](float left_x, float right_x) {
+        GazeState gaze;
+        gaze.capture_ts_ns     = kNow;
+        gaze.left_point_valid  = true;
+        gaze.right_point_valid = true;
+        gaze.left_point_2d     = {left_x, 0.52f};
+        gaze.right_point_2d    = {right_x, 0.52f};
+        return gaze;
+    };
+
+    // 1) 真看到远处：包络长到 0.90。值一直在变，不该判饱和
+    for (float x = 0.78f; x <= 0.9001f; x += 0.03f) {
+        GazeState moving = frame(x, x);
+        calibrator.apply(moving);
+        FGB_CHECK(!moving.saturated);
+    }
+
+    // 2) 回到"旧窗口边缘"并稳住：已落在包络内部，不该冻结
+    for (int i = 0; i < GazeCalibrator::kSaturatedHoldFrames * 2; ++i) {
+        GazeState steady = frame(0.72f, 0.72f);
+        calibrator.apply(steady);
+        FGB_CHECK(!steady.saturated);
+        FGB_CHECK_NEAR(steady.left_point_2d.x, 0.72f, 1e-6f);
+    }
+
+    // 3) 停在真正的极限上（0.90 不再变化）→ 这时才是饱和
+    for (int i = 0; i < GazeCalibrator::kSaturatedHoldFrames; ++i) {
+        GazeState pinned = frame(0.90f, 0.90f);
+        calibrator.apply(pinned);
+    }
+    GazeState pinned = frame(0.90f, 0.90f);
+    calibrator.apply(pinned);
+    FGB_CHECK(pinned.saturated);
 }

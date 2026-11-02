@@ -653,3 +653,40 @@ FGB_TEST(calibration_without_eye_block_leaves_direction_alone) {
     FGB_CHECK_NEAR(frame.eyes.left.gazeDirLocal.y, before.y, 1e-6f);
     FGB_CHECK_NEAR(frame.eyes.left.gazeDirLocal.z, before.z, 1e-6f);
 }
+
+// 启动时给的参数（命令行 / settings.ini）必须活过第一帧。
+//
+// 曾经踩过：set_config() 只写了 config_，没同步 live_min_cutoff_/live_beta_，
+// 第一帧 process() 判"面板把参数改成了默认值"，反而把启动参数覆盖掉——
+// 表现就是"设置里明明存了，重启后仍显示 1.0"。
+FGB_TEST(face_filter_keeps_configured_params_across_process) {
+    OneEuroConfig config;
+    config.min_cutoff = 0.7f;
+    config.beta       = 0.9f;
+
+    FaceFilter filter(config);
+    FGB_CHECK(std::fabs(filter.min_cutoff() - 0.7f) < 1e-6f);
+    FGB_CHECK(std::fabs(filter.beta() - 0.9f) < 1e-6f);
+
+    FaceFrame frame;
+    frame.shapes[index_of(Shape::JawOpen)] = 0.5f;
+    filter.process(frame);
+
+    // 跑过一帧之后仍然是启动时那一组
+    FGB_CHECK(std::fabs(filter.min_cutoff() - 0.7f) < 1e-6f);
+    FGB_CHECK(std::fabs(filter.beta() - 0.9f) < 1e-6f);
+}
+
+// 面板改滑杆仍然要生效：set_live_params 之后 config 要跟着走（不能被 set_config 反向吞回去）
+FGB_TEST(face_filter_live_params_apply) {
+    FaceFilter filter;
+    filter.set_live_params(2.5f, 1.2f);
+    FaceFrame frame;
+    filter.process(frame);
+    FGB_CHECK(std::fabs(filter.min_cutoff() - 2.5f) < 1e-6f);
+    FGB_CHECK(std::fabs(filter.beta() - 1.2f) < 1e-6f);
+
+    // 再跑一帧也不会自己跳回去
+    filter.process(frame);
+    FGB_CHECK(std::fabs(filter.min_cutoff() - 2.5f) < 1e-6f);
+}

@@ -59,23 +59,54 @@ std::vector<Pair> synthetic_pairs(const GazeEyeMap& map, float noise = 0.0f) {
 } // namespace
 
 FGB_TEST(gaze_calib_plan_has_center_and_two_rings) {
-    FGB_CHECK(targets().size() == kTargetCount);
-    FGB_CHECK_NEAR(targets()[0].yaw_deg, 0.0, 1e-6);
-    FGB_CHECK_NEAR(targets()[0].pitch_deg, 0.0, 1e-6);
+    for (const Span span : {Span::wide, Span::narrow}) {
+        const RingAngles ring = ring_angles(span);
+        FGB_CHECK(targets(span).size() == kTargetCount);
+        FGB_CHECK_NEAR(targets(span)[0].yaw_deg, 0.0, 1e-6);
+        FGB_CHECK_NEAR(targets(span)[0].pitch_deg, 0.0, 1e-6);
 
-    // 内环四点 + 外环八点：外环半径明显大于内环
-    float inner_max = 0.0f;
-    float outer_max = 0.0f;
-    for (std::size_t i = 1; i < 5; ++i) {
-        const float r = std::hypot(targets()[i].yaw_deg, targets()[i].pitch_deg);
-        inner_max     = std::max(inner_max, r);
+        // 内环四点 + 外环八点：外环半径明显大于内环
+        float inner_max = 0.0f;
+        float outer_max = 0.0f;
+        for (std::size_t i = 1; i < 5; ++i) {
+            const float r = std::hypot(targets(span)[i].yaw_deg, targets(span)[i].pitch_deg);
+            inner_max     = std::max(inner_max, r);
+        }
+        for (std::size_t i = 5; i < kTargetCount; ++i) {
+            const float r = std::hypot(targets(span)[i].yaw_deg, targets(span)[i].pitch_deg);
+            outer_max     = std::max(outer_max, r);
+        }
+        FGB_CHECK_NEAR(inner_max, ring.inner, 1e-3);
+        FGB_CHECK_NEAR(outer_max, ring.outer, 1e-3);
+        FGB_CHECK(ring.outer > ring.inner);
     }
-    for (std::size_t i = 5; i < kTargetCount; ++i) {
-        const float r = std::hypot(targets()[i].yaw_deg, targets()[i].pitch_deg);
-        outer_max     = std::max(outer_max, r);
-    }
-    FGB_CHECK_NEAR(inner_max, kInnerRingDeg, 1e-3);
-    FGB_CHECK_NEAR(outer_max, kOuterRingDeg, 1e-3);
+
+    // 两档必须真的不一样，否则"看不全大范围时退一档"就等于没得选
+    FGB_CHECK(ring_angles(Span::wide).outer > ring_angles(Span::narrow).outer);
+    FGB_CHECK_NEAR(targets(Span::narrow)[6].yaw_deg, kRingNarrow.outer, 1e-3);
+    FGB_CHECK_NEAR(targets(Span::wide)[6].yaw_deg, kRingWide.outer, 1e-3);
+
+    // 名字要与 settings.ini / IPC 对上：写盘写 "wide"，读回来还是 wide
+    FGB_CHECK(span_from_name(span_name(Span::narrow)) == Span::narrow);
+    FGB_CHECK(span_from_name(span_name(Span::wide)) == Span::wide);
+    FGB_CHECK(span_from_name("") == Span::wide); // 未知/没设置 → 默认大范围
+}
+
+FGB_TEST(gaze_calib_wide_span_reaches_nearer_the_edge) {
+    // 用真实头显量级的投影（PICO 实测 ±0.936 垂直、水平不对称）比较两档覆盖：
+    // wide 必须比 narrow 更靠近屏幕边缘，否则用户选它没有意义。
+    GazeProjection projection = GazeProjection::symmetric(1.1f, 0.94f);
+    const auto max_x = [&projection](Span span) {
+        float best = 0.0f;
+        for (const Target& target : targets(span)) {
+            Vec2 point{};
+            if (target_viewport(target, projection.eyes[0], point)) {
+                best = std::max(best, point.x);
+            }
+        }
+        return best;
+    };
+    FGB_CHECK(max_x(Span::wide) > max_x(Span::narrow) + 0.05f);
 }
 
 FGB_TEST(gaze_calib_targets_project_inside_viewport) {

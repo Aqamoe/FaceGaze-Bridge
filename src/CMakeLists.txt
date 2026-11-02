@@ -77,6 +77,7 @@ target_link_libraries(fgb_params PUBLIC fgb_core fgb_base fgb_capture fgb_vrcft 
 add_library(fgb_config STATIC
     config/ini.cpp
     config/outputs.cpp
+    config/settings.cpp
     config/osc_map.cpp)
 target_link_libraries(fgb_config PUBLIC fgb_base)
 

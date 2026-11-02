@@ -2,6 +2,7 @@
 //
 // 这份文件是"界面保存 → 下次启动生效"的桥：写错一个键，用户重启后输出就悄悄没了。
 #include "config/outputs.hpp"
+#include "config/settings.hpp"
 
 #include "test_framework.hpp"
 
@@ -271,4 +272,62 @@ FGB_TEST(outputs_load_missing_or_invalid_falls_back) {
     FGB_CHECK(!config::load_outputs(bad, options, error));
     FGB_CHECK(!error.empty());
     FGB_CHECK(options == config::OutputOptions{});
+}
+
+// 运行设置（滤波 / 日志级别 / 标定范围）：界面改一次写一次，重启必须还在。
+// 这三项以前是"只改内存"，重启就回到默认值——这条用例就是防止它再退化。
+FGB_TEST(settings_roundtrip_keeps_ui_values) {
+    TempDir temp;
+    const fs::path path = temp.path / "settings.ini";
+
+    config::EngineSettings settings;
+    settings.filter_enabled     = true;
+    settings.filter_min_cutoff  = 2.5f;
+    settings.filter_beta        = 0.85f;
+    settings.log_level          = "warn";
+    settings.gaze_calib_span    = "narrow";
+
+    std::string error;
+    FGB_CHECK(config::save_settings(path, settings, error));
+
+    config::EngineSettings loaded;
+    FGB_CHECK(config::load_settings(path, loaded, error));
+    FGB_CHECK(loaded == settings);
+    FGB_CHECK(loaded.filter_enabled);
+    FGB_CHECK_NEAR(loaded.filter_min_cutoff, 2.5f, 1e-6f);
+    FGB_CHECK_NEAR(loaded.filter_beta, 0.85f, 1e-6f);
+    FGB_CHECK(loaded.log_level == "warn");
+    FGB_CHECK(loaded.gaze_calib_span == "narrow");
+}
+
+// 手改坏的文件不能把程序带崩：数值钳到合法区间，未知名字当"没设置"。
+FGB_TEST(settings_load_sanitizes_hand_edited_file) {
+    TempDir temp;
+    const fs::path path = temp.path / "settings.ini";
+    {
+        std::ofstream out(path);
+        out << "[filter]\nenabled = 1\nmin_cutoff = 999\nbeta = -3\n"
+            << "[log]\nlevel = whatever\n"
+            << "[gaze_calib]\nspan = diagonal\n"
+            << "[unknown]\nkey = value\n";
+    }
+
+    config::EngineSettings loaded;
+    std::string error;
+    FGB_CHECK(config::load_settings(path, loaded, error));
+    FGB_CHECK(loaded.filter_enabled);
+    FGB_CHECK_NEAR(loaded.filter_min_cutoff, 20.0f, 1e-6f); // 上限
+    FGB_CHECK_NEAR(loaded.filter_beta, 0.0f, 1e-6f);        // 下限
+    FGB_CHECK(loaded.log_level.empty());                    // 认不出 → 不覆盖命令行
+    FGB_CHECK(loaded.gaze_calib_span.empty());              // 认不出 → 用默认 wide
+}
+
+FGB_TEST(settings_missing_file_is_not_an_error) {
+    TempDir temp;
+    config::EngineSettings loaded;
+    loaded.filter_enabled = true; // 预置一个"脏"值，确认失败时会被重置
+    std::string error;
+    FGB_CHECK(!config::load_settings(temp.path / "missing.ini", loaded, error));
+    FGB_CHECK(loaded == config::EngineSettings{});
+    FGB_CHECK(!error.empty());
 }

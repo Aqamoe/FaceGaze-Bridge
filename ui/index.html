@@ -396,6 +396,16 @@
               <div class="kv"><span data-i18n="calibration.dot.progress">进度</span><b id="cal-dot-progress">—</b></div>
               <div class="kv"><span data-i18n="calibration.dot.residual">残差</span><b id="cal-dot-residual">—</b></div>
               <div class="kv"><span data-i18n="calibration.dot.profile">档案</span><b id="cal-dot-profile">—</b></div>
+              <div class="kv"><span data-i18n="calibration.dot.span">标定范围</span><b>
+                <select id="cal-dot-span">
+                  <option value="wide" data-i18n="calibration.dot.span.wide">大（外环 32°，覆盖到边缘）</option>
+                  <option value="narrow" data-i18n="calibration.dot.span.narrow">小（外环 20°，只看中间）</option>
+                </select>
+              </b></div>
+              <p class="hint" data-i18n="calibration.dot.span.hint">
+                看不全外圈（眼动到 32° 吃力、圆点贴近镜片看不清）就选「小」：只覆盖屏幕中间，
+                边缘只能靠外推，精度差一些。改完要重新标定才生效。
+              </p>
               <p class="hint" id="cal-dot-message"></p>
               <p class="hint" id="cal-dot-probe-message"></p>
               <div class="out-actions">
@@ -859,7 +869,7 @@
               <input type="range" id="f-beta" min="0" max="3" step="0.05">
               <b id="f-beta-v">—</b>
             </div>
-            <p class="hint" data-i18n="settings.filter.hint">调大 minCutoff 更跟手，调小更稳；beta 控制快速动作时的补偿。改动立即生效。</p>
+            <p class="hint" data-i18n="settings.filter.hint">调大 minCutoff 更跟手，调小更稳；beta 控制快速动作时的补偿。改动立即生效并自动保存。</p>
           </article>
 
           <article class="card">

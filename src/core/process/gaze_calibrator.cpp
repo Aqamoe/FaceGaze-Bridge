@@ -44,6 +44,11 @@ void GazeCalibrator::apply(GazeState& gaze) noexcept {
     // 快照读失败说明控制线程正在替换档案（几百纳秒）；沿用上一帧比"这帧不标定"平滑。
     GazeProfile fresh;
     if (profile_snapshot_.read(fresh)) {
+        // 换档案 = 换映射：饱和历史（上一帧原始值、连续帧计数）必须跟着作废，
+        // 否则新档案的前几帧会拿旧档案的原始值去比"值有没有变"。
+        if (fresh.version != engine_copy_.version) {
+            reset_saturation_state();
+        }
         engine_copy_ = fresh;
     }
     const GazeProfile& profile = engine_copy_;
@@ -132,34 +137,83 @@ void GazeCalibrator::apply(GazeState& gaze) noexcept {
         gaze.point_viewport  = true;
     }
 
-    // 饱和判定：原始值贴到标定时见过的边界，就说明传感器到极限了。
-    // 这时如果继续按新值算，两眼会因为各自的边界不同而越走越开（实测就是这样），
-    // 所以冻结在最后一对有效位置上，并打上标记让探针/页面说清楚。
+    // 饱和判定："贴住见过的极值" 且 "连续多帧原始值不再变化"。
+    //
+    // 【极值参照谁】用**本会话观测到的原始值包络**（只扩不缩），首帧由档案的
+    // input_bounds 播种。不能直接用档案：那是"标定时看到过哪儿"，13 点圆盘只覆盖
+    // 屏幕中间一块（窄范围 ±20° 时只有 x 0.42..0.75），拿它当传感器极限，正常看
+    // 一眼边缘就会被判饱和、位置被冻结在那个小框里。
+    // 包络会随着用户真正看向哪里一起长；只要曾经看过更远，那里就不再算边界。
+    //
+    // 【为什么还要"值不变"】到极值不等于到极限：稳定的注视同样停在极值上。真饱和的
+    // 特征是**值被钉住**——再看远也没有新数据。所以要求连续 kSaturatedHoldFrames 帧
+    // 值不变，才认为传感器到极限并冻结（冻结是为了不让两眼按各自边界越走越开）。
     if (profile.have_bounds && gaze.raw_point_valid && branch == GazeSourceKind::points) {
-        const auto near_bound = [](float value, float lo, float hi) {
+        if (!have_env_) {
+            for (std::size_t eye = 0; eye < 2; ++eye) {
+                env_lo_[eye] = Vec2{profile.input_bounds[eye][0], profile.input_bounds[eye][2]};
+                env_hi_[eye] = Vec2{profile.input_bounds[eye][1], profile.input_bounds[eye][3]};
+            }
+            have_env_ = true;
+        }
+        const auto at_edge = [](float value, float lo, float hi) {
             const float span = hi - lo;
             const float eps  = span > 1e-6f ? std::max(0.004f, span * 0.04f) : 0.004f;
             return value <= lo + eps || value >= hi - eps;
         };
-        const bool left_sat = gaze.left_point_valid &&
-                              (near_bound(gaze.raw_left_point_2d.x, profile.input_bounds[0][0],
-                                          profile.input_bounds[0][1]) ||
-                               near_bound(gaze.raw_left_point_2d.y, profile.input_bounds[0][2],
-                                          profile.input_bounds[0][3]));
-        const bool right_sat = gaze.right_point_valid &&
-                               (near_bound(gaze.raw_right_point_2d.x, profile.input_bounds[1][0],
-                                           profile.input_bounds[1][1]) ||
-                                near_bound(gaze.raw_right_point_2d.y, profile.input_bounds[1][2],
-                                           profile.input_bounds[1][3]));
-        gaze.saturated = left_sat || right_sat;
+        const auto unchanged = [](const Vec2& now, const Vec2& prev) {
+            return std::fabs(now.x - prev.x) <= kStuckEpsilon &&
+                   std::fabs(now.y - prev.y) <= kStuckEpsilon;
+        };
+
+        const bool left_at  = gaze.left_point_valid &&
+                              (at_edge(gaze.raw_left_point_2d.x, env_lo_[0].x, env_hi_[0].x) ||
+                               at_edge(gaze.raw_left_point_2d.y, env_lo_[0].y, env_hi_[0].y));
+        const bool right_at = gaze.right_point_valid &&
+                              (at_edge(gaze.raw_right_point_2d.x, env_lo_[1].x, env_hi_[1].x) ||
+                               at_edge(gaze.raw_right_point_2d.y, env_lo_[1].y, env_hi_[1].y));
+        // 没有上一帧可比时不能判"不变"：第一帧贴边只是"刚开始看边缘"
+        const bool left_stuck =
+            left_at && have_prev_raw_ && unchanged(gaze.raw_left_point_2d, prev_left_raw_);
+        const bool right_stuck =
+            right_at && have_prev_raw_ && unchanged(gaze.raw_right_point_2d, prev_right_raw_);
+
+        left_hold_  = left_stuck ? left_hold_ + 1 : 0;
+        right_hold_ = right_stuck ? right_hold_ + 1 : 0;
+        prev_left_raw_  = gaze.raw_left_point_2d;
+        prev_right_raw_ = gaze.raw_right_point_2d;
+        have_prev_raw_  = true;
+
+        // 判完再并入当前样本：先并入的话"当前值"永远等于包络边界，等于没有参照
+        if (gaze.left_point_valid) {
+            env_lo_[0].x = std::min(env_lo_[0].x, gaze.raw_left_point_2d.x);
+            env_lo_[0].y = std::min(env_lo_[0].y, gaze.raw_left_point_2d.y);
+            env_hi_[0].x = std::max(env_hi_[0].x, gaze.raw_left_point_2d.x);
+            env_hi_[0].y = std::max(env_hi_[0].y, gaze.raw_left_point_2d.y);
+        }
+        if (gaze.right_point_valid) {
+            env_lo_[1].x = std::min(env_lo_[1].x, gaze.raw_right_point_2d.x);
+            env_lo_[1].y = std::min(env_lo_[1].y, gaze.raw_right_point_2d.y);
+            env_hi_[1].x = std::max(env_hi_[1].x, gaze.raw_right_point_2d.x);
+            env_hi_[1].y = std::max(env_hi_[1].y, gaze.raw_right_point_2d.y);
+        }
+
+        gaze.saturated = left_hold_ >= kSaturatedHoldFrames ||
+                         right_hold_ >= kSaturatedHoldFrames;
         if (gaze.saturated && have_last_) {
             gaze.left_point_2d  = last_left_;
             gaze.right_point_2d = last_right_;
-        } else if (!gaze.saturated && gaze.left_point_valid && gaze.right_point_valid) {
+        } else if (gaze.left_point_valid && gaze.right_point_valid) {
             last_left_  = gaze.left_point_2d;
             last_right_ = gaze.right_point_2d;
             have_last_  = true;
         }
+    } else {
+        // 没有范围信息（旧档案）或不是点型分支：不判饱和，也就不会冻结
+        gaze.saturated  = false;
+        left_hold_      = 0;
+        right_hold_     = 0;
+        have_prev_raw_  = false;
     }
 }
 

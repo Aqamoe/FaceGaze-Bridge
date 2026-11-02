@@ -12,6 +12,7 @@
 #include "core/model/gaze_profile.hpp"
 #include "core/model/gaze_projection.hpp"
 #include "gaze_calib/collector.hpp"
+#include "gaze_calib/plan.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -56,6 +57,10 @@ public:
     void set_overlay(overlay::Dots* dots) noexcept { dots_ = dots; }
     void set_apply(ApplyFn fn) { apply_ = std::move(fn); }
     void set_trim_source(TrimFn fn) { trim_source_ = std::move(fn); }
+    // 标定范围：wide（外环 32°，覆盖到边缘）/ narrow（外环 20°，只看中间）。
+    // 运行中改不会影响这一轮（点位已经摆过、样本也已采过），下次 start 生效。
+    void set_span(Span span) noexcept { span_ = span; }
+    Span span() const noexcept { return span_; }
 
     // 开始标定：清空档案、打开 overlay、摆第一个点。失败时 error 说明原因。
     bool start(std::string& error);
@@ -92,6 +97,7 @@ private:
     std::uint64_t target_started_ns_ = 0;
     Status status_{};
     bool branch_decided_ = false;
+    Span span_           = Span::wide;
 };
 
 } // namespace fgb::gaze_calib

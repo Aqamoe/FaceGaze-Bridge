@@ -57,6 +57,11 @@ void FaceFilter::reset() noexcept {
 
 void FaceFilter::set_config(const OneEuroConfig& config) noexcept {
     config_ = config;
+    // live_* 是 process() 里"面板有没有改过"的比较基准，必须跟着配置一起走。
+    // 不同步的话：命令行/档案给了 min_cutoff=0.5，原子量还停在构造时的 1.0，
+    // 第一帧 process 就判"面板改成了 1.0"并把 0.5 覆盖掉——表现为"存了但重启没生效"。
+    live_min_cutoff_.store(config.min_cutoff, std::memory_order_relaxed);
+    live_beta_.store(config.beta, std::memory_order_relaxed);
     for (auto& f : shapes_) {
         f.set_config(config);
     }

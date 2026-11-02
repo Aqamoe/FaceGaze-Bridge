@@ -588,6 +588,9 @@ void IpcServer::build_metrics(std::string& out) {
     const EngineStats stats = ctx_.engine != nullptr ? ctx_.engine->stats() : EngineStats{};
 
     writer.key("source").str(ctx_.source_name);
+    // 当前日志级别：设置页的下拉框要显示"真正在用的那一档"。以前只在用户自己改时
+    // 才知道，重启（或 --verbose）之后下拉框和实际级别就对不上了。
+    writer.key("log_level").str(level_name(log::level()));
     writer.key("source_ok").boolean(stats.frames_in > 0);
     writer.key("frames_in").integer(static_cast<long long>(stats.frames_in));
     writer.key("ticks").integer(static_cast<long long>(stats.ticks));
@@ -966,6 +969,10 @@ void IpcServer::build_gaze_calib(std::string& out) {
     writer.key("state").str(gaze_calib::state_name(snap.state));
     writer.key("target").integer(static_cast<long long>(snap.target));
     writer.key("target_count").integer(static_cast<long long>(gaze_calib::kTargetCount));
+    // 点位范围：wide（外环 32°）/ narrow（外环 20°）。界面顶着一个下拉框，
+    // 状态消息里必须带上当前值，否则多标签页/重连后下拉框会显示成默认项。
+    writer.key("span").str(gaze_calib::span_name(
+        ctx_.gaze_calib != nullptr ? ctx_.gaze_calib->span() : gaze_calib::Span::wide));
     writer.key("done").integer(static_cast<long long>(snap.done));
     writer.key("samples").integer(static_cast<long long>(snap.samples));
     writer.key("needed").integer(static_cast<long long>(snap.needed));
@@ -1846,6 +1853,17 @@ void IpcServer::send_backlog(std::intptr_t conn) {
     }
 }
 
+std::string IpcServer::persist_settings() {
+    if (ctx_.settings_path.empty()) {
+        return {};
+    }
+    std::string error;
+    if (!config::save_settings(ctx_.settings_path, ctx_.settings, error)) {
+        return error;
+    }
+    return {};
+}
+
 void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     std::string type;
     bool ok                 = false;
@@ -1880,7 +1898,20 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             beta       = std::clamp(beta, 0.0, 5.0);
             ctx_.filter->set_enabled(enabled);
             ctx_.filter->set_live_params(static_cast<float>(min_cutoff), static_cast<float>(beta));
+            // 页面上没有"保存"按钮（写的是"立即生效"）：改完必须落盘，
+            // 否则重启就回到默认值，用户白调一遍。
+            ctx_.settings.filter_enabled     = enabled;
+            ctx_.settings.filter_min_cutoff  = static_cast<float>(min_cutoff);
+            ctx_.settings.filter_beta        = static_cast<float>(beta);
             ok = true;
+            const std::string save_error = persist_settings();
+            if (save_error.empty()) {
+                ack_message = "滤波设置已保存";
+            } else {
+                // 内存里已经生效了，别让用户以为滑杆没起作用
+                ok    = false;
+                error = "滤波已生效，但保存失败：" + save_error;
+            }
         }
     } else if (has_type && type == "set_outputs") {
         config::OutputOptions next = ctx_.outputs;
@@ -2832,7 +2863,16 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         log::Level level = log::level();
         if (json::field_string(text, "level", level_text) && parse_level(level_text, level)) {
             log::set_level(level);
+            // 同上：日志级别也是界面上一改就生效，不记下来下次启动就回 info
+            ctx_.settings.log_level = level_text;
             ok = true;
+            const std::string save_error = persist_settings();
+            if (save_error.empty()) {
+                ack_message = "日志级别已保存：" + level_text;
+            } else {
+                ok    = false;
+                error = "日志级别已生效，但保存失败：" + save_error;
+            }
         } else {
             error = "unknown level";
         }
@@ -2974,6 +3014,30 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             ok           = true;
             vrss_touched = true;
             ack_message  = "正在停止 VRSS 注视路径";
+        }
+    } else if (has_type && type == "set_gaze_calib_span") {
+        std::string span_text;
+        if (ctx_.gaze_calib == nullptr) {
+            error = "注视标定不可用（没有控制面或 SteamVR overlay）";
+        } else if (!json::field_string(text, "span", span_text)) {
+            error = "缺少 span";
+        } else if (ctx_.gaze_calib->active()) {
+            // 点位已经摆过、样本也在采：中途换范围只会让这一轮的样本和点位对不上
+            error = "标定进行中，先结束或取消再改范围";
+        } else {
+            const gaze_calib::Span span = gaze_calib::span_from_name(span_text);
+            ctx_.gaze_calib->set_span(span);
+            ctx_.settings.gaze_calib_span = gaze_calib::span_name(span);
+            ok                 = true;
+            gaze_calib_touched = true;
+            ack_message        = span == gaze_calib::Span::wide
+                                     ? "标定范围：大（外环 32°）"
+                                     : "标定范围：小（外环 20°）";
+            const std::string save_error = persist_settings();
+            if (!save_error.empty()) {
+                ok    = false;
+                error = "范围已切换，但保存失败：" + save_error;
+            }
         }
     } else if (has_type && type == "gaze_calib_start") {
         if (ctx_.gaze_calib == nullptr) {
