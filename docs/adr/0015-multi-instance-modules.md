@@ -1,6 +1,7 @@
 # ADR-0015 · 模块页按实例显示，而不是只显示"第一个"
 
-- 状态：已采纳
+- 状态：已采纳（"同一模块可以被多个实例加载"后来由
+  [ADR-0044](0044-one-instance-per-module.md) 收敛为一个模块一个实例）
 - 日期：2026-10-29
 - 影响：`IpcContext` 从单个 `vrcft` 指针改为 `running_modules` 列表；`status.module` → `status.modules[]`；
   `modules` 消息的条目增加 `running` / `instance`；模块页新增「运行中的实例」；`tools/probe_ui.py` 增加断言

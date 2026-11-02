@@ -113,18 +113,23 @@ bool Engine::remove_source(std::string_view name, std::string& error) {
 }
 
 bool Engine::start() {
+    // 输入源起不来不能带走引擎。模块是第三方代码，最常见的失败就是端口/共享内存被占
+    // （同一模块被加了两个实例，或者别的接收端还开着）。以前这里直接 return false，
+    // main 跟着退出，于是界面（由引擎提供）一起消失——用户连"哪一路坏了"都看不到，
+    // 更没法从界面把多出来的实例删掉。失败的源留在列表里：状态页照样显示它，
+    // 「启动实例」还能在原因排除后原地重来。
     for (auto& source : sources_) {
-        if (!source->start()) {
-            // 模块给的失败原因（ABI 不兼容、缺 DLL、初始化返回 0）必须进日志，
-            // 否则命令行用户只能看到"启动失败"，诊断要回界面翻模块卡片。
-            const auto status = source->module_status();
-            if (status.has_value() && !status->error.empty()) {
-                FGB_ERROR(kTag, "source '%s' 启动失败：%s", source->name(),
-                          status->error.c_str());
-            } else {
-                FGB_ERROR(kTag, "source '%s' 启动失败", source->name());
-            }
-            return false;
+        if (source->start()) {
+            continue;
+        }
+        // 模块给的失败原因（ABI 不兼容、缺 DLL、端口被占）必须进日志，
+        // 否则命令行用户只能看到"启动失败"，诊断要回界面翻模块卡片。
+        const auto status = source->module_status();
+        if (status.has_value() && !status->error.empty()) {
+            FGB_ERROR(kTag, "source '%s' 启动失败：%s（其余输入继续运行）", source->name(),
+                      status->error.c_str());
+        } else {
+            FGB_ERROR(kTag, "source '%s' 启动失败（其余输入继续运行）", source->name());
         }
     }
     for (auto& sink : sinks_) {

@@ -308,6 +308,7 @@ gh run watch <id> --exit-status
 | 模块更新失败 | 提示"正在被占用" | 引擎加载模块时 DLL 被锁。正常路径由 IPC 先 `stop_source` 再装（用户确认即授权），装完自动拉起；仍失败说明是**别的进程**占着 DLL，报错要指明这一点 |
 | 删除运行中的模块 | 报「删除失败（正在被占用）」 | 同上：先停该模块的所有实例再删，失败时把实例恢复运行；只有 `remove_all` 真的删掉了才清配置 |
 | 删除后「运行中的实例 / 输入源」还在 | 只 `stop_source` 不摘源 | 合并器槽位与 `ctx_.running_modules` / `source_names` 仍留着它。删除成功后必须 `Engine::remove_source`（停止 + 从合并器、源列表摘除），`IpcServer::forget_module_instances()` 已封装 |
+| 某个模块起不来，整个引擎跟着退出、界面打不开 | `engine.log` 里只有一条 `source … 启动失败`，进程随即结束 | 引擎同时是界面宿主，一路输入失败不能带走它：`Engine::start()` 只记 error 继续跑（[ADR-0045](docs/adr/0045-engine-survives-a-failed-source.md)）；老配置里同模块的重复实例在 `cli/main` 启动时跳过 |
 | 模块装完仍显示"安装" | 包内没有 module.json，ID 退化成 DLL 名 | 模块库安装必须传 `ModuleMetadataOverride` 兜底；版本比较用语义版本，不要用字符串相等 |
 | 模块库刷新超时 | WinHTTP 12002 | registry.vrcft.io 偶发卡 20 s；库内部重试一次，失败时保留缓存 |
 | 装模块/更新包全失败，开代理也没用 | 日志里 `12152` 与 `12002` 交替；浏览器能下载 | WinHTTP 默认代理只认 `netsh winhttp`，看不到 Clash 开的 IE 系统代理。公网请求统一走 `src/net/proxy_config.*`（`ProxyEnable`/`ProxyServer`/`AutoConfigURL`，PAC 现算，见 ADR-0039）；只填了 `socks=` 等于没代理（WinHTTP 不支持 SOCKS） |
@@ -371,7 +372,7 @@ docs/          方案、ADR、路线图、用户手册；SDK 集成文档在 sdk
 | →UI | `catalog`（365 个参数名 + 是否已绑定） | 连接时 / 换头像后 |
 | →UI | `modules`（已安装 + 可导入 + 运行时 + 启动选择） | 连接时 / 扫描或任何模块变更后 |
 | →UI | `library`（VRCFT 模块库列表 + 缓存状态 + 下载进度；`native` 段为原生库的同构内容 + 兼容性判定） | 连接时 / 刷新或安装过程中 5 Hz |
-| →UI | `status`（帧率、tick、OSC、头像、滤波、`modules[]` 每实例状态、`sources[]` 每源贡献） | 10 Hz |
+| →UI | `status`（总帧率、tick、OSC、头像、滤波、`modules[]` 每实例状态、`sources[]` 每源贡献与每源 `fps`） | 10 Hz |
 | →UI | `params`（数值数组，顺序同 `catalog`） | 10 Hz |
 | →UI | `gaze`（方向/俯仰偏航/聚散/置信度/fixation/saccade/head_pose） | 30 Hz |
 | →UI | `calibration`（88 个形状的 lo/hi/active + 视线 + 路径 + 未保存标记） | 连接时 / 任何校准改动后 |

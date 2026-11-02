@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -47,6 +48,28 @@ private:
     FaceFrame next_{};
     bool pending_ = false;
     SourceStats stats_{};
+};
+
+// 起不来的源：模拟"同一模块被加了两个实例""端口被别的接收端占着"这类启动失败。
+// 它必须只是不喂数据，不能把引擎带走。
+class FailingSource final : public ISource {
+public:
+    explicit FailingSource(std::string name) : name_(std::move(name)) {}
+
+    const char* name() const noexcept override { return name_.c_str(); }
+    bool start() override { return false; }
+    void stop() noexcept override {}
+    bool poll(FaceFrame&) override { return false; }
+    SourceStats stats() const noexcept override { return {}; }
+
+    std::optional<ModuleRuntimeStatus> module_status() const override {
+        ModuleRuntimeStatus status;
+        status.error = "无法绑定 UDP 49983，WSA 10048（端口已被占用）";
+        return status;
+    }
+
+private:
+    std::string name_;
 };
 
 class CountingProcessor final : public IFaceProcessor {
@@ -329,6 +352,37 @@ FGB_TEST(engine_processors_run_once_per_merged_frame) {
 
     // 两个源各 5 帧，但后处理只能跑 5 次：跑 10 次等于把滤波做了两遍
     FGB_CHECK(counter_raw->calls == 5);
+}
+
+// 一路输入源起不来不能带走引擎。真机上就是"同一模块加了两个实例，第二个抢不到
+// UDP 端口"，引擎在 main 里直接 return 1 退出，界面（由引擎提供）一起消失——
+// 用户连哪一路坏了都看不到，更没法从界面把多出来的实例删掉。
+FGB_TEST(engine_start_survives_a_source_that_fails_to_start) {
+    Engine engine;
+    auto bad  = std::make_unique<FailingSource>("native:dup");
+    auto good = std::make_unique<FakeSource>("good");
+    FakeSource* good_raw = good.get();
+    engine.add_source(std::move(bad));
+    engine.add_source(std::move(good));
+
+    FGB_CHECK(engine.start());
+    good_raw->push(expression_frame(0.8f));
+    engine.tick_once(1'000'000ULL);
+
+    // 好的那一路照常出数据
+    FGB_CHECK(engine.stats().frames_in == 1);
+    FGB_CHECK_NEAR(engine.latest().shape(Shape::JawOpen), 0.8f, 1e-6);
+
+    // 失败的那一路仍在报告里：界面要能显示它是 0 帧、状态是故障
+    bool seen = false;
+    for (const SourceReport& report : engine.source_report()) {
+        if (report.name == "native:dup") {
+            seen = true;
+            FGB_CHECK(report.frames == 0);
+        }
+    }
+    FGB_CHECK(seen);
+    engine.stop();
 }
 
 // 模块被删除时要把输入源彻底摘掉：只 stop 的话，界面「输入源 / 运行中的实例」

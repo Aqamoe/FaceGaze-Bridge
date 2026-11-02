@@ -1040,6 +1040,10 @@ int cmd_run(int argc, char** argv) {
                 !module_registry->instances().empty()) {
                 instances_consumed = true;
                 bool any_started = false;
+                // 老配置里可能残留同一模块的多个实例（界面已经禁止再添加）：
+                // 两个实例抢同一份共享内存/端口，第二个必然起不来。这里直接跳过，
+                // 别让它变成"每次启动都有一路报端口被占"的噪音。
+                std::vector<std::string> launched_ids;
                 for (const fgb::vrcft::ModuleInstance& instance : module_registry->instances()) {
                     const fgb::vrcft::ModuleInfo* module = module_registry->find(instance.module_id);
                     if (module == nullptr) {
@@ -1058,6 +1062,15 @@ int cmd_run(int argc, char** argv) {
                         continue;
                     }
                     const bool native = module->kind == fgb::vrcft::ModuleKind::native;
+                    if (std::find(launched_ids.begin(), launched_ids.end(), module->id) !=
+                        launched_ids.end()) {
+                        FGB_WARN("modules",
+                                 "实例 %s 与前面的实例是同一个模块，已跳过"
+                                 "（一个模块只能有一个实例，可在界面里移除它）",
+                                 instance.name.c_str());
+                        continue;
+                    }
+                    launched_ids.push_back(module->id);
                     const std::string display =
                         (native ? "native:" : "vrcft:") + instance.name;
                     if (active_module_id.empty()) {
