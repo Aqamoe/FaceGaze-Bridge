@@ -187,7 +187,10 @@ def main():
             "title: document.title,"
             "connected: typeof state !== 'undefined' ? state.connected : null,"
             "link: document.getElementById('link-text').textContent,"
-            "fps: document.getElementById('m-fps').textContent,"
+            "fps: (document.querySelector('#fps-list .fps-value b') || {textContent: '0'}).textContent,"
+            "fps_rows: document.querySelectorAll('#fps-list .fps-row').length,"
+            "fps_expected: typeof state !== 'undefined' && state.status"
+            " ? (state.status.sources || []).length : -1,"
             "avatar: document.getElementById('a-name').textContent,"
             "source: document.getElementById('a-source').textContent,"
             "catalog: typeof state !== 'undefined' ? state.names.length : -1,"
@@ -779,6 +782,13 @@ def main():
         ok = False
     if summary.get("tick_text") in ("", "—") or summary.get("p95_text") in ("", "—"):
         print("FAIL 状态页没有渲染 tick 耗时分布")
+        ok = False
+    # 输入帧率必须一个输入源一行，且不再是"一个总和"
+    if summary.get("fps_rows") != summary.get("fps_expected") or summary.get("fps_expected", 0) <= 0:
+        print(f"FAIL 输入帧率没有按输入源分行：{summary}")
+        ok = False
+    if float(summary.get("fps") or 0) <= 0:
+        print("FAIL 输入帧率没有拿到数据（状态页每模块 fps 全为 0）")
         ok = False
     if "MB" not in (summary.get("mem_text") or "") or not (summary.get("handles_text") or "").strip():
         print("FAIL 状态页没有渲染进程资源（工作集/句柄）")

@@ -234,6 +234,7 @@ const state = {
   status: null,
   gaze: null,
   source_rows: [],
+  fps_rows: [],
   running_rows: [],
   view: "status",
   retry: 0,
@@ -1069,7 +1070,6 @@ async function delete_output_profile() {
 function render_status(status) {
   state.status = status; // 留给调试与探针读最新一帧
   apply_outputs(status.outputs);
-  $("m-fps").textContent = (status.fps || 0).toFixed(1);
   $("m-frames").textContent = fmt_int(status.frames_in);
   $("m-ticks").textContent = fmt_int(status.ticks);
   $("m-late").textContent = fmt_int(status.late_ticks);
@@ -1089,9 +1089,6 @@ function render_status(status) {
   $("p-resumes").textContent = fmt_int(status.resumes || 0);
   $("m-messages").textContent = fmt_int(status.messages);
   $("m-bytes").textContent = ((status.bytes || 0) / 1024).toFixed(1);
-  $("m-source").textContent = t(status.source_ok ? "status.fps.hint.running" : "status.fps.hint.idle", {
-    source: status.source || "—",
-  });
 
   $("pill-source").textContent = status.source ? `${t("pill.input")} · ${status.source}` : `${t("pill.input")} · —`;
   $("pill-source").className = "pill" + (status.source_ok ? " accent" : "");
@@ -1148,11 +1145,13 @@ function render_status(status) {
     ? `${udp_out.target} · ${fmt_int(udp_out.messages)}`
     : t("output.udp.off");
   udp_state.classList.toggle("on", !!udp_out.enabled);
-  $("c-source").textContent = `${status.source || "—"} · ${(status.fps || 0).toFixed(1)} fps`;
+  $("c-source").textContent = status.source || "—";
   $("s-clients").textContent = status.clients || 0;
   if (state.gaze) {
     render_gaze(state.gaze);
   }
+
+  render_input_fps(status.sources || []);
 
   if (state.view === "modules") {
     render_running_modules(status.modules);
@@ -1290,6 +1289,49 @@ function apply_param_filter() {
 }
 
 // ---------- 渲染：输入源 ----------
+
+// 输入帧率按源分开显示。多模块时总和没有参考价值：30 Hz 那一路和停摆那一路
+// 加起来还是个体面数字，看不出问题出在哪个模块。
+function render_input_fps(sources) {
+  const list = $("fps-list");
+  if (!list) {
+    return;
+  }
+  if (!sources.length) {
+    list.textContent = "";
+    delete list.dataset.signature;
+    state.fps_rows = [];
+    list.append(el("div", "muted", t("status.fps.empty")));
+    return;
+  }
+
+  // 名称列表变了才重建 DOM，其余时候只改数字（10 Hz 更新不该把行节点全换掉）
+  const signature = sources.map((source) => source.name).join("\u0001");
+  if (list.dataset.signature !== signature) {
+    list.dataset.signature = signature;
+    list.textContent = "";
+    state.fps_rows = sources.map((source) => {
+      const row = el("div", "fps-row");
+      const name = el("b", "fps-name", source.name);
+      name.title = source.name;
+      const value = el("span", "fps-value");
+      const number = el("b", "", "0.0");
+      value.append(number, el("i", "", "fps"));
+      row.append(name, value);
+      list.append(row);
+      return { row, number };
+    });
+  }
+
+  sources.forEach((source, index) => {
+    const ui = state.fps_rows[index];
+    if (!ui) {
+      return;
+    }
+    ui.number.textContent = Number(source.fps || 0).toFixed(1);
+    ui.row.classList.toggle("stale", !source.fresh);
+  });
+}
 
 // 10 Hz 更新，所以只在"源的数量变了"时重建 DOM，其它时候只改文字与 class
 function render_sources(sources) {
@@ -1669,7 +1711,17 @@ function installed_card(item) {
       host_process: item.kind === "native",
     });
   });
-  buttons.append(add_instance);
+  // 一个模块只能有一个实例：同一模块的第二路会抢同一份共享内存/端口与配置，
+  // 后起的那个只会一直报错。已经有实例时把按钮换成"已添加"，别让人再点一次。
+  const mine = ((state.modules && state.modules.instances) || [])
+    .find((instance) => instance.module_id === item.id);
+  if (mine) {
+    const taken = el("span", "module-current", t("modules.instance_exists", { name: mine.name }));
+    taken.title = t("modules.instance_exists_hint");
+    buttons.append(taken);
+  } else {
+    buttons.append(add_instance);
+  }
 
   const remove = el("button", "btn danger small", t("modules.delete"));
   remove.addEventListener("click", async () => {

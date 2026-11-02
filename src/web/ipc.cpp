@@ -776,6 +776,9 @@ void IpcServer::build_metrics(std::string& out) {
             writer.obj_begin();
             writer.key("name").str(report.name);
             writer.key("frames").integer(static_cast<long long>(report.frames));
+            // 每源帧率：界面按模块分开显示，不再只看一个总和
+            const auto fps_it = source_fps_.find(report.name);
+            writer.key("fps").num(fps_it != source_fps_.end() ? fps_it->second : 0.0, 1);
             writer.key("age_ms").num(static_cast<double>(report.age_ns) / 1'000'000.0);
             writer.key("fresh").boolean(report.fresh);
             writer.key("expression").boolean(report.used_expression);
@@ -2302,6 +2305,9 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             error = "module registry not available";
         } else if (id.empty() || name.empty()) {
             error = "missing module id or instance name";
+        } else if (const vrcft::ModuleInstance* existing = ctx_.modules->find_instance(id)) {
+            // 一个模块只允许一个实例：两个实例会抢同一份共享内存/端口，只会互相拖坏
+            error = "「" + existing->name + "」已经是这个模块的实例：同一个模块只能添加一次";
         } else {
             if (!host_given) {
                 // 没显式指定时看模块类型：原生模块默认独立进程（崩溃不带走引擎，
@@ -3801,6 +3807,34 @@ void IpcServer::pump(int timeout_ms) {
     if (dt > 0.02) {
         const std::uint64_t delta = stats.frames_in >= last_frames_ ? stats.frames_in - last_frames_ : 0;
         last_fps_ = static_cast<double>(delta) / dt;
+    }
+
+    // 每个输入源单独算：多模块时总和会把"某一路停摆"平均掉，界面按模块分开显示
+    if (ctx_.engine != nullptr) {
+        const double source_dt =
+            std::chrono::duration<double>(now - last_source_fps_).count();
+        if (source_dt >= 0.5) {
+            std::unordered_map<std::string, double> current;
+            for (const SourceReport& report : ctx_.engine->source_report()) {
+                const auto it = last_source_frames_.find(report.name);
+                const std::uint64_t prev =
+                    it != last_source_frames_.end() ? it->second : report.frames;
+                const std::uint64_t delta =
+                    report.frames >= prev ? report.frames - prev : 0;
+                current[report.name] = static_cast<double>(delta) / source_dt;
+                last_source_frames_[report.name] = report.frames;
+            }
+            // 源被摘掉之后别再留着它的帧率，否则界面会显示一个不存在的模块
+            for (auto it = last_source_frames_.begin(); it != last_source_frames_.end();) {
+                if (current.count(it->first) != 0) {
+                    ++it;
+                } else {
+                    it = last_source_frames_.erase(it);
+                }
+            }
+            source_fps_     = std::move(current);
+            last_source_fps_ = now;
+        }
     }
 
     if (now - last_status_ >= kStatusPeriod) {

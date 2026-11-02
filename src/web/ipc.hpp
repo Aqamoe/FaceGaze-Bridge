@@ -219,6 +219,11 @@ private:
     std::chrono::steady_clock::time_point last_preview_{};
     std::uint64_t last_frames_  = 0; // fps 用两次推送之间的增量算
     double last_fps_            = 0.0;
+    // 每个输入源各自的帧率。多模块时总和没有参考价值：一路 30 Hz、一路停摆，
+    // 加起来照样像个正常数字，看不出是哪一路不动（ADR-0044）。
+    std::unordered_map<std::string, std::uint64_t> last_source_frames_;
+    std::unordered_map<std::string, double> source_fps_;
+    std::chrono::steady_clock::time_point last_source_fps_{};
     // 只有校准页打开时才推 preview；页面走了要立刻停，别让引擎白拷 88 个值
     bool preview_wanted_ = false;
     // 上次保存/加载的档案：和内存里的比一下就知道有没有未保存改动

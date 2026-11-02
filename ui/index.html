@@ -92,10 +92,11 @@
       <!-- 状态 -->
       <section class="page active" data-page="status">
         <div class="cards">
+          <!-- 帧率按输入源分开列：多模块时总和会把"某一路停摆"平均掉 -->
           <article class="card">
             <h2 data-i18n="status.fps">输入帧率</h2>
-            <div class="metric"><b id="m-fps">0</b><span>fps</span></div>
-            <div class="hint" id="m-source">—</div>
+            <div class="fps-list" id="fps-list"></div>
+            <p class="hint" data-i18n="status.fps.hint">每个输入模块单独统计，单位 fps</p>
           </article>
           <article class="card">
             <h2 data-i18n="status.frames">累计帧</h2>
@@ -213,7 +214,7 @@
           <h2 data-i18n="modules.running.title">运行中的实例</h2>
           <div class="running-list" id="running-list"></div>
           <div class="hint" data-i18n="modules.running.hint">
-            一个模块可以被多个实例加载（如 vrcft[1] 供眼追、vrcft[2] 供表情），每路状态单独显示
+            每个模块只有一个实例，状态与帧率各显示各的；要换模块先移除旧实例
           </div>
         </article>
 

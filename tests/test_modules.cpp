@@ -744,6 +744,16 @@ FGB_TEST(module_instances_and_roles_persist) {
         FGB_CHECK(registry.add_instance("gaze", "gaze-id"));
         FGB_CHECK(!registry.add_instance("face", "gaze-id")); // 名字重复
         FGB_CHECK(!registry.add_instance("bad", "missing-id"));
+        // 同一个模块只能有一个实例：换名字也不行，两个实例会抢同一份共享内存/端口
+        FGB_CHECK(!registry.add_instance("face-2", "face-id"));
+        FGB_CHECK(registry.instances().size() == 2);
+        const ModuleInstance* face_instance = registry.find_instance("face-id");
+        FGB_CHECK(face_instance != nullptr);
+        if (face_instance != nullptr) {
+            FGB_CHECK(face_instance->name == "face");
+        }
+        FGB_CHECK(registry.find_instance("gaze-id") != nullptr);
+        FGB_CHECK(registry.find_instance("missing-id") == nullptr);
 
         ModuleRoles roles;
         roles.expression = "face-id";

@@ -159,11 +159,16 @@ public:
     const ModuleRoles& roles() const noexcept { return roles_; }
 
     // 实例/角色都按 module_id 持久化；名字只用于展示。
+    // 一个模块只允许一个实例：同一模块的第二路会抢同一份共享内存/端口与配置，
+    // 表现是后起的那个一直报错，而用户在界面上看不出为什么。
     bool add_instance(std::string_view name, std::string_view module_id,
                       bool host_process = false);
     bool remove_instance(std::string_view name);
     bool set_instance_host(std::string_view name, bool host_process);
     bool set_roles(const ModuleRoles& roles);
+
+    // 该模块已经配了哪个实例（没有返回 nullptr）
+    const ModuleInstance* find_instance(std::string_view module_id) const;
 
     const ModuleInfo* find(std::string_view id) const;
     const ImportCandidate* find_importable(std::string_view id) const;

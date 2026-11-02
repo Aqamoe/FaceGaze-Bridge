@@ -1034,12 +1034,30 @@ bool ModuleRegistry::add_instance(std::string_view name, std::string_view module
         instances_.begin(), instances_.end(), [&name](const ModuleInstance& instance) {
             return lower(instance.name) == lower(name);
         });
-    if (duplicate) {
+    // 同一模块的第二路不是"多一路数据"，而是两个实例抢同一份共享内存/端口/配置：
+    // 后起的那个会一直报错，先起的那个也可能被拖坏（ADR-0044）。
+    const bool module_taken = std::any_of(
+        instances_.begin(), instances_.end(), [&module](const ModuleInstance& instance) {
+            return lower(instance.module_id) == lower(module->id);
+        });
+    if (duplicate || module_taken) {
         return false;
     }
     instances_.push_back(ModuleInstance{std::string{name}, module->id, host_process});
     save_state();
     return true;
+}
+
+const ModuleInstance* ModuleRegistry::find_instance(std::string_view module_id) const {
+    const std::string needle = lower(module_id);
+    if (needle.empty()) {
+        return nullptr;
+    }
+    const auto it = std::find_if(instances_.begin(), instances_.end(),
+                                 [&needle](const ModuleInstance& instance) {
+                                     return lower(instance.module_id) == needle;
+                                 });
+    return it != instances_.end() ? &*it : nullptr;
 }
 
 bool ModuleRegistry::remove_instance(std::string_view name) {
