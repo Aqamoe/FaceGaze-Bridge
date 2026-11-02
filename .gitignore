@@ -64,3 +64,6 @@ desktop.ini
 
 # ---- 私有研究资料（禁止公开） ----
 /research-private/
+
+# ---- GNM bake cache (53 MB, regenerate with tools/bake_gnm_head.py) ----
+/tools/.cache/

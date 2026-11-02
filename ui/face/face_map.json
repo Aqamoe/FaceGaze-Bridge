@@ -1,8 +1,8 @@
 {
-  "version": 1,
-  "model": "head_v1.fgbface",
-  "generated_by": "tools/gen_face_model.py",
-  "note": "程序化风格化占位头模；区域名与 morph 名是稳定契约，换正式资产时保持不变",
+  "version": 3,
+  "model": "head_v2.fgbface",
+  "generated_by": "tools/bake_gnm_head.py",
+  "note": "Google GNM Head（Apache-2.0）烘焙的中性头 + 32 个 morph；区域名与 morph 名是稳定契约",
   "regions": [
     "jaw",
     "chin",
@@ -36,6 +36,19 @@
     "nostrilR",
     "lipColorUpper",
     "lipColorLower"
+  ],
+  "materials": [
+    "skin",
+    "lip",
+    "brow",
+    "sclera",
+    "iris",
+    "pupil",
+    "mouth",
+    "teeth",
+    "gums",
+    "tongue",
+    "nostril"
   ],
   "morphs": [
     {

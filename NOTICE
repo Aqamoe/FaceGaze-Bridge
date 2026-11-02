@@ -31,6 +31,23 @@ endorsed by, or sponsored by the VRCFaceTracking project. "VRCFaceTracking"
 and "VRCFT" are used only in factual, descriptive statements of
 interoperability and are not used as trademarks of this product.
 
+### Google GNM Head — Apache-2.0
+
+The calibration page's 3D head model (`ui/face/head_v2.fgbface`) is derived from
+Google's GNM Head (Generative aNthropometric Model) v3.0.
+
+    GNM Head, Google Research, 2026
+    Copyright 2026 Google LLC
+    Licensed under the Apache License, Version 2.0
+    https://github.com/google/GNM
+    https://huggingface.co/google/gnm-v3
+
+The derived asset is a modified work: neutral template mesh, cornea shell removed,
+32 project-specific morphs fitted onto the statistical expression basis, plus
+region/material masks. Source, license and the list of changes are recorded in
+`ui/face/LICENSE-GNM.txt`. The original 53 MB weights are not redistributed; they
+are downloaded by `tools/bake_gnm_head.py` when the asset is re-baked.
+
 ### Unified Expressions v2
 
 Parameter names follow the Unified Expressions v2 specification published by

@@ -1,0 +1,33 @@
+head_v2.fgbface — 派生自 Google GNM Head
+========================================
+
+来源（Source）
+--------------
+GNM: Generative aNthropometric Model — GNM Head v3.0
+  https://github.com/google/GNM
+  https://huggingface.co/google/gnm-v3 （权重 gnm_head.npz）
+  Google Research，2026；技术报告 arXiv:2607.23687
+
+许可证（License）
+-----------------
+Apache License, Version 2.0
+  https://www.apache.org/licenses/LICENSE-2.0
+完整许可证文本见本仓库根目录的 LICENSE 文件。
+
+改动声明（Changes）
+-------------------
+本目录下的 head_v2.fgbface 不是原始模型文件，而是由
+`tools/bake_gnm_head.py` 从 gnm_head.npz 烘焙出的**衍生数据**：
+
+  * 取 identity = 0、expression = 0 的中性模板网格（17,821 顶点）；
+  * 剔除眼球外层角膜壳（预览不实现透明折射）；
+  * 基础网格叠加 0.55 权重的轻压唇位移，使中性脸闭嘴；
+  * 将 GNM 的 383 维统计表情基投影为 32 个本项目命名的 morph
+    （jawOpen、smileL、eyeBlinkL 等），并稀疏量化存储；
+  * 增加每顶点的区域掩码（32 位）与材质 id（11 种）；
+  * 几何单位从米缩放到"头高 ≈ 2.0 模型单位"，原点移到头中心。
+
+原始权重 gnm_head.npz（53.3 MB）**不随本项目分发**；重新烘焙时由脚本自动从
+Hugging Face 下载，缓存位置 `tools/.cache/gnm_head.npz`（已 gitignore）。
+
+本项目与 Google 无隶属关系；"GNM"仅用于事实性说明数据来源。

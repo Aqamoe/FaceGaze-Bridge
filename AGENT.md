@@ -168,7 +168,7 @@ dist/fgb-host-native.exe   原生模块跨进程宿主（--native-host 时使用
 dist/runtime/vrcft/        精简 VRCFT 宿主运行时（约 106 MB，卸载 VRCFT 也能跑模块）
 dist/sdk/                  原生模块 SDK：ABI 头、docs/、samples/（与仓库 sdk/ 一致）
 dist/ui/                   页面资源（index.html / app.js / face.js / style.css / i18n.js / logo.png）
-dist/ui/face/              3D 模型与形状映射（head_v1.fgbface / face_map.json）
+dist/ui/face/              3D 模型与形状映射（head_v2.fgbface / face_map.json）
 dist/app.vrmanifest        SteamVR 启动项注册清单（与入口 exe 同目录）
 dist/NOTICE                第三方许可证说明（含 OpenVR / VRCFT）
 dist/licenses/             openvr.h 的 BSD-3-Clause 许可证原文
@@ -326,7 +326,7 @@ gh run watch <id> --exit-status
 | 校准页滑杆"动了没反应" | 勾了启用但 lo/hi 还是 0..0 | `set_calibration_shape` 在"启用且跨度近 0"时给 0..1 默认；`capture_calibration` 跨度不足会明确回 error |
 | 引擎在 24 秒后 CPU 100% | 回放 `--replay-loop` 到 EOF 后整份文件在同一 tick 里无限重放 | `ReplaySource::poll()` 的 `elapsed` 必须在循环内重算（loop 会重置 `t0_`） |
 | 页面一卡/暂停，引擎就不动了 | 阻塞 socket 的 `send` 等对端读；`accept` 在无连接时还会再阻塞一次 | 监听/客户端 socket 都设非阻塞；accept 一次只收一个；出站缓冲 + 写集合，慢客户端丢弃（`net/ws_server.cpp`） |
-| 3D 模型与映射表对不上 | morph/区域改名后页面请求不到，或选中高亮为空 | 跑 `python tools/check_face_model.py`；资产由 `tools/gen_face_model.py` 生成，morph/区域名是契约 |
+| 3D 模型与映射表对不上 | morph/区域改名后页面请求不到，或选中高亮为空 | 跑 `python tools/check_face_model.py`；资产由 `tools/bake_gnm_head.py` 从 GNM 权重烘焙，morph/区域名是契约 |
 | SteamVR 开关一直是灰的 | 状态是 `not_running`/`not_installed`，或缺失 manifest | 卡片会写原因；`/api/steamvr` 可 curl；真实注册必须 SteamVR 正在运行 |
 | OSCQuery 找不到或误判 | 启动回退本地 JSON；同机 OVRToolkit 也广播 `_oscjson._tcp` | mDNS 收满 150 ms 窗口再选，只认实例名以 VRChat 开头；HTTP 端口动态，别探 9001；`python tools/probe_oscquery.py` 先确认 |
 | 输出帧率比设定低 | 90 Hz 实际 60、30 Hz 实际 24 | `now-last >= interval` 在 120 Hz tick 下会被量化；用 `sinks/throttle.hpp` 的 `SinkThrottle` 按截止时间调度 |
@@ -361,7 +361,7 @@ sdk/           原生模块 SDK：ABI 头（模块 / 共享内存 / UDP / 宿主
                docs/（集成文档）、samples/（无硬件示例与 Unity 包）
 ui/            页面资源（无构建步骤；face.js 是 WebGL2 渲染器，face/ 是模型与映射表）
 tools/         抓包、冒烟、探针，以及 build_vrcft_runtime.py（出精简运行时）、
-               gen_face_model.py / check_face_model.py（3D 资产生成与校验）
+               bake_gnm_head.py / face_contract.py / check_face_model.py（3D 资产烘焙与校验）
 docs/          方案、ADR、路线图、用户手册；SDK 集成文档在 sdk/docs/
 ```
 

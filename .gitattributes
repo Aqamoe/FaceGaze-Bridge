@@ -12,3 +12,5 @@
 *.vcxproj text eol=crlf
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+*.fgbface binary
