@@ -8,10 +8,43 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <string>
 
 namespace fgb {
+
+// 标定时生效的"角度粗调"（calibration.ini 的 [eye]）。
+//
+// 【为什么档案要记它】
+// 圆盘标定拟合的是"角度粗调之后"的观察值：输入一旦被改，gaze.ini 里的仿射
+// 就作用在错位的坐标上——中心可能还准、越往边缘越偏。不记它，运行时就只剩
+// "用户记不记得自己调过上面那四行"这一个判断依据，等于没有。
+struct EyeAngleTrim {
+    // 档案按 4 位小数写盘，1e-3 足够吸收往返误差，又不会把真实的 0.001 改动吞掉
+    static constexpr float kTolerance = 1e-3f;
+
+    bool active    = false;
+    float gain_x   = 1.0f;
+    float gain_y   = 1.0f;
+    float center_x = 0.0f;
+    float center_y = 0.0f;
+
+    // 关掉开关等于恒等：开关状态本身不该让映射"过期"
+    EyeAngleTrim effective() const noexcept {
+        return active ? *this : EyeAngleTrim{};
+    }
+
+    // 比"效果"而不是比字段：active=false 与 active=true+恒等，落到数据上是同一件事
+    bool same_effect(const EyeAngleTrim& other) const noexcept {
+        const EyeAngleTrim a = effective();
+        const EyeAngleTrim b = other.effective();
+        return std::fabs(a.gain_x - b.gain_x) <= kTolerance &&
+               std::fabs(a.gain_y - b.gain_y) <= kTolerance &&
+               std::fabs(a.center_x - b.center_x) <= kTolerance &&
+               std::fabs(a.center_y - b.center_y) <= kTolerance;
+    }
+};
 
 // 逐眼 2D 仿射：X' = a·x + b·y + c，Y' = d·x + e·y + f。
 // 先只做仿射：13 个点拟合 6 个自由度，残差还能解释；单应要 8 个自由度，
@@ -51,6 +84,11 @@ struct GazeProfile {
     std::array<std::array<float, 4>, 2> input_bounds{};
     bool have_bounds = false;
 
+    // 拟合当时生效的角度粗调。改动它不会让仿射"失效报错"，只会让它悄悄偏掉，
+    // 所以只能靠比对指纹来发现（TrimState）。
+    EyeAngleTrim trim{};
+    bool have_trim = false; // 旧档案没写这一条：无从判断，不是"一致"
+
     bool ready() const noexcept {
         return version != 0 && source_kind != GazeSourceKind::none &&
                (eyes[0].active || eyes[1].active);
@@ -60,5 +98,16 @@ struct GazeProfile {
         return eyes[index == 0 ? 0 : 1];
     }
 };
+
+// 当前的角度粗调与档案里记的是否一致。"未知"要单独一档：把旧档案硬判成
+// 一致（可能其实是错的）或过期（可能其实没动过）都是在给用户假信息。
+enum class TrimState : std::uint8_t {
+    unknown = 0,
+    matches = 1,
+    stale   = 2,
+};
+
+const char* trim_state_name(TrimState state) noexcept;
+TrimState trim_state(const GazeProfile& profile, const EyeAngleTrim& current) noexcept;
 
 } // namespace fgb

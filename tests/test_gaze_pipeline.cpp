@@ -243,6 +243,12 @@ FGB_TEST(gaze_profile_roundtrip) {
     profile.have_bounds      = true;
     profile.input_bounds[0]  = {0.31f, 0.74f, 0.32f, 0.71f};
     profile.input_bounds[1]  = {0.30f, 0.73f, 0.31f, 0.70f};
+    profile.have_trim        = true;
+    profile.trim.active      = true;
+    profile.trim.gain_x      = 1.25f;
+    profile.trim.gain_y      = 0.9f;
+    profile.trim.center_x    = -1.5f;
+    profile.trim.center_y    = -8.0f;
 
     const std::string path = temp_path("gaze.ini");
     std::string error;
@@ -261,6 +267,50 @@ FGB_TEST(gaze_profile_roundtrip) {
     FGB_CHECK(loaded.have_bounds);
     FGB_CHECK_NEAR(loaded.input_bounds[0][1], 0.74f, 1e-4f);
     FGB_CHECK_NEAR(loaded.input_bounds[1][2], 0.31f, 1e-4f);
+    FGB_CHECK(loaded.have_trim);
+    FGB_CHECK(loaded.trim.active);
+    FGB_CHECK_NEAR(loaded.trim.gain_x, 1.25f, 1e-4f);
+    FGB_CHECK_NEAR(loaded.trim.center_y, -8.0f, 1e-4f);
+}
+
+// 角度粗调被改动后，档案必须被判成过期：仿射本身不会报错，只能靠这条比对发现。
+FGB_TEST(gaze_profile_detects_stale_eye_trim) {
+    GazeProfile profile;
+    profile.version        = 1;
+    profile.source_kind    = GazeSourceKind::angles;
+    profile.eyes[0].active = true;
+    profile.eyes[1].active = true;
+    profile.have_trim      = true;
+    profile.trim.active    = true;
+    profile.trim.gain_x    = 1.2f;
+    profile.trim.center_y  = -5.0f;
+
+    EyeAngleTrim current;
+    current.active   = true;
+    current.gain_x   = 1.2f;
+    current.center_y = -5.0f;
+    FGB_CHECK(trim_state(profile, current) == TrimState::matches);
+
+    current.gain_y = 1.1f; // 标定完又拖了一下垂直增益
+    FGB_CHECK(trim_state(profile, current) == TrimState::stale);
+
+    // 关掉开关 = 恒等：与"active + 恒等"效果相同，不该被判过期
+    GazeProfile identity_trim;
+    identity_trim.version        = 1;
+    identity_trim.source_kind    = GazeSourceKind::angles;
+    identity_trim.eyes[0].active = true;
+    identity_trim.have_trim      = true; // trim 全默认 = 恒等
+    EyeAngleTrim on_identity;
+    on_identity.active = true; // gain 1 / center 0
+    FGB_CHECK(trim_state(identity_trim, on_identity) == TrimState::matches);
+    FGB_CHECK(trim_state(identity_trim, EyeAngleTrim{}) == TrimState::matches);
+
+    // 旧档案没写这条：只能是"未知"，不能冒充一致或过期
+    GazeProfile old_profile;
+    old_profile.version        = 1;
+    old_profile.source_kind    = GazeSourceKind::angles;
+    old_profile.eyes[0].active = true;
+    FGB_CHECK(trim_state(old_profile, on_identity) == TrimState::unknown);
 }
 
 FGB_TEST(gaze_profile_rejects_incomplete_file) {

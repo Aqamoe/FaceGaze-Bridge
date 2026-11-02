@@ -1460,6 +1460,21 @@ int cmd_run(int argc, char** argv) {
         gaze_session->set_apply([&engine](const fgb::GazeProfile& profile) {
             engine.set_gaze_profile(profile);
         });
+        // 采集跑在"角度粗调之后"的数据上：把当时的粗调记进档案，
+        // 日后界面对比它就能发现"标定完又动了粗调"。
+        gaze_session->set_trim_source([calibration_raw]() {
+            fgb::EyeAngleTrim trim;
+            if (calibration_raw == nullptr) {
+                return trim;
+            }
+            const fgb::params::CalibrationProfile coarse = calibration_raw->profile();
+            trim.active   = coarse.has_eye;
+            trim.gain_x   = coarse.eye_gain_x;
+            trim.gain_y   = coarse.eye_gain_y;
+            trim.center_x = coarse.eye_center_x;
+            trim.center_y = coarse.eye_center_y;
+            return trim;
+        });
         ctx.gaze_calib = gaze_session.get();
 
         // 注视点探针：把系统认为的左右眼注视点画回头显，用来判断"偏的是数据还是显示路径"

@@ -47,11 +47,15 @@ struct Status {
 class Session {
 public:
     using ApplyFn = std::function<void(const GazeProfile&)>;
+    // 采集时生效的角度粗调。拟合结果建在它之上，所以必须一并记进档案，
+    // 否则"标定完又调了增益"这件事在运行时无从发现。
+    using TrimFn = std::function<EyeAngleTrim()>;
 
     void configure(std::string profile_path, std::string hmd_identity);
     void set_projection(const GazeProjection& projection) noexcept { projection_ = projection; }
     void set_overlay(overlay::Dots* dots) noexcept { dots_ = dots; }
     void set_apply(ApplyFn fn) { apply_ = std::move(fn); }
+    void set_trim_source(TrimFn fn) { trim_source_ = std::move(fn); }
 
     // 开始标定：清空档案、打开 overlay、摆第一个点。失败时 error 说明原因。
     bool start(std::string& error);
@@ -76,11 +80,14 @@ private:
     GazeProjection projection_{};
     overlay::Dots* dots_ = nullptr;
     ApplyFn apply_;
+    TrimFn trim_source_;
 
     Collector collector_{};
     GazeProfile previous_{}; // 开始前的档案，用于回滚
     GazeProfile result_{};
     GazeSourceKind branch_ = GazeSourceKind::none;
+    EyeAngleTrim trim_at_start_{};   // 开始标定那一刻生效的角度粗调
+    bool have_trim_at_start_ = false;
 
     std::uint64_t target_started_ns_ = 0;
     Status status_{};

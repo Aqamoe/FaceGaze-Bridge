@@ -65,6 +65,16 @@ def build_calibration():
 CALIBRATION = build_calibration()
 PREVIEW = {"type": "preview", "seq": 1, "raw": [0.42] * 88, "out": [0.61] * 88,
            "eye": {"valid": True, "open_l": 0.72, "open_r": 0.06, "x": 2.4, "y": -1.1}}
+# eye_trim=stale 用来验证"标定后改了角度粗调"的提示会亮；其它字段走已完成态
+GAZE_CALIB = {"type": "gaze_calib", "state": "done", "target": 0, "target_count": 13,
+              "done": 13, "samples": 0, "needed": 0, "progress": 1.0, "message": "标定完成",
+              "profile_version": 3, "residual": 0.021, "source_kind": "angles",
+              "created_utc": "2026-11-02T03:00:00Z", "hmd_identity": "probe",
+              "ready": True, "geometry": True, "point_space": "calibrated",
+              "eye_trim": "stale", "probe_active": False, "probe_message": "",
+              # 档案里记的粗调：页面要把它和滑杆并排显示，否则"过期"只能靠猜
+              "eye_trim_saved": {"known": True, "active": True, "gain_x": 1.2, "gain_y": 1.0,
+                                 "center_x": 0.0, "center_y": -8.0}}
 
 
 def ws_frame(payload, opcode=0x1):
@@ -150,6 +160,7 @@ class Handler(BaseHTTPRequestHandler):
             {"type": "hello", "protocol": 1, "app": "FaceGazeBridge", "version": "probe",
              "port": PORT},
             CALIBRATION,
+            GAZE_CALIB,
             {"type": "catalog", "names": [], "sent": [], "count": 0},
         ):
             sock.sendall(ws_frame(json.dumps(message)))
@@ -212,6 +223,11 @@ class CDP:
 
 
 def main():
+    # 页面里的负号是 U+2212，Windows 控制台默认 GBK 会直接抛 UnicodeEncodeError
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except AttributeError:
+        pass
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(tempfile.gettempdir(), "fgb-calib.png")
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -258,6 +274,29 @@ def main():
             icons: document.querySelectorAll('.cal-curve-btn svg').length,
             splits: document.querySelectorAll('.cal-split-btn').length,
             firstZh: (document.querySelector('.cal-zh') || {}).textContent,
+            // 卡片顺序：角度粗调 → 圆盘标定 → 眼睑（眼睑不夹在两步中间）
+            cardOrder: [...document.querySelectorAll('.cal-side > article')].map(a =>
+                a.classList.contains('cal-eye-card') ? 'eye'
+                    : a.classList.contains('cal-dot') ? 'dot'
+                        : a.classList.contains('cal-eyelid-card') ? 'eyelid' : 'other'),
+            dotProfile: (document.querySelector('#cal-dot-profile') || {}).textContent,
+            // 档案一行最长（版本 + 分支 + 粗调），不许被裁到卡片外
+            dotProfileFits: (() => {
+                const b = document.querySelector('#cal-dot-profile');
+                if (!b) { return false; }
+                const card = b.closest('.card');
+                return !card || b.getBoundingClientRect().right <= card.getBoundingClientRect().right + 1;
+            })(),
+            stepBadges: document.querySelectorAll('.cal-step-no').length,
+            eye: {
+                groups: document.querySelectorAll('.cal-eye-group').length,
+                reset: !!document.querySelector('#cal-eye-reset'),
+                gainMin: (document.querySelector('#cal-eye-gain-x') || {}).min,
+                gainMax: (document.querySelector('#cal-eye-gain-x') || {}).max,
+                centerMin: (document.querySelector('#cal-eye-center-x') || {}).min,
+                centerMax: (document.querySelector('#cal-eye-center-x') || {}).max,
+                staleVisible: (document.querySelector('#cal-dot-trim') || {}).hidden === false
+            },
             eyelid: {
                 gain: (document.querySelector('#cal-eyelid-gain') || {}).value,
                 lo: (document.querySelector('#cal-eyelid-lo') || {}).value,
@@ -282,6 +321,30 @@ def main():
             failures.append(f"分离按钮 {stats['splits']} != 30")
         if any(value > 0 for value in stats["overflow"]):
             failures.append("滑块溢出卡片")
+
+        # 角度粗调：显式水平/垂直两块、可单独重置、量程与后端 clamp 对齐、
+        # 以及"标定后改过粗调"的提示（GAZE_CALIB 里 eye_trim=stale）
+        eye = stats["eye"]
+        if eye["groups"] != 2:
+            failures.append(f"角度分组 {eye['groups']} != 2")
+        if not eye["reset"]:
+            failures.append("缺少「重置这四项」按钮")
+        if (eye["gainMin"], eye["gainMax"], eye["centerMin"], eye["centerMax"]) != \
+                ("0.1", "5", "-60", "60"):
+            failures.append(f"角度滑杆量程与后端 clamp 不一致：{eye}")
+        if not eye["staleVisible"]:
+            failures.append("eye_trim=stale 时没有显示过期提示")
+
+        # 顺序：角度粗调 → 圆盘标定 → 眼睑，中间不许夹别的
+        if stats["cardOrder"][:3] != ["eye", "dot", "eyelid"]:
+            failures.append(f"卡片顺序 {stats['cardOrder']}，应为 eye → dot → eyelid")
+        if stats["stepBadges"] != 2:
+            failures.append(f"步骤序号 {stats['stepBadges']} != 2")
+        line = stats["dotProfile"] or ""
+        if "1.20" not in line or "-8.0" not in line:
+            failures.append(f"档案一行没有显示标定时的粗调：{line}")
+        if not stats["dotProfileFits"]:
+            failures.append("档案一行溢出卡片")
 
         # 曲线浮层：预设 → 自定义，两个状态都要能画出来
         client.evaluate("document.querySelectorAll('.cal-curve-btn')[2].click()")

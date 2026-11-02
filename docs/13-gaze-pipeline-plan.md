@@ -280,3 +280,19 @@ overlay 创建成功（日志 `overlay 就绪`）、无注视数据时 8 s 后�
 
 **注意**：`input_bounds` 要重标一次（v2）才会写进档案；v1 档案没有这份范围，
 饱和检测不会生效（其余行为不变）。
+
+### 2026-11-02 · 角度粗调指纹：标定后再动 `[eye]` 会被判过期
+
+`[eye]` 的 gain/center 是圆盘标定的**上游**（P2.5：先角度校正、再投影、再拟合仿射）。
+改它不会让仿射报错，只会让它悄悄偏（中心还准、边缘偏外圈），以前唯一的判断依据是
+"用户记不记得自己调过"。
+
+| 措施 | 位置 |
+|---|---|
+| `EyeAngleTrim`（active + 4 参数）记进档案顶层 `eye_trim` | `core/model/gaze_profile.hpp`、`params/gaze_profile.cpp` |
+| 标定完成时由控制面提供当时生效的粗调，写进 `result_.trim`（**仅角度分支**：点型分支拟合的是原始 2D 点，粗调不参与，记了就是误报） | `gaze_calib/session.*`、`cli/main.cpp` |
+| `trim_state()`：`match` / `stale` / `unknown`，比"效果"而非字段（开关关 = 恒等） | `core/model/gaze_profile.cpp` |
+| `/api/gaze_calib` 暴露 `eye_trim` 与 `eye_trim_saved`（数值）；页面在 `stale` 时点亮「映射已过期」，并把标定时的粗调写进「档案」一行供核对 | `web/ipc.cpp`、`ui/` |
+| 页面顺序改成 ① 角度粗调 → ② 圆盘标定 →（眼睑开合），两步相邻且带序号，不再被眼睑隔开 | `ui/index.html`、`ui/style.css` |
+
+旧档案没有这条 → `unknown`，不冒充一致也不误报过期；改动粗调后要重标一次才会写入指纹。

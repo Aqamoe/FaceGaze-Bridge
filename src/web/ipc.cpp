@@ -944,6 +944,18 @@ void IpcServer::build_gaze_calib(std::string& out) {
     const GazeProjection projection =
         ctx_.engine != nullptr ? ctx_.engine->gaze_projection() : GazeProjection{};
 
+    // 当前生效的角度粗调（calibration.ini [eye]）：与档案里记的比对，
+    // 决定"标定后被改过"的提示要不要亮。仿射是建在它之上的。
+    EyeAngleTrim trim;
+    if (ctx_.calib != nullptr) {
+        const params::CalibrationProfile coarse = ctx_.calib->profile();
+        trim.active   = coarse.has_eye;
+        trim.gain_x   = coarse.eye_gain_x;
+        trim.gain_y   = coarse.eye_gain_y;
+        trim.center_x = coarse.eye_center_x;
+        trim.center_y = coarse.eye_center_y;
+    }
+
     out.clear();
     JsonWriter writer{out};
     writer.obj_begin();
@@ -967,6 +979,18 @@ void IpcServer::build_gaze_calib(std::string& out) {
     writer.key("hmd_identity").str(profile.hmd_identity);
     writer.key("ready").boolean(profile.ready() || use_session_fallback);
     writer.key("geometry").boolean(projection.valid);
+    // match / stale / unknown：unknown 是"旧档案没记指纹"，不是"没问题"
+    writer.key("eye_trim").str(trim_state_name(trim_state(profile, trim)));
+    // 档案里记的粗调数值：让"过期"可核对——把这里和上面四行滑杆对一眼就知道差在哪。
+    // 没有 null 的写法，旧档案用 known=false 表达（数字照写 0，前端不看）。
+    writer.key("eye_trim_saved").obj_begin();
+    writer.key("known").boolean(profile.have_trim);
+    writer.key("active").boolean(profile.trim.active);
+    writer.key("gain_x").num(static_cast<double>(profile.trim.gain_x), 3);
+    writer.key("gain_y").num(static_cast<double>(profile.trim.gain_y), 3);
+    writer.key("center_x").num(static_cast<double>(profile.trim.center_x), 2);
+    writer.key("center_y").num(static_cast<double>(profile.trim.center_y), 2);
+    writer.obj_end();
     // 当前注视点在哪个空间：用户最想知道的"现在到底有没有可用位置"
     writer.key("point_space")
         .str(ctx_.engine != nullptr ? gaze_space_name(ctx_.engine->current_gaze().space)

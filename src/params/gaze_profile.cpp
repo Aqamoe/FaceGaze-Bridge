@@ -71,6 +71,23 @@ bool load_gaze_profile(const std::string& path, GazeProfile& profile, std::strin
                 profile.hmd_identity = entry.value;
             } else if (entry.key == "residual_p95") {
                 finite_or(config::parse_float(entry.value, -1.0f), -1.0f, profile.residual_p95);
+            } else if (entry.key == "eye_trim") {
+                // "active gain_x gain_y center_x center_y"；缺这条 = 旧档案，判"未知"
+                float v[5] = {};
+                if (parse_floats(entry.value, v, 5)) {
+                    bool finite = true;
+                    for (float value : v) {
+                        finite = finite && std::isfinite(value);
+                    }
+                    if (finite) {
+                        profile.trim.active    = v[0] >= 0.5f;
+                        profile.trim.gain_x    = v[1];
+                        profile.trim.gain_y    = v[2];
+                        profile.trim.center_x  = v[3];
+                        profile.trim.center_y  = v[4];
+                        profile.have_trim      = true;
+                    }
+                }
             } else if (entry.key == "input_bounds") {
                 // "lminx lmaxx lminy lmaxy rminx rmaxx rminy rmaxy"
                 float v[8] = {};
@@ -174,6 +191,17 @@ bool save_gaze_profile(const std::string& path, const GazeProfile& profile, std:
                       static_cast<double>(profile.input_bounds[1][2]),
                       static_cast<double>(profile.input_bounds[1][3]));
         writer.kv("input_bounds", std::string_view{bounds});
+    }
+    if (profile.have_trim) {
+        // 仿射是建在这四个参数之上的：写下来才能发现"标定完又动了粗调"
+        char trim[96];
+        std::snprintf(trim, sizeof(trim), "%d %.4f %.4f %.4f %.4f", profile.trim.active ? 1 : 0,
+                      static_cast<double>(profile.trim.gain_x),
+                      static_cast<double>(profile.trim.gain_y),
+                      static_cast<double>(profile.trim.center_x),
+                      static_cast<double>(profile.trim.center_y));
+        writer.comment("标定时生效的角度粗调（calibration.ini [eye]）：改动后必须重标");
+        writer.kv("eye_trim", std::string_view{trim});
     }
 
     for (int i = 0; i < 2; ++i) {

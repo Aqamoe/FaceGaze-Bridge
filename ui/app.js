@@ -772,6 +772,23 @@ function render_vrss_steps(steps) {
   }
 }
 
+// 档案一行：版本 + 分支 + **标定时生效的角度粗调**。
+// 最后一项让"过期"变成可核对的事实：把这里的数字和上面四行滑杆对一眼就知道差在哪，
+// 不用凭一句黄字猜"到底哪个参数被动了"。
+function gaze_profile_line(data) {
+  const base = `v${data.profile_version} · ${data.source_kind || "—"}`;
+  const saved = data.eye_trim_saved;
+  if (!saved || !saved.known) {
+    return base; // 旧档案没记指纹：不显示粗调，免得编造一个"当时的值"
+  }
+  if (!saved.active) {
+    return `${base} · ${t("calibration.dot.trim_off")}`;
+  }
+  const gain = `${Number(saved.gain_x).toFixed(2)}/${Number(saved.gain_y).toFixed(2)}`;
+  const center = `${Number(saved.center_x).toFixed(1)}/${Number(saved.center_y).toFixed(1)}`;
+  return `${base} · ${t("calibration.dot.trim_saved", { gain, center })}`;
+}
+
 function render_gaze_calib() {
   const data = state.gaze_calib;
   if (!data) {
@@ -798,7 +815,7 @@ function render_gaze_calib() {
       ? `${(residual * 100).toFixed(2)}%`
       : "—";
   $("cal-dot-profile").textContent = data.ready
-    ? `v${data.profile_version} · ${data.source_kind || "—"}`
+    ? gaze_profile_line(data)
     : t("calibration.dot.no_profile");
   $("cal-dot-message").textContent = data.message || "";
 
@@ -812,6 +829,11 @@ function render_gaze_calib() {
   const probe_message = $("cal-dot-probe-message");
   if (probe_message) {
     probe_message.textContent = data.probe_active ? data.probe_message || "" : "";
+  }
+  // 角度粗调在标定后被改过：仿射不会报错、只会悄悄偏，所以必须明说
+  const trim_hint = $("cal-dot-trim");
+  if (trim_hint) {
+    trim_hint.hidden = data.eye_trim !== "stale";
   }
 }
 
@@ -3662,7 +3684,7 @@ function render_calibration() {
   for (const id of ["cal-save", "cal-reload", "cal-reset", "cal-eye-active",
     "cal-eye-gain-x", "cal-eye-gain-y", "cal-eye-center-x", "cal-eye-center-y",
     "cal-eyelid-gain", "cal-eyelid-lo", "cal-eyelid-sep", "cal-eyelid-capture",
-    "cal-eye-capture"]) {
+    "cal-eye-capture", "cal-eye-reset"]) {
     $(id).disabled = !available;
   }
 
@@ -4727,6 +4749,17 @@ function wire() {
   });
   $("cal-eye-capture").addEventListener("click", () => {
     send({ type: "capture_calibration", shape: "", which: "center" });
+  });
+  $("cal-eye-reset").addEventListener("click", () => {
+    // 只复位视线这四项：整页「恢复默认」会连眼睑和 88 个形状一起清掉
+    for (const [id, value, digits] of [
+      ["cal-eye-gain-x", 1, 2], ["cal-eye-gain-y", 1, 2],
+      ["cal-eye-center-x", 0, 1], ["cal-eye-center-y", 0, 1],
+    ]) {
+      $(id).value = value;
+      $(`${id}-v`).textContent = Number(value).toFixed(digits);
+    }
+    push_cal_eye();
   });
 
   $("o-reload").addEventListener("click", () => {

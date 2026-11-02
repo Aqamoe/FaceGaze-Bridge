@@ -86,6 +86,14 @@ bool Session::start(std::string& error) {
         apply_(GazeProfile{});
     }
 
+    // 采集期间生效的角度粗调：现在取一份快照，别等结束时再读——中途被拖动的话，
+    // 记下的值会与"采集时实际用的"不一致，过期判定就失去了意义。
+    have_trim_at_start_ = false;
+    if (trim_source_) {
+        trim_at_start_      = trim_source_();
+        have_trim_at_start_ = true;
+    }
+
     collector_.reset();
     branch_          = GazeSourceKind::none;
     branch_decided_  = false;
@@ -185,6 +193,15 @@ void Session::finish(std::uint64_t /*now_ns*/) noexcept {
     if (!build_profile(branch_, left, right, version, utc_now(), hmd_identity_, result_)) {
         fail("组装档案失败");
         return;
+    }
+
+    // 采集自始至终跑在"角度粗调之后"的数据上：把它记进档案，日后改了这四行
+    // 才可能被判成过期（否则中间准、边缘偏会被当成标定精度问题）。
+    // 只对角度分支记：点型分支拟合的是模块原始 2D 点，粗调根本不参与，
+    // 记下来只会让"调滑块 → 报过期"变成误报。
+    if (have_trim_at_start_ && branch_ == GazeSourceKind::angles) {
+        result_.trim      = trim_at_start_;
+        result_.have_trim = true;
     }
 
     // 记录标定时实际见过的输入范围：有些来源永远到不了 [0,1]（实测 PICO 原生点

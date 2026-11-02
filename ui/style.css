@@ -1298,12 +1298,64 @@ input[type="number"]::-webkit-outer-spin-button {
 .cal-raw, .cal-out { color: var(--dim); font-variant-numeric: tabular-nums; }
 .cal-out { color: var(--acc); }
 
-/* 眼睑增益与视线分开一块：它改的是开合，不是角度，混在视线那四行里容易看错 */
-.cal-eyelid {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line-soft);
+/* 角度粗调与眼睑各自一张卡：开关只罩着本卡的视线角度，不再让人以为它管着眼睑 */
+/* 标题与开关同排：开关属于"这张卡的这组参数"，不是整页的总闸 */
+.cal-eye-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
 }
+.cal-eye-head h2 { margin: 0; }
+.cal-eye-head .switch { margin: 0; }
+/* ①②：把"先粗调、再标定"的顺序写进标题。"两张卡挨着"只解决分组，解决不了先后 */
+.cal-step-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 7px;
+  border: 1px solid rgb(59 130 246 / .45);
+  border-radius: 50%;
+  color: var(--acc);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: -3px;
+}
+/* 两步说明独立成行，不挂在某张卡里，免得又被当成那张卡的开关说明 */
+.cal-flow { margin: 0 0 10px; }
+/* 档案一行要同时放版本、分支和标定时的粗调：允许折行，别用省略号把后半段吃掉——
+   那半段正是用来和上面四行滑杆对照的 */
+#cal-dot-profile {
+  overflow: visible;
+  white-space: normal;
+  line-height: 1.45;
+}
+/* 水平 / 垂直各自成块：窄窗口下两块各占一行，也不会让"垂直增益"混进水平那组。
+   靠 auto-fit 塌列来"分组"是上一版的坑——塌了以后分组信息只剩文案前缀。 */
+.cal-eye-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.cal-eye-group {
+  min-width: 0;
+  padding: 7px 11px 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  background: rgb(255 255 255 / .015);
+}
+.cal-eye-group-head {
+  color: var(--dim);
+  font-size: 11.5px;
+  letter-spacing: .04em;
+  margin-bottom: 2px;
+}
+.hint.warn { color: var(--warn); }
 .cal-eye-values {
   display: flex;
   gap: 14px;
