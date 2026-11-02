@@ -235,6 +235,7 @@ const state = {
   gaze: null,
   source_rows: [],
   fps_rows: [],
+  channel_pills: [],
   running_rows: [],
   view: "status",
   retry: 0,
@@ -628,7 +629,8 @@ function render_gaze(gaze) {
     ? `${Math.round((gaze.confidence || 0) * 100)}%`
     : "—";
   $("g-source").textContent = has_data
-    ? `${gaze.source || t("status.gaze.eye_fallback")} · ${Math.round(gaze.source_age_ms || 0)} ms`
+    ? `${gaze.source ? display_source(gaze.source) : t("status.gaze.eye_fallback")} · ` +
+      `${Math.round(gaze.source_age_ms || 0)} ms`
     : "—";
   const eye_source = $("g-eye-source");
   eye_source.textContent = has_data ? eye_source_text(gaze) : "—";
@@ -1067,6 +1069,50 @@ async function delete_output_profile() {
   send({ type: "delete_output_profile", name });
 }
 
+// 顶栏：左边只说"几路输入"，右边按通道各一颗（表情 / 眼追 / 注视 / 头姿）。
+// 以前左边把每个模块名拼出来，三四个模块就占掉半行；右边只有一颗写着眼追
+// 输出模式（那是保存的配置，永远不变），既挤又看不出哪一路没数据。
+function render_topbar(status) {
+  const sources = status.sources || [];
+  const pill_source = $("pill-source");
+  pill_source.textContent =
+    `${t("pill.input")} · ${t("pill.input.count", { count: sources.length })}`;
+  pill_source.title = status.source || "";
+  pill_source.className = "pill" + (status.source_ok ? " accent" : "");
+
+  const group = $("pill-channels");
+  if (!group) {
+    return;
+  }
+  if (!state.channel_pills || state.channel_pills.length !== ROLE_KEYS.length) {
+    group.textContent = "";
+    state.channel_pills = ROLE_KEYS.map((key) => {
+      const label = t(`channel.${key}`);
+      const pill = el("span", "pill chan", label);
+      group.append(pill);
+      return { key, label, pill };
+    });
+  }
+
+  for (const item of state.channel_pills) {
+    const label = t(`channel.${item.key}`);
+    if (item.label !== label) {
+      // 切语言后不用重建 DOM：下一帧顺手把标签换掉
+      item.label = label;
+      item.pill.textContent = label;
+    }
+    const live = sources.find((source) => source[item.key] && source.fresh);
+    const provided = sources.find((source) => source[`has_${item.key}`]);
+    const feed = live ? live.name : (provided ? provided.name : "");
+    item.pill.className = "pill chan" + (live ? " accent" : "");
+    item.pill.title = live
+      ? t("pill.chan.live", { channel: label, source: display_source(feed) })
+      : (feed
+          ? t("pill.chan.stale", { channel: label, source: display_source(feed) })
+          : t("pill.chan.none", { channel: label }));
+  }
+}
+
 function render_status(status) {
   state.status = status; // 留给调试与探针读最新一帧
   apply_outputs(status.outputs);
@@ -1090,9 +1136,7 @@ function render_status(status) {
   $("m-messages").textContent = fmt_int(status.messages);
   $("m-bytes").textContent = ((status.bytes || 0) / 1024).toFixed(1);
 
-  $("pill-source").textContent = status.source ? `${t("pill.input")} · ${status.source}` : `${t("pill.input")} · —`;
-  $("pill-source").className = "pill" + (status.source_ok ? " accent" : "");
-  $("pill-eye").textContent = `${t("pill.eye")} · ${status.eye_mode || "—"}`;
+  render_topbar(status);
 
   $("a-name").textContent = status.avatar_name || t("status.avatar.missing");
   $("a-id").textContent = (status.avatar_id || "—").slice(0, 24);
@@ -1145,7 +1189,7 @@ function render_status(status) {
     ? `${udp_out.target} · ${fmt_int(udp_out.messages)}`
     : t("output.udp.off");
   udp_state.classList.toggle("on", !!udp_out.enabled);
-  $("c-source").textContent = status.source || "—";
+  $("c-source").textContent = display_source_list(status.source);
   $("s-clients").textContent = status.clients || 0;
   if (state.gaze) {
     render_gaze(state.gaze);
@@ -1302,6 +1346,7 @@ function render_input_fps(sources) {
     delete list.dataset.signature;
     state.fps_rows = [];
     list.append(el("div", "muted", t("status.fps.empty")));
+    sync_fps_card_height(list, 0);
     return;
   }
 
@@ -1312,7 +1357,8 @@ function render_input_fps(sources) {
     list.textContent = "";
     state.fps_rows = sources.map((source) => {
       const row = el("div", "fps-row");
-      const name = el("b", "fps-name", source.name);
+      const name = el("b", "fps-name", display_source(source.name));
+      // 提示里留引擎里的真名：命令行 --eye-source 用的是它
       name.title = source.name;
       const value = el("span", "fps-value");
       const number = el("b", "", "0.0");
@@ -1331,6 +1377,17 @@ function render_input_fps(sources) {
     ui.number.textContent = Number(source.fps || 0).toFixed(1);
     ui.row.classList.toggle("stale", !source.fresh);
   });
+
+  sync_fps_card_height(list, sources.length);
+}
+
+// 三行以内四张卡等高（只用一个模块时左右看起来是同一套卡片）；
+// 超过三行再让帧率卡独占高度，免得另外三张指标卡被撑出大片空白。
+function sync_fps_card_height(list, count) {
+  const cards = list.closest(".cards");
+  if (cards) {
+    cards.classList.toggle("fps-expand", count > 3);
+  }
 }
 
 // 10 Hz 更新，所以只在"源的数量变了"时重建 DOM，其它时候只改文字与 class
@@ -1352,7 +1409,8 @@ function render_sources(sources) {
     list.dataset.count = String(sources.length);
     state.source_rows = sources.map((source) => {
       const row = el("div", "source-row");
-      const name = el("b", "source-name", source.name);
+      const name = el("b", "source-name", display_source(source.name));
+      name.title = source.name;
       const meta = el("span", "muted source-meta");
       const chips = el("span", "source-chips");
       const chip = (key) => {
@@ -1576,6 +1634,28 @@ function source_label(source) {
   const key = `modules.source.${source}`;
   const text = t(key);
   return text === key ? source : text;
+}
+
+// 引擎里的源名带 native:/vrcft: 前缀，--eye-source、start_instance 都按它匹配，
+// 不能改。界面上只换显示：原生模块走我们自己的 ABI，标 FGB；VRCFT 模块标 VRCFT。
+function display_source(name) {
+  const text = String(name === undefined || name === null ? "" : name);
+  if (text.startsWith("native:")) {
+    return `FGB:${text.slice("native:".length)}`;
+  }
+  if (text.startsWith("vrcft:")) {
+    return `VRCFT:${text.slice("vrcft:".length)}`;
+  }
+  return text;
+}
+
+// status.source 是"+"拼起来的多源列表
+function display_source_list(text) {
+  const raw = String(text === undefined || text === null ? "" : text).trim();
+  if (!raw) {
+    return "—";
+  }
+  return raw.split("+").map((name) => display_source(name.trim())).join("+");
 }
 
 function module_chip(item) {
@@ -2496,7 +2576,7 @@ function role_options(role) {
         capabilities_of(item));
   }
   for (const entry of running) {
-    add(entry.module_id, `${entry.name} · ${entry.module_name || entry.module_id}`,
+    add(entry.module_id, `${display_source(entry.name)} · ${entry.module_name || entry.module_id}`,
         Number(entry.capabilities || 0));
   }
   return options;
@@ -2740,7 +2820,8 @@ function render_running_modules(modules) {
     if (!ui) {
       return;
     }
-    ui.name.textContent = item.name;
+    ui.name.textContent = display_source(item.name);
+    ui.name.title = item.name;
     ui.module_name.textContent = item.module_name || item.module_id;
     const chip_state = format_state(item.state);
     ui.chip.className = `chip ${chip_state.cls}`.trim();

@@ -72,8 +72,10 @@
         <p class="subtitle" id="page-subtitle">实时指标来自引擎主循环，10 Hz 推送</p>
       </div>
       <div class="topbar-right">
+        <!-- 左边只说"几路输入"：把模块名全写出来会占掉半行，还没法看出哪一路没数据 -->
         <span class="pill" id="pill-source">—</span>
-        <span class="pill" id="pill-eye">—</span>
+        <!-- 每一路通道各一颗：有数据亮、没数据暗，悬停看是哪一路在喂 -->
+        <span class="pill-group" id="pill-channels"></span>
       </div>
     </header>
 
@@ -96,7 +98,6 @@
           <article class="card">
             <h2 data-i18n="status.fps">输入帧率</h2>
             <div class="fps-list" id="fps-list"></div>
-            <p class="hint" data-i18n="status.fps.hint">每个输入模块单独统计，单位 fps</p>
           </article>
           <article class="card">
             <h2 data-i18n="status.frames">累计帧</h2>

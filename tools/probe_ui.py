@@ -191,6 +191,26 @@ def main():
             "fps_rows: document.querySelectorAll('#fps-list .fps-row').length,"
             "fps_expected: typeof state !== 'undefined' && state.status"
             " ? (state.status.sources || []).length : -1,"
+            # 界面上源名要换成产品名（native: → FGB:、vrcft: → VRCFT:），
+            # 这里用一份独立的映射对着断言，页面里换错了会立刻暴露。
+            "fps_names: [...document.querySelectorAll('#fps-list .fps-name')]"
+            "  .map(node => node.textContent),"
+            "fps_expected_names: typeof state !== 'undefined' && state.status"
+            " ? (state.status.sources || []).map(source => String(source.name)"
+            "     .replace(/^native:/, 'FGB:').replace(/^vrcft:/, 'VRCFT:')) : [],"
+            # 顶栏：左边只说几路输入，右边四颗通道灯（表情/眼追/注视/头姿）
+            "pill_input: document.getElementById('pill-source').textContent,"
+            "pill_input_want: (() => {"
+            "  const n = (state.status && state.status.sources || []).length;"
+            "  return t('pill.input') + ' · ' + t('pill.input.count', {count: n});"
+            "})(),"
+            "pill_channels: [...document.querySelectorAll('#pill-channels .pill')]"
+            "  .map(pill => ({text: pill.textContent,"
+            "                live: pill.classList.contains('accent')})),"
+            "pill_channels_want: ['expression', 'eyes', 'gaze', 'head'].map(key => ({"
+            "  text: t('channel.' + key),"
+            "  live: (state.status && state.status.sources || [])"
+            "    .some(source => source[key] && source.fresh)})),"
             "avatar: document.getElementById('a-name').textContent,"
             "source: document.getElementById('a-source').textContent,"
             "catalog: typeof state !== 'undefined' ? state.names.length : -1,"
@@ -303,7 +323,8 @@ def main():
         "    rows: rows.length,"
         "    expected: state.status && state.status.modules ? state.status.modules.length : 0,"
         "    expected_names: state.status && state.status.modules"
-        "      ? state.status.modules.map(m => m.name) : [],"
+        "      ? state.status.modules.map(m => String(m.name)"
+        "          .replace(/^native:/, 'FGB:').replace(/^vrcft:/, 'VRCFT:')) : [],"
         "    names: rows.map(row => row.querySelector('.running-name').textContent),"
         "    chips: rows.map(row => row.querySelector('.chip').textContent)"
         "  });"
@@ -337,6 +358,9 @@ def main():
         "  return JSON.stringify({"
         "    rows: rows.length,"
         "    expected: (state.status && state.status.sources ? state.status.sources.length : 0),"
+        "    expected_names: (state.status && state.status.sources"
+        "      ? state.status.sources.map(s => String(s.name)"
+        "          .replace(/^native:/, 'FGB:').replace(/^vrcft:/, 'VRCFT:')) : []),"
         "    names: rows.map(row => row.querySelector('.source-name').textContent),"
         "    live: rows.map(row => [...row.querySelectorAll('.source-chip.on')].length),"
         "    frames: state.status ? state.status.frames_in : 0"
@@ -790,6 +814,16 @@ def main():
     if float(summary.get("fps") or 0) <= 0:
         print("FAIL 输入帧率没有拿到数据（状态页每模块 fps 全为 0）")
         ok = False
+    if summary.get("fps_names") != summary.get("fps_expected_names"):
+        print(f"FAIL 帧率行的源名没有按 FGB:/VRCFT: 显示：{summary}")
+        ok = False
+    # 顶栏：输入只说几路（不能把模块名全列出来），四颗通道灯必须跟着实时数据亮灭
+    if summary.get("pill_input") != summary.get("pill_input_want"):
+        print(f"FAIL 顶栏输入 pill 没有写成「几路输入」：{summary}")
+        ok = False
+    if summary.get("pill_channels") != summary.get("pill_channels_want"):
+        print(f"FAIL 顶栏通道灯与 status.sources 对不上：{summary}")
+        ok = False
     if "MB" not in (summary.get("mem_text") or "") or not (summary.get("handles_text") or "").strip():
         print("FAIL 状态页没有渲染进程资源（工作集/句柄）")
         ok = False
@@ -947,6 +981,9 @@ def main():
                 ok = False
     if sources.get("rows") != sources.get("expected"):
         print("FAIL 输入源卡片行数与 status.sources 不一致")
+        ok = False
+    elif sources.get("names") != sources.get("expected_names"):
+        print(f"FAIL 输入源卡片的源名没有按 FGB:/VRCFT: 显示：{sources}")
         ok = False
     # 有帧进来说明至少应该有一路被选中；一帧都没有（例如模块起不来）时全灰是对的
     if sources.get("frames", 0) > 0 and sources.get("rows", 0) > 0 and all(

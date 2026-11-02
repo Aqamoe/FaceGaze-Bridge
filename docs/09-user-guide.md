@@ -112,7 +112,9 @@ Windows 图标资源，或程序集里内嵌的 PNG logo；再没有就用模块
 
 可重复 `--source` 做多源合并；`--expression-source` / `--eye-source` /
 `--gaze-source` / `--head-source` 用源名（`vmc` / `livelink` / `osc` / `native:face`）
-指定某一路由谁提供。V2 阶段 A 还支持高级拆分：
+指定某一路由谁提供。界面里同一路显示成 `FGB:face` / `VRCFT:face`——那只是显示名
+（FGB 指原生模块，VRCFT 指 VRCFT 宿主的模块），命令行仍然写 `native:` / `vrcft:`。
+V2 阶段 A 还支持高级拆分：
 
 - `--eye-left-source` / `--eye-right-source`：左右眼分别选源；
 - `--gaze-left-source` / `--gaze-right-source`：左右渲染注视分别选源；
