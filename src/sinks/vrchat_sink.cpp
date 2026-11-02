@@ -37,6 +37,8 @@ constexpr char kAddrNativeClosed[]   = "/tracking/eye/EyesClosedAmount";
 
 // 一条参数消息的经验长度：地址 + 对齐 + 类型标签 + 参数 + bundle 长度前缀
 constexpr std::size_t kEstimatedMessageSize = 72;
+// 面捕 blob：地址(20) + 标签(4) + 长度(4) + 102 字节负载 + 对齐 + bundle 前缀，留足余量
+constexpr std::size_t kFaceMessageSize = 160;
 
 bool wants_group(ParamsMode mode, std::size_t group_index) noexcept {
     const bool is_v1 = group_index >= 2; // 0=v2 基础, 1=v2 派生, 2=v1
@@ -109,6 +111,34 @@ bool parse_params_mode(std::string_view text, ParamsMode& out) noexcept {
     return false;
 }
 
+const char* to_string(FaceOutputMode mode) noexcept {
+    switch (mode) {
+    case FaceOutputMode::auto_:
+        return "auto";
+    case FaceOutputMode::native:
+        return "native";
+    case FaceOutputMode::parameters:
+        return "parameters";
+    }
+    return "auto";
+}
+
+bool parse_face_output_mode(std::string_view text, FaceOutputMode& out) noexcept {
+    if (text == "auto") {
+        out = FaceOutputMode::auto_;
+        return true;
+    }
+    if (text == "native") {
+        out = FaceOutputMode::native;
+        return true;
+    }
+    if (text == "parameters" || text == "params") {
+        out = FaceOutputMode::parameters;
+        return true;
+    }
+    return false;
+}
+
 VrchatSink::VrchatSink(VrchatSinkConfig config)
     : config_(std::move(config)), enabled_(config_.enabled) {
     reset_dedup();
@@ -149,23 +179,62 @@ void VrchatSink::reset_dedup() noexcept {
     }
     last_native_closed_ = 0.0f;
     native_sent_        = false;
+    last_face_bytes_.fill(0);
+    face_native_sent_   = false;
     throttle_.reset();
     last_heartbeat_ns_  = 0;
 }
 
+bool VrchatSink::wants_face_native() const noexcept {
+    switch (config_.face_mode) {
+    case FaceOutputMode::native:
+        return true;
+    case FaceOutputMode::parameters:
+        return false;
+    case FaceOutputMode::auto_:
+        return avatar_face_native_;
+    }
+    return false;
+}
+
 void VrchatSink::bind_avatar_locked(const params::AvatarConfig& config, std::string_view source) {
+    const bool was_native_face = wants_face_native();
+
     router_.bind(config);
     avatar_name_   = config.name;
     avatar_id_     = config.id;
     avatar_source_ = source;
     bound_via_oscquery_.store(source == "oscquery");
+
+    avatar_face_native_       = config.full_face_tracking;
+    avatar_face_native_known_ = config.full_face_tracking_known;
+    face_native_sent_         = false;
+
+    // 只在通道真的换了的时候说话：换头像很频繁，每条都刷屏没意义
+    const bool now_native_face = wants_face_native();
+    if (now_native_face != was_native_face) {
+        if (now_native_face) {
+            FGB_INFO(kTag, "头像「%s」启用了原生面捕：表情改走 %s（%zu 字节 blob）",
+                     config.name.c_str(), kAddrNativeFace, kNativeFaceBytes);
+        } else {
+            FGB_INFO(kTag, "头像「%s」没有启用原生面捕：表情改走 avatar 参数",
+                     config.name.c_str());
+        }
+    }
 }
 
 void VrchatSink::use_fallback() {
+    const bool was_native_face = wants_face_native();
     router_.use_fallback(config_.fallback_prefix);
     avatar_name_.clear();
     avatar_id_.clear();
-    avatar_source_ = "prefix";
+    avatar_source_            = "prefix";
+    avatar_face_native_       = false;
+    avatar_face_native_known_ = false;
+    face_native_sent_         = false;
+    if (was_native_face && config_.face_mode == FaceOutputMode::auto_) {
+        FGB_INFO(kTag, "没有头像参数表，无法确认原生面捕：表情回退到 avatar 参数（固定前缀）");
+    }
 }
 
 void VrchatSink::resolve_addresses() {
@@ -273,9 +342,9 @@ bool VrchatSink::start() {
     if (config_.discover_avatar && config_.avatar_poll_ms > 0) {
         start_watcher();
     }
-    FGB_INFO(kTag, "输出到 %s:%u，眼追模式 %s，参数集 %s", config_.host.c_str(),
+    FGB_INFO(kTag, "输出到 %s:%u，眼追模式 %s，参数集 %s，表情通道 %s", config_.host.c_str(),
              static_cast<unsigned>(config_.port), to_string(config_.eye_mode),
-             to_string(config_.params_mode));
+             to_string(config_.params_mode), to_string(config_.face_mode));
     return true;
 }
 
@@ -444,6 +513,8 @@ RouterStatus VrchatSink::status() const {
     status.avatar_name  = avatar_name_;
     status.avatar_id    = avatar_id_;
     status.avatar_source = avatar_source_;
+    status.face_native       = wants_face_native();
+    status.face_native_known = avatar_face_native_known_;
     return status;
 }
 
@@ -590,6 +661,35 @@ void VrchatSink::emit_eye_native(osc::BundleWriter& writer, const FaceFrame& fra
     }
 }
 
+void VrchatSink::emit_face_native(osc::BundleWriter& writer, const FaceFrame& frame,
+                                  bool force) noexcept {
+    std::array<std::uint8_t, kNativeFaceBytes> payload{};
+    build_native_face_payload(frame, config_.eye_full_scale_deg, payload);
+
+    // 内容没变就省一包；唯一不能省的是心跳——追踪侧停发是否会让 VRChat 回落到
+    // 默认表情没有官方说明，1 Hz 的心跳让这个问题不存在。
+    if (!force && face_native_sent_ && payload == last_face_bytes_) {
+        ++stats_.suppressed;
+        return;
+    }
+
+    if (writer.size() + kFaceMessageSize > config_.max_datagram) {
+        flush(writer);
+    }
+
+    // blob 的负载是纯字节数组，长度必须严格 102：VRChat 对长度不符的消息整条丢弃
+    const std::span<const std::byte> bytes{
+        reinterpret_cast<const std::byte*>(payload.data()), payload.size()};
+    if (!writer.begin_message(kAddrNativeFace, ",b") || !writer.add_blob(bytes) ||
+        !writer.end_message()) {
+        ++stats_.errors;
+        return;
+    }
+
+    last_face_bytes_  = payload;
+    face_native_sent_ = true;
+}
+
 void VrchatSink::submit(const FaceFrame& frame, const GazeState& /*gaze*/, std::uint64_t now_ns) {
     if (!started_) {
         return;
@@ -617,17 +717,25 @@ void VrchatSink::submit(const FaceFrame& frame, const GazeState& /*gaze*/, std::
         return;
     }
 
-    const bool want_params =
-        config_.eye_mode == EyeOutputMode::parameters || config_.eye_mode == EyeOutputMode::both;
-    const bool want_native =
-        config_.eye_mode == EyeOutputMode::native || config_.eye_mode == EyeOutputMode::both;
+    // 原生面捕头像上没有 FT/v2 参数，发出去只会打在空地址上；
+    // 反过来老模型上没有原生面捕系统，blob 会被整条忽略。所以两条通道互斥。
+    const bool face_native = wants_face_native();
 
-    if (want_params) {
+    const bool want_params = !face_native && (config_.eye_mode == EyeOutputMode::parameters ||
+                                              config_.eye_mode == EyeOutputMode::both);
+    // 原生面捕头像通常也没绑眼追参数，而且眼骨旋转模式只能靠 /tracking/eye/*——与 VRCFT 一致，
+    // 走原生面捕时眼追端点照发。
+    const bool want_native_eye = face_native || config_.eye_mode == EyeOutputMode::native ||
+                                 config_.eye_mode == EyeOutputMode::both;
+
+    if (face_native) {
+        emit_face_native(writer, frame, heartbeat);
+    } else if (want_params) {
         const params::EvalContext ctx{frame, config_.eye_full_scale_deg};
         emit_params(writer, ctx, heartbeat);
     }
 
-    if (want_native) {
+    if (want_native_eye) {
         emit_eye_native(writer, frame, heartbeat);
     }
 

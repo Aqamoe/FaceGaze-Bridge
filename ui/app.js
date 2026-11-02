@@ -702,6 +702,7 @@ function apply_outputs(outputs) {
     $("o-vrchat-on").checked = outputs.vrchat_enabled !== false;
     $("o-eye-mode").value = outputs.eye_mode || "parameters";
     $("o-params-mode").value = outputs.params_mode || "v2";
+    $("o-face-mode").value = outputs.face_mode || "auto";
     $("o-vmc-on").checked = !!outputs.vmc_enabled;
     $("o-vmc-target").value = outputs.vmc_target || "";
     $("o-shm-on").checked = !!outputs.shm_enabled;
@@ -724,6 +725,7 @@ function collect_outputs() {
     vrchat_enabled: $("o-vrchat-on").checked,
     eye_mode: $("o-eye-mode").value,
     params_mode: $("o-params-mode").value,
+    face_mode: $("o-face-mode").value,
     vmc_enabled: $("o-vmc-on").checked,
     vmc_target: $("o-vmc-target").value.trim(),
     shm_enabled: $("o-shm-on").checked,
@@ -1087,6 +1089,12 @@ function render_status(status) {
 
   $("o-mode").textContent = status.params_mode || "—";
   $("o-eye").textContent = status.eye_mode || "—";
+  // face_mode 是保存的设置，face_native 是这一帧实际走的通道；auto 下两者可能不一样
+  $("o-face").textContent = status.face_native
+    ? t("output.face.native")
+    : (status.face_mode === "auto" && !status.face_native_known
+        ? t("output.face.unknown")
+        : t("output.face.params"));
   $("o-targets").textContent = status.target_count || 0;
   $("o-matched").textContent = `${status.matched || 0}${t("output.matched.suffix")}`;
   $("o-binary").textContent = status.binary_count || 0;

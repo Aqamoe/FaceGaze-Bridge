@@ -197,6 +197,20 @@ bool MessageView::get_string(std::size_t index, std::string_view& out) const noe
     return true;
 }
 
+bool MessageView::get_blob(std::size_t index, std::span<const std::byte>& out) const noexcept {
+    char tag          = 0;
+    const std::size_t off = arg_offset(index, tag);
+    if (off == kInvalid || tag != kTagBlob || off + 4 > data_.size()) {
+        return false;
+    }
+    const std::uint32_t len = read_be32(data_.data() + off);
+    if (off + 4 + len > data_.size()) {
+        return false;
+    }
+    out = data_.subspan(off + 4, len);
+    return true;
+}
+
 bool MessageView::get_bool(std::size_t index, bool& out) const noexcept {
     char tag          = 0;
     const std::size_t off = arg_offset(index, tag);

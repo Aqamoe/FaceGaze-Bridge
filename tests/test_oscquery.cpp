@@ -158,6 +158,47 @@ FGB_TEST(oscquery_accepts_empty_parameter_table) {
     FGB_CHECK(config.params.empty());
 }
 
+FGB_TEST(oscquery_parses_native_face_tracking_flag) {
+    constexpr char kNative[] = R"({
+      "FULL_PATH":"/","ACCESS":0,
+      "CONTENTS":{"avatar":{"FULL_PATH":"/avatar","ACCESS":0,"CONTENTS":{
+        "avatarfullfacetracking":{"FULL_PATH":"/avatar/avatarfullfacetracking",
+                                  "ACCESS":1,"TYPE":"T","VALUE":[true]},
+        "parameters":{"FULL_PATH":"/avatar/parameters","ACCESS":0,"CONTENTS":{
+          "P":{"FULL_PATH":"/avatar/parameters/P","ACCESS":3,"TYPE":"f"}
+        }}
+      }}}
+    })";
+    params::AvatarConfig config;
+    std::string error;
+    FGB_CHECK(params::parse_oscquery_tree(kNative, config, error));
+    FGB_CHECK(config.full_face_tracking_known);
+    FGB_CHECK(config.full_face_tracking);
+
+    constexpr char kLegacy[] = R"({
+      "FULL_PATH":"/","ACCESS":0,
+      "CONTENTS":{"avatar":{"FULL_PATH":"/avatar","ACCESS":0,"CONTENTS":{
+        "avatarfullfacetracking":{"FULL_PATH":"/avatar/avatarfullfacetracking",
+                                  "ACCESS":1,"TYPE":"T","VALUE":[false]},
+        "parameters":{"FULL_PATH":"/avatar/parameters","ACCESS":0,"CONTENTS":{}}
+      }}}
+    })";
+    FGB_CHECK(params::parse_oscquery_tree(kLegacy, config, error));
+    FGB_CHECK(config.full_face_tracking_known);
+    FGB_CHECK(!config.full_face_tracking);
+
+    // 老版本 VRChat 没有这个节点：必须区分"没开"和"不知道"
+    constexpr char kUnknown[] = R"({
+      "FULL_PATH":"/","ACCESS":0,
+      "CONTENTS":{"avatar":{"FULL_PATH":"/avatar","ACCESS":0,"CONTENTS":{
+        "parameters":{"FULL_PATH":"/avatar/parameters","ACCESS":0,"CONTENTS":{}}
+      }}}
+    })";
+    FGB_CHECK(params::parse_oscquery_tree(kUnknown, config, error));
+    FGB_CHECK(!config.full_face_tracking_known);
+    FGB_CHECK(!config.full_face_tracking);
+}
+
 FGB_TEST(oscquery_normalizes_base_url) {
     FGB_CHECK(params::normalize_oscquery_base_url("127.0.0.1:65393") ==
               "http://127.0.0.1:65393/");

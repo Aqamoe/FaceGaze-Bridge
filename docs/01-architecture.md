@@ -594,6 +594,17 @@ float 拆 bool 的 `BinaryBaseParameter` 编码（`Param1/2/4/8...`）同样需�
 
 切换入口放在输出页显眼位置，并在 UI 上直说"切到 native 后，未适配原生眼追的模型眼睛会不动"——这条提示能省掉大量用户困惑。
 
+**可选路径 · 原生面捕（SDK 3.10.6+，表情通道）**
+```
+/tracking/face/v1   ,b   固定 102 字节
+```
+0–13 眼（视线 / 睁闭 / 瞳孔），14–101 与 `core/model/shape.hpp` 的 88 个形状**同序**；
+值 = `byte/255`，长度不是 102 的消息会被 VRChat 整条丢弃。头像必须在 Avatar Descriptor
+里勾 **Use All Tracking Keys**，并且不再需要 `FT/v2/*` 参数——所以这条通道和 avatar 参数
+**互斥**。是不是这种头像，由 OSCQuery 的 `/avatar/avatarfullfacetracking` 回答；
+配置项 `vrchat.face_output_mode` = `auto`（默认）/ `native` / `parameters`
+（[ADR-0043](adr/0043-vrchat-native-face-tracking.md)）。
+
 **关键优化 · 参数相关性过滤**
 
 VRChat 的 avatar Animator 参数有数量上限（约 256），且发不存在的参数纯属浪费。做法：

@@ -157,6 +157,8 @@ void print_usage() {
                  "  --no-saved-outputs      本次忽略已保存的输出设置（命令行参数仍然生效）\n"
                  "  --eye-mode <模式>       parameters | native | both (默认 parameters)\n"
                  "  --params <参数集>       v2 | v1 | both (默认 v2)\n"
+                 "  --vrchat-face <模式>    auto | native | parameters（默认 auto：\n"
+                 "                          头像启用原生面捕就走 /tracking/face/v1）\n"
                  "  --param-prefix <前缀>   找不到头像配置时 v2 参数用的地址前缀\n"
                  "                          (默认 FT/v2/，因为多数头像这么命名)\n"
                  "  --avatar-config <路径>  指定头像参数表 JSON，不给则自动挑最新的\n"
@@ -472,6 +474,10 @@ int cmd_run(int argc, char** argv) {
         if (fgb::parse_params_mode(saved_outputs.params_mode, params_mode)) {
             vrchat_cfg.params_mode = params_mode;
         }
+        fgb::FaceOutputMode face_mode;
+        if (fgb::parse_face_output_mode(saved_outputs.face_mode, face_mode)) {
+            vrchat_cfg.face_mode = face_mode;
+        }
 
         vmc_out_enabled  = saved_outputs.vmc_enabled;
         vmc_out_cfg.host = saved_outputs.vmc_host;
@@ -758,6 +764,12 @@ int cmd_run(int argc, char** argv) {
             const auto v = next_value(arg);
             if (v.empty() || !fgb::parse_params_mode(v, vrchat_cfg.params_mode)) {
                 std::fprintf(stderr, "未知的 params 模式\n");
+                return 2;
+            }
+        } else if (arg == "--vrchat-face") {
+            const auto v = next_value(arg);
+            if (v.empty() || !fgb::parse_face_output_mode(v, vrchat_cfg.face_mode)) {
+                std::fprintf(stderr, "未知的 vrchat-face 模式\n");
                 return 2;
             }
         } else if (arg == "--param-prefix") {
@@ -1422,6 +1434,7 @@ int cmd_run(int argc, char** argv) {
         ctx.source_names = source_names;
         ctx.params_mode  = fgb::to_string(vrchat_cfg.params_mode);
         ctx.eye_mode     = fgb::to_string(vrchat_cfg.eye_mode);
+        ctx.face_mode    = fgb::to_string(vrchat_cfg.face_mode);
         ctx.outputs      = saved_outputs;
         ctx.outputs_path = outputs_path;
         ctx.outputs_profiles_dir = outputs_profiles_dir;

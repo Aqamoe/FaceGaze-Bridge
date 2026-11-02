@@ -382,6 +382,25 @@ def main():
         "})()"))
     print(f"输出页：{output}")
 
+    # 表情通道：原生面捕（/tracking/face/v1）还是 avatar 参数。
+    # 下拉必须存在且是三个合法值之一；状态行必须已经渲染出文案（auto 下由头像标记决定）。
+    face_channel = json.loads(cdp.evaluate(
+        "(() => {"
+        "  const select = document.getElementById('o-face-mode');"
+        "  const row = document.getElementById('o-face');"
+        "  const status = state.status || {};"
+        "  return JSON.stringify({"
+        "    select: !!select,"
+        "    value: select ? select.value : '',"
+        "    options: select ? Array.from(select.options).map(o => o.value) : [],"
+        "    label: row ? row.textContent : '',"
+        "    status_mode: status.face_mode || '',"
+        "    native: !!status.face_native,"
+        "    known: !!status.face_native_known"
+        "  });"
+        "})()"))
+    print(f"表情通道：{face_channel}")
+
     # 输出设置表单：改 WS 端口/帧率 → 保存 → 状态回读（不触发重启）
     # 引擎必须用 --outputs-config 指向临时文件，否则会写用户的 outputs.ini。
     outputs_form = json.loads(cdp.evaluate(
@@ -834,6 +853,16 @@ def main():
         ok = False
     if output.get("udp_enabled") and output.get("udp_target") not in (output.get("udp_text") or ""):
         print("FAIL UDP 输出行没显示目标地址")
+        ok = False
+    if not face_channel.get("select") or face_channel.get("value") not in (
+            "auto", "native", "parameters"):
+        print(f"FAIL 输出页的表情通道下拉缺失或取值非法：{face_channel}")
+        ok = False
+    elif face_channel.get("options") != ["auto", "native", "parameters"]:
+        print(f"FAIL 表情通道的选项不是 auto/native/parameters：{face_channel}")
+        ok = False
+    elif not face_channel.get("label") or not face_channel.get("status_mode"):
+        print(f"FAIL 状态行没有渲染表情通道：{face_channel}")
         ok = False
     if not outputs_form.get("ready"):
         print("FAIL 输出设置表单没有拿到 status.outputs")

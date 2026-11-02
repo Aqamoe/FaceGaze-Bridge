@@ -40,6 +40,12 @@ struct AvatarConfig {
     std::string name;
     std::string path;
     std::vector<AvatarParam> params;
+
+    // 头像是否在 Avatar Descriptor 里启用了原生面捕（Use All Tracking Keys）。
+    // 只有 OSCQuery 会给出 `/avatar/avatarfullfacetracking`；本地头像 JSON 里没有这一项，
+    // 所以用 known 把"明确没开"和"不知道"分开——把"不知道"当"开着"会让老模型彻底不动。
+    bool full_face_tracking       = false;
+    bool full_face_tracking_known = false;
 };
 
 // %USERPROFILE%\AppData\LocalLow\VRChat\VRChat\OSC

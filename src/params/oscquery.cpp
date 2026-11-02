@@ -65,8 +65,11 @@ struct Node {
     std::string full_path;
     std::string type;
     std::string value_string;
-    int access      = 0;
-    bool has_access = false;
+    // 布尔节点的 VALUE 是裸 true/false（或 `[true]`），不是字符串——原生面捕标记就走这条
+    bool value_bool     = false;
+    bool has_bool_value = false;
+    int access          = 0;
+    bool has_access     = false;
     std::vector<Node> children;
 };
 
@@ -277,21 +280,50 @@ private:
         return pos_ > begin;
     }
 
-    // 只捕获字符串值（VALUE:["avtr_..."] / VALUE:"..."），其它类型跳过
-    bool parse_value_capture(std::string& out) {
+    bool parse_bool_token(bool& out) {
+        skip_ws();
+        if (pos_ + 4 <= text_.size() && text_.compare(pos_, 4, "true") == 0) {
+            pos_ += 4;
+            out = true;
+            return true;
+        }
+        if (pos_ + 5 <= text_.size() && text_.compare(pos_, 5, "false") == 0) {
+            pos_ += 5;
+            out = false;
+            return true;
+        }
+        return fail("期望布尔值");
+    }
+
+    // 只捕获字符串与布尔值（VALUE:["avtr_..."] / VALUE:[true] / VALUE:"..."），其它类型跳过
+    bool parse_value_capture(Node& node) {
+        node.has_bool_value = false;
         skip_ws();
         if (pos_ < text_.size() && text_[pos_] == '"') {
-            return parse_string(out);
+            return parse_string(node.value_string);
+        }
+        if (pos_ < text_.size() && (text_[pos_] == 't' || text_[pos_] == 'f')) {
+            if (!parse_bool_token(node.value_bool)) {
+                return false;
+            }
+            node.has_bool_value = true;
+            return true;
         }
         if (pos_ < text_.size() && text_[pos_] == '[') {
             ++pos_;
             skip_ws();
             bool captured = false;
             if (pos_ < text_.size() && text_[pos_] == '"') {
-                captured = parse_string(out);
+                captured = parse_string(node.value_string);
                 if (!captured) {
                     return false;
                 }
+            } else if (pos_ < text_.size() && (text_[pos_] == 't' || text_[pos_] == 'f')) {
+                if (!parse_bool_token(node.value_bool)) {
+                    return false;
+                }
+                node.has_bool_value = true;
+                captured            = true;
             }
             skip_ws();
             if (captured && pos_ < text_.size() && text_[pos_] == ',') {
@@ -377,7 +409,7 @@ private:
                 }
                 node.has_access = true;
             } else if (key == "VALUE") {
-                if (!parse_value_capture(node.value_string)) {
+                if (!parse_value_capture(node)) {
                     return false;
                 }
             } else if (key == "CONTENTS") {
@@ -495,6 +527,10 @@ bool parse_oscquery_tree(std::string_view json, AvatarConfig& out, std::string& 
                 if (!child.value_string.empty()) {
                     out.name = child.value_string;
                 }
+            } else if (child.full_path == "/avatar/avatarfullfacetracking") {
+                // 有没有节点 = 这个 VRChat 版本认不认原生面捕；节点值 = 当前头像开没开
+                out.full_face_tracking_known = true;
+                out.full_face_tracking       = child.has_bool_value && child.value_bool;
             }
         }
     }

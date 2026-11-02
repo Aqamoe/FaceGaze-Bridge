@@ -21,6 +21,9 @@ public:
     bool add_float(float value) noexcept;
     bool add_int(std::int32_t value) noexcept;
     bool add_string(std::string_view value) noexcept;
+    // OSC blob：先写 4 字节长度，再写负载，尾部补零到 4 字节对齐。
+    // 调用方的类型标签必须已经声明了 'b'（如 ",b"），这里不猜类型。
+    bool add_blob(std::span<const std::byte> payload) noexcept;
     bool end_message() noexcept;
 
     // 便捷：一条消息携带 N 个 float（N <= 63）

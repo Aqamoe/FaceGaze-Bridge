@@ -26,6 +26,7 @@
 | | 眨眼分类（瞬时/长闭/单眼） | P1 |
 | **输出** | OSC → VRChat avatar 参数（表情 + 眼追，默认） | P0 |
 | | OSC → VRChat 原生眼追 `/tracking/eye/*`（可切换模式） | P1 |
+| | OSC → VRChat 原生面捕 `/tracking/face/v1`（102 字节 blob，SDK 3.10.6+；`auto` 按头像自动切换） | P1（已实施 2026-11-02；[ADR-0043](adr/0043-vrchat-native-face-tracking.md)） |
 | | OSCQuery 发现 + 参数相关性裁剪 | P0 |
 | | VRChat 自动配置（含备份/还原） | P0 |
 | | VMC 输出 | P0 |
@@ -106,6 +107,7 @@ VRChat 原生眼追（`/tracking/eye/*`）不是默认路径，见 §2.3。
 | 参数裁剪 | 只发当前 avatar 实际存在的参数 | 未开 OSCQuery 时用本地 avatar 配置 JSON |
 | 自动启用 OSC（未做） | 改写 VRChat `config.json` | **改前备份 + 单独还原按钮 + 明确告知** |
 | 眼追输出模式 | 默认 `parameters`（写 avatar 参数）；可切 `native` / `both` | 切换时明确提示"未适配原生眼追的模型眼睛会不动" |
+| 表情通道 | 默认 `auto`：OSCQuery 的 `/avatar/avatarfullfacetracking` 为真就走 `/tracking/face/v1`，否则走 avatar 参数 | 拿不到标记时按老模型处理；两条通道互斥，不双驱动（[ADR-0043](adr/0043-vrchat-native-face-tracking.md)） |
 | 原生眼追（可选） | `/tracking/eye/LeftRightPitchYaw` + `EyesClosedAmount` | 10 s 超时 → 心跳保活 |
 | 发送节流 | 死区 + bundle 聚合 + 1 Hz 全量心跳 | 可配置 |
 

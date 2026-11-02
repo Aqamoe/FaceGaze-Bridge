@@ -122,6 +122,7 @@ target_link_libraries(fgb_vmc PUBLIC fgb_core)
 add_library(fgb_engine STATIC
     engine/source_merger.cpp
     sinks/vrchat_sink.cpp
+    sinks/vrchat_face.cpp
     sinks/vmc_sink.cpp
     sinks/shm_sink.cpp
     sinks/udp_binary_sink.cpp

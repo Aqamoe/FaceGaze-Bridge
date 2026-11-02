@@ -283,6 +283,9 @@ bool parse_output_patch(std::string_view text, config::OutputOptions& next, std:
     if (error.empty() && json::field_string(text, "params_mode", mode)) {
         next.params_mode = mode;
     }
+    if (error.empty() && json::field_string(text, "face_mode", mode)) {
+        next.face_mode = mode;
+    }
     if (error.empty() && json::field_bool(text, "vrchat_enabled", flag)) {
         next.vrchat_enabled = flag;
     }
@@ -639,6 +642,10 @@ void IpcServer::build_metrics(std::string& out) {
 
     writer.key("params_mode").str(ctx_.params_mode);
     writer.key("eye_mode").str(ctx_.eye_mode);
+    writer.key("face_mode").str(ctx_.face_mode);
+    // face_mode 是配置，face_native 是"这一帧实际走哪条"；两者在 auto 下可能不同
+    writer.key("face_native").boolean(router_status.face_native);
+    writer.key("face_native_known").boolean(router_status.face_native_known);
     writer.key("clients").integer(static_cast<long long>(server_.ready_count()));
 
     // 每个模块实例的运行态。多实例时按 display_name 区分（与 --eye-source 用的是同一个名字）
@@ -744,6 +751,7 @@ void IpcServer::build_metrics(std::string& out) {
         config::format_target(ctx_.outputs.vrchat_host, ctx_.outputs.vrchat_port));
     writer.key("eye_mode").str(ctx_.outputs.eye_mode);
     writer.key("params_mode").str(ctx_.outputs.params_mode);
+    writer.key("face_mode").str(ctx_.outputs.face_mode);
     writer.key("vrchat_enabled").boolean(ctx_.outputs.vrchat_enabled);
     writer.key("vmc_enabled").boolean(ctx_.outputs.vmc_enabled);
     writer.key("vmc_target").str(

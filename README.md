@@ -42,6 +42,7 @@ VRCFT 解决的是「我的面捕硬件怎么驱动 VRChat 头像」。FGB 解�
 | 多源合并 | 表情 / 眼睛 / 渲染注视 / 头姿可分别选择提供者，支持 VMC、模块、抓包回放同时输入；可组合多个原生模块，左右眼/左右注视分源，模块可只给 openness 或单眼属性，`--attr-source` 支持逐属性有序源；`--native-host` 可把原生模块放进独立宿主进程，崩溃自动重启 |
 | 直连输入 | VMC、ARKit LiveLink（iPhone，UDP 11111）、通用 OSC 映射表（任意发送端） |
 | 多路输出 | VRChat OSC、VMC、命名共享内存、WebSocket JSON、UDP 二进制 |
+| VRChat 原生面捕 | 头像启用原生面捕（SDK 3.10.6+）时自动改发 `/tracking/face/v1` 的 102 字节 blob，不占同步参数预算；老模型照旧走 avatar 参数（`--vrchat-face auto\|native\|parameters`） |
 | 注视点服务 | `GET /api/gaze` 与 30 Hz WS 推送：注视方向、扫视/注视状态、聚散、头姿 |
 | 头像发现 | OSCQuery（mDNS）自动读取当前头像参数表，换头像自动重绑；可回退本地配置 |
 | 校准与滤波 | 88 个形状的 lo/hi、视线 gain/center、3D 预览、One Euro 滤波、命名输出预设 |
@@ -57,6 +58,7 @@ VRCFT 解决的是「我的面捕硬件怎么驱动 VRChat 头像」。FGB 解�
 已知限制：
 
 - 真机只验证过 PICO + PICO Connect；Quest / iPhone 等模块缺硬件验证
+- VRChat 原生面捕（`/tracking/face/v1`）已实现并有单测/回环端到端验证，但**尚未在 2026.4.1+ 真机头像上验收**（眼字节符号与各 Eye Gaze Mode 的叠加效果待确认）
 - ARKit LiveLink 直连已实现但未在 iPhone 真机验收（头姿单位/符号为推导值）
 - 通用 OSC 输入目前按 `osc_map.ini` 文件配置，界面表格编辑器待做
 - 3D 校准预览目前是程序化占位头模，正式美术资产待补
@@ -143,6 +145,7 @@ fgb-cli modules use VRCFTPicoModule
 | 输出 | 默认 | 协议 / 文档 |
 |---|---|---|
 | VRChat OSC | 开 | `/avatar/parameters/*`，地址来自当前头像参数表 |
+| VRChat 原生面捕 | 自动 | `/tracking/face/v1`，102 字节 blob；头像启用原生面捕时替代参数输出 |
 | VMC | 关 | `/VMC/Ext/Blend/Val` + `Apply`，`--vmc-out host:port` |
 | 共享内存 | 关 | `Local\FGB_Shm_<name>`，[SDK · 共享内存](sdk/docs/shared-memory.md) |
 | WebSocket JSON | 关 | `ws://127.0.0.1:<port>/ws`，[SDK · 流式输出](sdk/docs/streaming-outputs.md) |

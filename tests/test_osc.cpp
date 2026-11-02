@@ -60,6 +60,59 @@ FGB_TEST(osc_bundle_contains_all_messages) {
     FGB_CHECK_NEAR(sum, 0.0f + 0.2f + 0.4f + 0.6f + 0.8f, 1e-5);
 }
 
+FGB_TEST(osc_blob_roundtrip) {
+    // /tracking/face/v1 的负载是 102 字节——串口用的就是这个形状，长度必须原样回来
+    std::array<std::byte, 102> payload{};
+    for (std::size_t i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<std::byte>(i);
+    }
+
+    osc::BundleWriter writer{g_buffer};
+    FGB_CHECK(writer.begin_message("/tracking/face/v1", ",b"));
+    FGB_CHECK(writer.add_blob(payload));
+    FGB_CHECK(writer.end_message());
+
+    bool seen = false;
+    osc::for_each_message(writer.data(), [&](const osc::MessageView& msg) {
+        FGB_CHECK(msg.address() == "/tracking/face/v1");
+        std::span<const std::byte> got;
+        FGB_CHECK(msg.get_blob(0, got));
+        FGB_CHECK(got.size() == payload.size());
+        if (got.size() == payload.size()) {
+            bool same = true;
+            for (std::size_t i = 0; i < got.size(); ++i) {
+                same = same && got[i] == payload[i];
+            }
+            FGB_CHECK(same);
+        }
+        seen = true;
+    });
+    FGB_CHECK(seen);
+}
+
+FGB_TEST(osc_blob_pads_unaligned_length) {
+    // 102 字节要补 2 字节对齐；补零不能吃掉下一条消息
+    const std::array<std::byte, 102> payload{};
+    osc::BundleWriter writer{g_buffer};
+    FGB_CHECK(writer.begin_bundle());
+    FGB_CHECK(writer.begin_message("/tracking/face/v1", ",b"));
+    FGB_CHECK(writer.add_blob(payload));
+    FGB_CHECK(writer.end_message());
+    const float value[1] = {0.5f};
+    FGB_CHECK(writer.write_floats("/avatar/parameters/FT/v2/JawOpen", value));
+
+    int count = 0;
+    osc::for_each_message(writer.data(), [&](const osc::MessageView& msg) {
+        ++count;
+        if (msg.address() == "/avatar/parameters/FT/v2/JawOpen") {
+            float got = 0.0f;
+            FGB_CHECK(msg.get_float(0, got));
+            FGB_CHECK_NEAR(got, 0.5, 1e-6);
+        }
+    });
+    FGB_CHECK(count == 2);
+}
+
 FGB_TEST(osc_string_argument) {
     osc::BundleWriter writer{g_buffer};
     FGB_CHECK(writer.begin_message("/VMC/Ext/Blend/Val", ",sf"));

@@ -113,6 +113,23 @@ bool BundleWriter::add_string(std::string_view value) noexcept {
     return put_string_raw(value);
 }
 
+bool BundleWriter::add_blob(std::span<const std::byte> payload) noexcept {
+    if (msg_len_pos_ == kNoOpenMessage) {
+        return false;
+    }
+    std::byte len[4];
+    write_be32(len, static_cast<std::uint32_t>(payload.size()));
+    if (!put(len, sizeof(len))) {
+        return false;
+    }
+    if (!put(payload.data(), payload.size())) {
+        return false;
+    }
+    // blob 与字符串一样按 4 字节对齐；长度字段不算在填充里
+    const std::size_t pad = pad4(payload.size()) - payload.size();
+    return pad == 0 ? true : put(kZero, pad);
+}
+
 bool BundleWriter::end_message() noexcept {
     if (msg_len_pos_ == kNoOpenMessage) {
         return false;

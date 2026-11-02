@@ -448,6 +448,7 @@
             <h2 data-i18n="output.state.title">当前状态</h2>
             <div class="kv"><span data-i18n="output.mode">参数集</span><b id="o-mode">—</b></div>
             <div class="kv"><span data-i18n="output.eye">眼追模式</span><b id="o-eye">—</b></div>
+            <div class="kv"><span data-i18n="output.face">表情通道</span><b id="o-face">—</b></div>
             <div class="kv"><span data-i18n="output.target_count">OSC 目标数</span><b id="o-targets">—</b></div>
             <div class="kv"><span data-i18n="output.matched">绑定条数</span><b id="o-matched">—</b></div>
             <div class="kv"><span data-i18n="output.binary">二进制参数</span><b id="o-binary">—</b></div>
@@ -504,6 +505,12 @@
                   <option value="parameters">parameters</option>
                   <option value="native">native</option>
                   <option value="both">both</option>
+                </select></label>
+              <label class="out-row"><span data-i18n="output.face_mode">表情通道</span>
+                <select id="o-face-mode">
+                  <option value="auto" data-i18n="output.face_mode.auto">auto（按头像自动）</option>
+                  <option value="native" data-i18n="output.face_mode.native">原生面捕（102 字节）</option>
+                  <option value="parameters" data-i18n="output.face_mode.parameters">avatar 参数</option>
                 </select></label>
             </div>
             <p class="hint" data-i18n="output.osc.hint">表情与眼追参数经 /avatar/parameters/* 发送，VRChat 侧需开启 OSC。</p>

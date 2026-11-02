@@ -87,6 +87,7 @@ struct IpcContext {
     std::vector<std::string> source_names; // 逐个实例名，角色解析用
     std::string params_mode;
     std::string eye_mode;
+    std::string face_mode;
 
     // 输出页保存的目标：启动时加载/应用，set_outputs 写回文件；下次启动生效
     config::OutputOptions outputs;

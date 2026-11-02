@@ -112,6 +112,8 @@ bool apply_output_entry(const IniEntry& entry, OutputOptions& out, std::string& 
             out.eye_mode = entry.value;
         } else if (entry.key == "params_mode") {
             out.params_mode = entry.value;
+        } else if (entry.key == "face_mode") {
+            out.face_mode = entry.value;
         }
         return true;
     }
@@ -210,6 +212,7 @@ void write_output_sections(IniWriter& writer, const OutputOptions& options) {
     writer.kv("vrchat", format_target(options.vrchat_host, options.vrchat_port));
     writer.kv("eye_mode", options.eye_mode);
     writer.kv("params_mode", options.params_mode);
+    writer.kv("face_mode", options.face_mode);
 
     writer.section("vmc");
     writer.kv_bool("enabled", options.vmc_enabled);
@@ -332,6 +335,11 @@ bool validate_outputs(const OutputOptions& options, std::string& error) {
     if (options.params_mode != "v2" && options.params_mode != "v1" &&
         options.params_mode != "both") {
         error = "参数集必须是 v2 / v1 / both";
+        return false;
+    }
+    if (options.face_mode != "auto" && options.face_mode != "native" &&
+        options.face_mode != "parameters") {
+        error = "表情通道必须是 auto / native / parameters";
         return false;
     }
     if (options.vmc_enabled && (options.vmc_host.empty() || options.vmc_port == 0)) {

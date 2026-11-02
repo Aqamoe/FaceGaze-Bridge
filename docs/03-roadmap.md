@@ -502,6 +502,28 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 **风险**：真实注册只能在装 SteamVR 的机器上验收；托盘是硬前置，且会改变
 ADR-0016 的关窗语义（见 ADR-0020）。
 
+### M7.3 · VRChat 原生面捕输出（1–2 人日）**✅ 已完成（2026-11-02）**
+
+> VRChat 在 Avatars SDK 3.10.6 / 客户端 2026.4.1 把面捕做进了 Avatar Descriptor，
+> 数据入口变成 `/tracking/face/v1` 的 102 字节 blob。老模型继续走 avatar 参数。
+> 取舍见 [ADR-0043](adr/0043-vrchat-native-face-tracking.md)。
+
+| # | 任务 | 人日 | 状态 |
+|---|---|---|---|
+| 7.3.1 | OSC 编码器补 blob 写入/读取（`add_blob` / `get_blob`） | 0.2 | ✅ |
+| 7.3.2 | 102 字节负载构造（14 眼 + 88 形状，与形状枚举同序，编译期断言） | 0.3 | ✅ |
+| 7.3.3 | `VrchatSink` 第三条通道 + `auto/native/parameters` 互斥切换 | 0.3 | ✅ |
+| 7.3.4 | OSCQuery 读 `/avatar/avatarfullfacetracking`，区分"没开/不知道" | 0.2 | ✅ |
+| 7.3.5 | CLI `--vrchat-face`、`outputs.ini`、IPC 状态、输出页三语 | 0.3 | ✅ |
+| 7.3.6 | 单测：负载布局、模式解析、OSCQuery 标记、回环端到端 | 0.2 | ✅ |
+
+**验收**：
+
+- [x] 中性帧整包为 0；眼字节 0–13 与形状偏移 14–101 有逐项断言
+- [x] `auto` 在拿不到原生面捕标记时走 avatar 参数（端到端收包验证）
+- [x] 显式 `native` 时发送 `/tracking/face/v1`（blob 长度 102、JawOpen 字节 255）
+- [ ] 真机 + 原生面捕头像的整链路口径（眼字节符号、Eye Gaze Mode 各模式）
+
 ---
 
 ## 团队配置建议

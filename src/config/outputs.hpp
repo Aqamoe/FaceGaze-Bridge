@@ -22,6 +22,8 @@ struct OutputOptions {
     bool vrchat_enabled       = true;
     std::string eye_mode      = "parameters"; // parameters | native | both
     std::string params_mode   = "v2";         // v2 | v1 | both
+    // 表情通道：auto（按头像是否启用原生面捕自动选）/ native / parameters
+    std::string face_mode     = "auto";
 
     bool vmc_enabled         = false;
     std::string vmc_host     = "127.0.0.1";

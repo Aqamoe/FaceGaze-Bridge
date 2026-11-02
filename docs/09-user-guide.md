@@ -47,7 +47,7 @@ sdk\                   集成文档与示例
 | 模块库 | 两个标签页：**原生模块**（`fgb-registry`，`sha256` 校验、版本回滚、测试版开关）与 **VRCFT 模块**（`registry.vrcft.io`，MD5 校验）；点卡片展开介绍、使用说明与模块主页 |
 | 参数 | 365 个派生参数的热力图，搜索过滤 |
 | 校准 | 88 形状单轨双滑块 lo/hi、映射曲线（5 预设 + 自定义）、中文名称与分组、视线 gain/center、3D 预览、取当前、保存/重载 |
-| 输出 | 参数集/眼追模式/输出目标、命名预设、重新读取头像参数表 |
+| 输出 | 参数集/眼追模式/表情通道/输出目标、命名预设、重新读取头像参数表 |
 | 日志 | 引擎与模块日志，级别过滤、自动滚动 |
 | 设置 | 滤波、引擎启停、诊断包、SteamVR 启动项、界面语言 |
 
@@ -189,7 +189,7 @@ fgb-cli run --source osc --osc-map .\osc_map.ini --panel 8787
 
 | 输出 | 开关 | 协议 |
 |---|---|---|
-| VRChat OSC | 始终开启 | `/avatar/parameters/*`，地址来自头像参数表 |
+| VRChat OSC | 始终开启 | `/avatar/parameters/*`（老模型）或 `/tracking/face/v1`（原生面捕头像），见 §4.1 |
 | VMC | 输出页「启用 VMC」或 `--vmc-out host:port` | `/VMC/Ext/Blend/Val` + `Apply` |
 | 共享内存 | 「启用共享内存」或 `--shm <name>` | `Local\FGB_Shm_<name>`，见 [共享内存](../sdk/docs/shared-memory.md) |
 | WebSocket JSON | 「启用 WebSocket JSON」或 `--ws-out <port>` | 见 [流式输出](../sdk/docs/streaming-outputs.md) |
@@ -197,6 +197,32 @@ fgb-cli run --source osc --osc-map .\osc_map.ini --panel 8787
 
 保存后要点「保存并重启引擎」才生效；命令行参数永远覆盖保存值。
 WebSocket 与控制面只绑 `127.0.0.1`。
+
+### 4.1 原生面捕（VRChat SDK 3.10.6 起）
+
+VRChat 从 Avatars SDK `3.10.6` + 客户端 `2026.4.1` 起把面捕做进了 Avatar Descriptor：
+作者给头像勾上 **Use All Tracking Keys**，VRChat 自己按 Unified Expressions 的
+tracking key 驱动 blendshape，**不再需要 `FT/v2/*` 参数**。这类头像的数据入口是
+`/tracking/face/v1`（一条 OSC blob，固定 102 字节），FGB 会自己识别并切换：
+
+| 表情通道 | 行为 |
+|---|---|
+| `auto`（默认） | 头像启用了原生面捕 → 发 102 字节 blob；否则 → 发 avatar 参数 |
+| `native` | 强制发 blob（头像没开原生面捕时表情不会动） |
+| `parameters` | 强制发 avatar 参数（新头像上表情不会动，用于对比/回归） |
+
+「自动」的判据只有 OSCQuery 的 `/avatar/avatarfullfacetracking`：
+
+- 状态页「表情通道」显示 **原生面捕 /tracking/face/v1** = 当前走 blob；
+- 显示 **avatar 参数** = 当前走参数路由；
+- 显示 **avatar 参数（未确认）** = 只读到本地头像 JSON，没拿到原生面捕标记（按老模型处理）。
+
+命令行：`--vrchat-face auto|native|parameters`。走原生通道时 FGB 仍会发
+`/tracking/eye/*`，因为原生面捕头像通常也没绑眼追参数，而 `Eye Gaze Mode: Bone Rotation`
+的眼球旋转只认这两个端点。
+
+注意：原生面捕**不占同步参数预算**，远端玩家看到的表情由 VRChat 自己同步（有损，
+和 NetIK 类似，距离越远精度越低）。这是预期行为，不是 FGB 在丢数据。
 
 ### 命名预设
 
@@ -348,6 +374,8 @@ VRCFT 协议层已真机跑通；**模块覆盖仍是当前最大缺口**（road
 | 原生库卡片按钮灰 | 卡片上写了原因：ABI 不一致、需要更新宿主、系统/架构不支持；也可能是另一个模块正在下载 |
 | 装新版本提示「无法替换旧版本」 | 正常情况下引擎会自动停实例再装；仍失败说明旧 DLL 被**别的进程**占用（另一个 FaceGaze Bridge 实例、VRCFT 本体、杀软扫描），关掉占用方重试即可；升级会保留模块的 `config.ini` |
 | 有帧但 VRChat 不动 | 状态页「命中参数」是否为 0；输出页「重新读取头像参数表」；确认游戏内 OSC 已开 |
+| 原生面捕头像表情不动 | 状态页「表情通道」是不是「avatar 参数（未确认）」：OSCQuery 没连上时会按老模型处理，可临时 `--vrchat-face native`；另外确认头像在 Unity 里勾了 Use All Tracking Keys、客户端 ≥ 2026.4.1 |
+| 老模型表情不动，日志说走了原生面捕 | 头像声明了原生面捕但没做 blendshape 映射，或客户端版本过旧；`--vrchat-face parameters` 强制回参数通道对比 |
 | 表情动但方向/幅度不对 | 校准 lo/hi 与视线 gain；检查头像是否绑了对应参数 |
 | 输出页保存了不生效 | 需要「保存并重启引擎」；`status.outputs` 是保存值，运行态看目标卡片 |
 | 90/30 Hz 实际只有 60/24 | 旧版本取整问题已由 `SinkThrottle` 修复；确认用的是当前版本 |
