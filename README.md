@@ -41,9 +41,11 @@ VRCFT 解决的是「我的面捕硬件怎么驱动 VRChat 头像」。FGB 解�
 | 模块库 | 两个标签页：**原生模块**来自 [`fgb-registry`](https://github.com/Aqamoe/fgb-registry)（下载校验 SHA-256 与包内清单、版本回滚、测试版通道、审核/归档标记），**VRCFT 模块**沿用 `registry.vrcft.io`；都支持本地 zip 兜底 |
 | 多源合并 | 表情 / 眼睛 / 渲染注视 / 头姿可分别选择提供者，支持 VMC、模块、抓包回放同时输入；可组合多个原生模块，左右眼/左右注视分源，模块可只给 openness 或单眼属性，`--attr-source` 支持逐属性有序源；`--native-host` 可把原生模块放进独立宿主进程，崩溃自动重启 |
 | 直连输入 | VMC、ARKit LiveLink（iPhone，UDP 11111）、通用 OSC 映射表（任意发送端） |
-| 多路输出 | VRChat OSC、VMC、命名共享内存、WebSocket JSON、UDP 二进制 |
+| 多路输出 | VRChat OSC、VMC、命名共享内存、WebSocket JSON、UDP 二进制、VRSS 注视点 |
 | VRChat 原生面捕 | 头像启用原生面捕（SDK 3.10.6+）时自动改发 `/tracking/face/v1` 的 102 字节 blob，不占同步参数预算；老模型照旧走 avatar 参数（`--vrchat-face auto\|native\|parameters`） |
 | 注视点服务 | `GET /api/gaze` 与 30 Hz WS 推送：注视方向、扫视/注视状态、聚散、头姿 |
+| 注视点校准 | 13 点 VR 圆盘标定（大/小范围可选）：戴着头显逐点看住，拟合逐眼视口映射写进 `gaze.ini`；VRSS、注视光标与第三方读的都是同一份位置（[用户手册 · 校准](docs/09-user-guide.md#5-校准)） |
+| VRSS 注视点抗锯齿 | NVIDIA VRSS2 驱动级 gaze provider：逐眼视口点经 44 字节 UDP 交给独立提权进程，驱动在注视中心做更高倍率超采样。**是中央抗锯齿，不是注视点渲染，也不承诺帧率收益**；需要 NVIDIA + SteamVR + VRChat MSAA x4，见 [ADR-0040](docs/adr/0040-vrss-provider-component.md) |
 | 头像发现 | OSCQuery（mDNS）自动读取当前头像参数表，换头像自动重绑；可回退本地配置 |
 | 校准与滤波 | 88 个形状的 lo/hi、视线 gain/center、3D 预览、One Euro 滤波、命名输出预设 |
 | 桌面体验 | 单入口 exe、托盘常驻、关窗继续追踪、可选随 SteamVR 启动、三语界面 |
@@ -51,8 +53,9 @@ VRCFT 解决的是「我的面捕硬件怎么驱动 VRChat 头像」。FGB 解�
 
 ## 当前状态
 
-最新版本 **1.0.4**。Windows 10/11 x64 上已完成构建、单测、端到端探针、
-安装/卸载和真机 PICO 链路验证；发布门禁与未完成项记录在
+最新版本 **1.1.0**。Windows 10/11 x64 上已完成构建、单测、端到端探针、
+安装/卸载和真机 PICO 链路验证；VRSS 已在 PICO + MSAA x4 真机上验收（注视点校准后
+直接从 Steam 启动游戏即可，不需要本软件代起）。发布门禁与未完成项记录在
 [docs/11-regression-2026-10-30.md](docs/11-regression-2026-10-30.md)。
 
 已知限制：
@@ -62,6 +65,13 @@ VRCFT 解决的是「我的面捕硬件怎么驱动 VRChat 头像」。FGB 解�
 - ARKit LiveLink 直连已实现但未在 iPhone 真机验收（头姿单位/符号为推导值）
 - 通用 OSC 输入目前按 `osc_map.ini` 文件配置，界面表格编辑器待做
 - 3D 校准预览用 Google GNM Head（Apache-2.0）烘焙的中性头，未做皮肤贴图与逐帧重算法线的高配路径
+- **VRSS 是实验特性**：只支持 NVIDIA + SteamVR + VRChat MSAA x4；驱动必须在审计白名单
+  （596.02 / 610.88）内，否则走只读探测生成实验合同；provider 提权每次会话需要一次 UAC。
+  关掉本软件后如果想立刻恢复注视点抗锯齿，必须**先正常关闭 VRChat**——驱动不允许在
+  VRChat 仍持有旧连接时重注册（`-175`），这是驱动侧限制
+- **无 EDID 头显（PICO/串流）的持久身份是用户级环境变量**（`TEST_VENDOR_ID` /
+  `TEST_PRODUCT_ID`，`HKCU\Environment`）：写完要重启 Steam 才生效，且会影响该用户下
+  所有 OpenVR 应用；换回自带 EDID 的头显会自动清除，也可在页面手动清除
 - SteamVR 自启动的注册分支已实现，真实 SteamVR 环境验收待补
 - 8 小时长跑、休眠唤醒、设备热插拔仍属于发布前门禁
 
@@ -86,6 +96,7 @@ FaceGaze Bridge.exe    唯一入口（窗口 + 拉起引擎）
 fgb-cli.exe            引擎与命令行工具
 fgb-host-native.exe    原生模块跨进程宿主（--native-host，可选）
 runtime\vrcft\         VRCFT 模块宿主运行时
+runtime\vrss\          VRSS provider 与 HMD 几何导出器（VRSS 页面用，可选）
 ui\                    界面资源
 sdk\                   集成文档与示例
 NOTICE, LICENSE        许可证与第三方声明
@@ -108,7 +119,9 @@ NOTICE, LICENSE        许可证与第三方声明
    [`fgb-registry`](https://github.com/Aqamoe/fgb-registry)（下载后校验 SHA-256 与包内清单），
    **VRCFT 模块**标签页来自 `registry.vrcft.io`；也可以到「模块」页导入本机已有的模块
 3. 到「输出」页确认 VRChat OSC / VMC / 共享内存等目标
-4. 关窗只是收进托盘，追踪继续；托盘菜单「退出」才停止引擎
+4. 想做注视点抗锯齿：先到「校准」页做一次 13 点 VR 圆盘标定，再到「VRSS」页
+   「一键启用」（需要 NVIDIA 显卡 + SteamVR + 游戏内 MSAA x4）
+5. 关窗只是收进托盘，追踪继续；托盘菜单「退出」才停止引擎
 
 安装包与 SDK 包（`FaceGazeBridge-SDK-<版本>.zip`）的 SHA256 在 Release 的
 `SHA256SUMS.txt` 中。
@@ -131,6 +144,9 @@ fgb-cli run --source osc --osc-map .\osc_map.ini --panel 8787
 # 给网页/脚本的 WebSocket JSON，给串流软件的 UDP 二进制
 fgb-cli run --source vmc --ws-out 9101 --udp-out 127.0.0.1:9102
 
+# VRSS：把逐眼视口点发给 provider（页面上点「一键启用」会自动配好，这里是命令行等价写法）
+fgb-cli run --source vrcft --vrss-out 5556 --panel 8787
+
 # 模块管理
 fgb-cli modules
 fgb-cli modules import-all
@@ -151,6 +167,7 @@ fgb-cli modules use VRCFTPicoModule
 | WebSocket JSON | 关 | `ws://127.0.0.1:<port>/ws`，[SDK · 流式输出](sdk/docs/streaming-outputs.md) |
 | UDP 二进制 | 关 | 固定 656 字节帧，[SDK · 流式输出](sdk/docs/streaming-outputs.md) |
 | 注视点 | 开 | `GET /api/gaze` + WS `gaze`，[SDK · 注视服务](sdk/docs/gaze-service.md) |
+| VRSS 注视点抗锯齿 | 关 | 44 字节 `UdpGazeV1` → `127.0.0.1:5556`；由 `runtime/vrss/fgb-vrss-provider.exe` 提权转发给 NVIDIA 驱动（[ADR-0040](docs/adr/0040-vrss-provider-component.md)） |
 
 原生模块接口见 [SDK 开发指南](sdk/docs/native-module-guide.md)，
 Unity 读取示例见 [sdk/samples/unity-face-gaze](sdk/samples/unity-face-gaze)。
@@ -205,7 +222,8 @@ src/core      数据模型、无锁容器、滤波/校准
 src/osc       OSC 编解码
 src/net       UDP/TCP/WebSocket 服务端、HTTP 下载
 src/sources   输入：VMC / ARKit LiveLink / 通用 OSC / VRCFT 模块 / 原生模块 / 回放
-src/sinks     输出：VRChat / VMC / 共享内存 / WS / UDP
+src/sinks     输出：VRChat / VMC / 共享内存 / WS / UDP / VRSS
+src/vrss      VRSS 几何、HMD 身份、provider 流程与驱动合同
 src/engine    合并、快照发布、扇出
 src/web       控制面 IPC 与静态页面
 src/ui        FaceGaze Bridge.exe（WebView2 外壳 + 引擎生命周期）
@@ -229,6 +247,7 @@ tests/        单元测试与金样测试
 | [工程手册](docs/04-engineering.md) | 构建、测试、CI、发布、许可证合规 |
 | [原生模块](sdk/docs/native-module-guide.md) | C ABI 生命周期与打包 |
 | [共享内存](sdk/docs/shared-memory.md) / [流式输出](sdk/docs/streaming-outputs.md) / [注视服务](sdk/docs/gaze-service.md) | 集成协议 |
+| [VRSS 组件](docs/adr/0040-vrss-provider-component.md) | provider 边界、驱动合同与探测、无 EDID 头显的持久身份 |
 | [安全审查](docs/10-security-review.md) | 控制面、模块、配置的威胁模型 |
 | [ADR](docs/adr/) | 关键决策记录 |
 

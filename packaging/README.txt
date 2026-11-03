@@ -25,7 +25,11 @@ FaceGazeBridge-Setup-<版本>.exe 是用户级安装包（不需要管理员）�
      双击复位），右侧调每个形状的 lo/hi 与视线中心，拖动立即生效；
      点「保存」后写入 %LOCALAPPDATA%\FaceGazeBridge\calibration.ini，下次启动自动加载
      预览用的是通用风格化人头，不是你的 VRChat 头像；没有模型映射的形状会标"仅数值"
-  5. 想跟随 SteamVR 启动：先启动 SteamVR，再到「设置 → SteamVR 启动项」打开开关。
+  5. 想让注视点抗锯齿生效：先在同一页做「注视点校准（VR 圆盘）」——戴着头显做
+     13 点标定，结果写进 gaze.ini；再到「VRSS」页点「一键启用」。
+     需要 NVIDIA 显卡、SteamVR、以及游戏内 MSAA x4；provider 提权会弹一次 UAC。
+     无 EDID 的头显（PICO/串流）打开「持久 HMD 身份」后可以直接从 Steam 启动游戏。
+  6. 想跟随 SteamVR 启动：先启动 SteamVR，再到「设置 → SteamVR 启动项」打开开关。
      设置只在 SteamVR 运行时可用；卸载/移动目录前请先点「移除注册」
 
 第一次运行前确认：
@@ -90,6 +94,9 @@ VRCFT 运行时
   输出：参数集 / 眼追模式 / 绑定条数 / VMC / 共享内存 / WebSocket / UDP，
         可编辑所有输出目标与开关（保存到 outputs.ini，保存并重启引擎后生效），
         命名预设可保存/应用/删除（应用即快速切换），重新读取头像参数表
+  VRSS：注视点抗锯齿（NVIDIA VRSS2 驱动级 provider）：六步检查、驱动合同/探测、
+        启动 VRChat、四方向验证、抗锯齿范围（1–50%）、增益/偏移微调、
+        持久 HMD 身份与随 SteamVR 自动注册
   日志：引擎与模块日志，可过滤级别
   设置：One Euro 滤波开关与滑杆，SteamVR 启动项（状态/自启动/重新检测/移除注册），
         日志级别，界面语言，停止引擎
@@ -113,6 +120,7 @@ VRCFT 运行时
     samples\native-sine\         可运行的示例模块（正弦波，无硬件）
     samples\unity-face-gaze\     Unity 示例包（UPM package.json + 共享内存驱动组件）
   runtime\vrcft\        VRCFT 模块宿主运行时（Apache-2.0，含 LICENSE/NOTICE）
+  runtime\vrss\         VRSS provider 与 HMD 几何导出器（VRSS 页面用，可选）
   ui\                   页面资源（含 uiace 模型与映射表）。换页面不用重编 exe
   app.vrmanifest        SteamVR 注册清单（只借用 dashboard overlay 的自启动机制）
   NOTICE                第三方许可证说明（含 OpenVR / VRCFT）
@@ -176,7 +184,9 @@ VRCFT 运行时
   模块仓：%LOCALAPPDATA%\FaceGazeBridge\modules
   模块库缓存：%LOCALAPPDATA%\FaceGazeBridge\library.json
   校准档案：%LOCALAPPDATA%\FaceGazeBridge\calibration.ini（上一版自动留成 .bak）
+  注视档案：%LOCALAPPDATA%\FaceGazeBridge\gaze.ini（VR 圆盘标定结果）
   输出预设：%LOCALAPPDATA%\FaceGazeBridge\outputs-profiles\*.ini
+  VRSS 运行目录：%LOCALAPPDATA%\FaceGazeBridge\vrss\（status.json / error.txt / geometry.txt）
   配置：%APPDATA%\FaceGazeBridge\fgb.ini
 
 作者与许可证
