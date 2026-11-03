@@ -125,9 +125,15 @@ void VrssGazeSink::stop() noexcept {
     socket_.close();
 }
 
+float VrssGazeSink::driver_y(float y, bool invert) noexcept {
+    // 实测驱动按 +Y 向下解释 normalized location（真机把内部 +Y 向上的值直接发过去，
+    // 区域上下颠倒）。所以默认给驱动的是取反后的值；invert 只是把这次翻转取消的兜底开关。
+    return invert ? y : -y;
+}
+
 void VrssGazeSink::point_to_ndc(float px, float py, float& x, float& y) noexcept {
     x = 2.0f * px - 1.0f;
-    // 视口 [0,1] 是左上原点、+y 向下；NVIDIA 的 NDC 是中心 0,0、+Y 向上。
+    // 视口 [0,1] 是左上原点、+y 向下；内部 NDC 统一成中心 0,0、+Y 向上。
     y = 1.0f - 2.0f * py;
 }
 
@@ -213,14 +219,11 @@ bool VrssGazeSink::build_ndc(const GazeState& gaze, std::uint64_t now_ns,
         return false;
     }
 
-    if (config.flip_y) {
-        left_y  = -left_y;
-        right_y = -right_y;
-    }
     // 这里的 gain/offset 是**显示侧微调**，不是注视校准：注视数据由 GazeCalibrator 负责
     // （ADR-0042 §6），而这几个参数补的是"驱动把区域放到哪"这一层——驱动对归一化位置的
     // 缩放/零点与我们的视口坐标并不一致，实测表现为"中间准、越往边上越偏外圈"。
-    // 标定之后它们依然生效，只是量级很小；默认 1/0 表示不额外修正。
+    // 注意这些量都按内部约定（+Y 向上）计算，Y 轴的驱动翻转在 submit() 里最后一步做，
+    // 所以"offset 正 = 往上"始终成立，不受 invert_y 影响。
     const float left_ndc_x  = left_x * config.x_gain + config.x_offset + config.stereo_offset;
     const float right_ndc_x = right_x * config.x_gain + config.x_offset - config.stereo_offset;
     ndc[0] = clamp_ndc(left_ndc_x);
@@ -292,6 +295,11 @@ void VrssGazeSink::submit(const FaceFrame& frame, const GazeState& gaze,
         status_.reason = diagnose(gaze, config_, now_ns);
         return;
     }
+
+    // 驱动坐标是 +Y 向下，内部按 +Y 向上算：在这里统一翻一次，界面/预设里的
+    // 增益与偏移就永远保持"正 y = 上"的直觉，不随驱动约定变化。
+    ndc[1] = driver_y(ndc[1], config_.invert_y);
+    ndc[3] = driver_y(ndc[3], config_.invert_y);
 
     VrssGazePacketV1 packet{};
     packet.sequence = ++sequence_;

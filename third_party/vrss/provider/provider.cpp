@@ -29,19 +29,32 @@ struct ProviderOwnership {
     HANDLE mutex{};
     ~ProviderOwnership() { if(mutex){ReleaseMutex(mutex);CloseHandle(mutex);} }
 };
-static bool OtherGazeProvider() {
+static std::string Narrow(const std::wstring& text) {
+    std::string out; out.reserve(text.size());
+    for(wchar_t ch:text) out.push_back(ch<128?static_cast<char>(ch):'?');
+    return out;
+}
+struct OtherProvider { std::string name; bool generic; };
+// 名字里带 vrss 的桥不一定抢同一个路由：路由键是 (vendor, product)，
+// 0xFEEE 这种私有键只可能来自本工具。厂商自带（Pimax 的 vrss_gaze_provider.exe）
+// 会常驻开机，按名字一票否决会让"关掉本软件后再打开"的热重连永远失败（实测）。
+// 因此这里只负责"报告"，阻断与否由调用方按是否通用桥决定。
+static std::vector<OtherProvider> OtherGazeProviders() {
+    std::vector<OtherProvider> out;
     HANDLE snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);
-    if(snapshot==INVALID_HANDLE_VALUE)return true;
+    if(snapshot==INVALID_HANDLE_VALUE)return out;
     PROCESSENTRY32W entry{};entry.dwSize=sizeof(entry);
-    bool other=false;
-    if(!Process32FirstW(snapshot,&entry)){CloseHandle(snapshot);return true;}
-    do {
-        if(entry.th32ProcessID!=GetCurrentProcessId() &&
-           (_wcsicmp(entry.szExeFile,L"common_vrss_provider.exe")==0 ||
-            _wcsicmp(entry.szExeFile,L"vrss_gaze_provider.exe")==0))other=true;
-    }while(Process32NextW(snapshot,&entry));
-    if(GetLastError()!=ERROR_NO_MORE_FILES)other=true;
-    CloseHandle(snapshot);return other;
+    if(Process32FirstW(snapshot,&entry)) {
+        do {
+            if(entry.th32ProcessID==GetCurrentProcessId())continue;
+            const bool generic=_wcsicmp(entry.szExeFile,L"common_vrss_provider.exe")==0;
+            const bool vendor=_wcsicmp(entry.szExeFile,L"vrss_gaze_provider.exe")==0;
+            if(!generic && !vendor)continue;
+            out.push_back({Narrow(entry.szExeFile),generic});
+        }while(Process32NextW(snapshot,&entry));
+    }
+    CloseHandle(snapshot);
+    return out;
 }
 static std::map<std::string,std::string> ReadFields(const fs::path& path) {
     return ReadSharedConfig(path);
@@ -404,7 +417,7 @@ int RunVrssProvider(int argc,wchar_t** argv,const std::function<bool()>& keepRun
         }
         if(!EventAbsent(event)) {
             const bool reconnect=!frameInput && args.count(L"--allow-reconnect") && args.at(L"--allow-reconnect")==L"1";
-            if(!reconnect || OtherGazeProvider())
+            if(!reconnect)
                 throw std::runtime_error("An existing provider bridge is present or inaccessible");
             HANDLE existing=OpenEventW(SYNCHRONIZE,FALSE,event.c_str());
             if(!existing)throw std::runtime_error("The existing provider event is inaccessible; reconnect refused");
@@ -413,7 +426,19 @@ int RunVrssProvider(int argc,wchar_t** argv,const std::function<bool()>& keepRun
             // A consumer can retain this event after successful unregister.
             // Its existence does not prove a live sender. Keep NVIDIA's actual
             // registration result authoritative; never change the event/ACL.
-            std::cout<<"RECONNECT retained consumer event; no other gaze sender is running\n";
+            std::string generic, others;
+            for(const auto& provider:OtherGazeProviders()) {
+                std::string& bucket=provider.generic?generic:others;
+                if(!bucket.empty())bucket+=',';
+                bucket+=provider.name;
+            }
+            // 通用桥可能被配置到同一个路由，两个发送者会互相覆盖，必须拒绝。
+            if(!generic.empty())
+                throw std::runtime_error("Another generic VRSS provider is running: "+generic);
+            // 厂商自带的桥（Pimax）路由键不同，只告警：否则只要装了 Pimax 运行时就永远热重连失败。
+            if(!others.empty())
+                std::cout<<"RECONNECT warning other vendor gaze providers present="<<others<<'\n';
+            std::cout<<"RECONNECT retained consumer event; reconnect attempted\n";
         }
         fs::create_directories(output);
         std::error_code ignored;fs::remove(output/"error.txt",ignored);

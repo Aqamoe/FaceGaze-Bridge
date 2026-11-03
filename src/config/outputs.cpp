@@ -193,12 +193,16 @@ bool apply_output_entry(const IniEntry& entry, OutputOptions& out, std::string& 
             out.vrss_y_offset = parse_float(entry.value, out.vrss_y_offset);
         } else if (entry.key == "stereo_offset") {
             out.vrss_stereo_offset = parse_float(entry.value, out.vrss_stereo_offset);
-        } else if (entry.key == "flip_y") {
-            out.vrss_flip_y = parse_bool(entry.value, out.vrss_flip_y);
+        } else if (entry.key == "y_invert") {
+            out.vrss_y_invert = parse_bool(entry.value, out.vrss_y_invert);
         } else if (entry.key == "area") {
             out.vrss_area_percent = parse_float(entry.value, out.vrss_area_percent);
         } else if (entry.key == "auto_launch_vrchat") {
             out.vrss_auto_launch_vrchat = parse_bool(entry.value, out.vrss_auto_launch_vrchat);
+        } else if (entry.key == "auto_start") {
+            out.vrss_auto_start = parse_bool(entry.value, out.vrss_auto_start);
+        } else if (entry.key == "persist_identity") {
+            out.vrss_persist_identity = parse_bool(entry.value, out.vrss_persist_identity);
         } else if (entry.key == "allow_source_points") {
             out.vrss_allow_source_points = parse_bool(entry.value, out.vrss_allow_source_points);
         }
@@ -242,9 +246,11 @@ void write_output_sections(IniWriter& writer, const OutputOptions& options) {
     writer.kv("x_offset", options.vrss_x_offset, 3);
     writer.kv("y_offset", options.vrss_y_offset, 3);
     writer.kv("stereo_offset", options.vrss_stereo_offset, 3);
-    writer.kv_bool("flip_y", options.vrss_flip_y);
+    writer.kv_bool("y_invert", options.vrss_y_invert);
     writer.kv("area", options.vrss_area_percent, 1);
     writer.kv_bool("auto_launch_vrchat", options.vrss_auto_launch_vrchat);
+    writer.kv_bool("auto_start", options.vrss_auto_start);
+    writer.kv_bool("persist_identity", options.vrss_persist_identity);
     writer.kv_bool("allow_source_points", options.vrss_allow_source_points);
 }
 
@@ -393,8 +399,8 @@ bool validate_outputs(const OutputOptions& options, std::string& error) {
             error = "VRSS 双眼补偿必须在 -0.5..0.5";
             return false;
         }
-        if (options.vrss_area_percent < 1.0f || options.vrss_area_percent > 100.0f) {
-            error = "VRSS 抗锯齿范围必须在 1..100%";
+        if (options.vrss_area_percent < 1.0f || options.vrss_area_percent > 50.0f) {
+            error = "VRSS 抗锯齿范围必须在 1..50%";
             return false;
         }
     }

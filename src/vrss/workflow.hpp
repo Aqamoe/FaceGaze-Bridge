@@ -5,6 +5,7 @@
 // blocked，而不是自己猜着继续。
 #pragma once
 
+#include "vrss/identity.hpp"
 #include "vrss/runtime.hpp"
 
 #include <array>
@@ -36,6 +37,11 @@ struct WorkflowSnapshot {
     bool geometry = false;
     bool admin = false;
     bool vrchat_running = false;
+    // 无 EDID 头显的持久身份：写入后 Steam 直接启动 VRChat 也能对上 provider。
+    PersistentIdentity identity;
+    std::string identity_source; // 最近一次几何导出的 identitySource
+    bool auto_start = false;     // 跟随 SteamVR 自动注册
+    bool persist_identity = true;
     ProviderStatus provider;
     std::string area_state = "idle"; // idle | applying | applied | failed
     std::string area_detail;
@@ -47,7 +53,8 @@ public:
     Workflow();
     ~Workflow();
 
-    void configure(bool enabled, int port, bool auto_launch_vrchat, float area_percent);
+    void configure(bool enabled, int port, bool auto_launch_vrchat, float area_percent,
+                   bool auto_start, bool persist_identity);
     bool enabled() const noexcept { return enabled_; }
     int port() const noexcept { return port_; }
 
@@ -58,6 +65,8 @@ public:
     void request_launch_vrchat();
     // 写 NVIDIA VRChat profile 的抗锯齿范围（会弹 UAC；不影响 provider 生命周期）。
     void apply_area(float percent);
+    // 清除 FGB 自己写入的持久 HMD 身份（后台线程：广播环境变化可能阻塞）。
+    void clear_identity();
     // 停止 provider 并清空流程；不阻塞调用线程。
     void stop();
     void cancel();
@@ -81,14 +90,22 @@ private:
     std::thread worker_;
     std::thread stopper_;
     std::thread area_worker_;
+    std::thread identity_worker_;
     std::atomic<bool> busy_{false};
     std::atomic<bool> cancel_{false};
-    bool enabled_          = false;
-    int port_              = 5556;
-    bool auto_launch_      = false;
-    float area_percent_    = 12.0f;
-    bool msaa_confirmed_   = false;
-    bool vrchat_requested_ = false;
+    bool enabled_           = false;
+    int port_               = 5556;
+    bool auto_launch_       = false;
+    float area_percent_     = 10.0f;
+    bool msaa_confirmed_    = false;
+    bool vrchat_requested_  = false;
+    // 跟随 SteamVR 自动注册：只在"这一轮 SteamVR 会话"里自动跑一次，避免
+    // 用户取消 UAC 之后每 2 秒再弹一次。
+    bool auto_start_        = false;
+    bool auto_session_      = false;
+    bool persist_identity_  = true;
+    // 本次流程里持久身份是否与 provider 的注册身份一致。
+    bool identity_ready_    = false;
 };
 
 } // namespace fgb::vrss

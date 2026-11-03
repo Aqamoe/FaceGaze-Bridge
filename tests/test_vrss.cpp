@@ -1,6 +1,7 @@
 // VRSS 注视输入：只验证换算与"该不该发"，不碰真实 UDP/NVIDIA。
 #include "sinks/vrss_gaze_sink.hpp"
 #include "vrss/geometry.hpp"
+#include "vrss/identity.hpp"
 
 #include "test_framework.hpp"
 
@@ -41,6 +42,33 @@ FGB_TEST(vrss_point_to_ndc_corners) {
     VrssGazeSink::point_to_ndc(1.0f, 1.0f, x, y);
     FGB_CHECK_NEAR(x, 1.0, 1e-6);
     FGB_CHECK_NEAR(y, -1.0, 1e-6);
+}
+
+// 持久身份：写入格式必须与 runtime.cpp 的注入一致（0x 前缀大写十六进制），
+// 读取要同时接受手工写进去的十进制，否则"用户手动设的值"会被误判为无效。
+FGB_TEST(vrss_identity_env_text_roundtrip) {
+    FGB_CHECK(vrss::identity_env_text(0xFEEE) == "0xFEEE");
+    FGB_CHECK(vrss::identity_env_text(0x0001) == "0x1");
+    std::uint32_t value = 0;
+    FGB_CHECK(vrss::parse_identity_env_text("0xFEEE", value));
+    FGB_CHECK(value == 0xFEEE);
+    FGB_CHECK(vrss::parse_identity_env_text(" 65262 ", value));
+    FGB_CHECK(value == 65262);
+    FGB_CHECK(vrss::parse_identity_env_text("0X1", value));
+    FGB_CHECK(value == 1);
+    FGB_CHECK(!vrss::parse_identity_env_text("", value));
+    FGB_CHECK(!vrss::parse_identity_env_text("0x10000", value));
+    FGB_CHECK(!vrss::parse_identity_env_text("abc", value));
+}
+
+// 有真 EDID 的头显不能覆盖身份：把 0xFEEE 写进去反而会让游戏和 provider 都对不上。
+FGB_TEST(vrss_identity_override_only_without_edid) {
+    FGB_CHECK(!vrss::needs_identity_override("openvr-edid"));
+    FGB_CHECK(vrss::needs_identity_override("candidate-auto"));
+    FGB_CHECK(vrss::needs_identity_override("candidate-manual"));
+    FGB_CHECK(vrss::needs_identity_override("tuner-session"));
+    // 身份来源不明时不动环境变量，交给流程报错。
+    FGB_CHECK(!vrss::needs_identity_override(""));
 }
 
 FGB_TEST(vrss_geometry_parses_and_rejects_bad_projection) {
@@ -121,7 +149,6 @@ FGB_TEST(vrss_direction_to_ndc_sign_and_geometry) {
 
     VrssSinkConfig config = point_config();
     config.geometry       = geometry;
-    config.flip_y         = true;
     GazeState gaze;
     gaze.capture_ts_ns = kNow;
     gaze.left_valid    = true;
@@ -130,7 +157,9 @@ FGB_TEST(vrss_direction_to_ndc_sign_and_geometry) {
     gaze.right_dir_local = {0.0f, 0.5f, -0.866f};
     std::array<float, 4> ndc{};
     FGB_CHECK(VrssGazeSink::build_ndc(gaze, kNow, config, ndc));
-    FGB_CHECK(ndc[1] < 0.0f); // 显式翻转后向上为负
+    FGB_CHECK(ndc[1] > 0.0f); // 内部约定向上为正
+    // 发给驱动前统一翻转一次（驱动 +Y 向下），默认不需要用户开任何开关
+    FGB_CHECK(VrssGazeSink::driver_y(ndc[1], false) < 0.0f);
 }
 
 FGB_TEST(vrss_direction_requires_geometry) {
@@ -255,10 +284,10 @@ FGB_TEST(vrss_gain_and_center_offset) {
     // 右眼 y=0.25 → ndc +0.5；*0.5 - 0.2 = 0.05
     FGB_CHECK_NEAR(ndc[3], 0.05, 1e-5);
 
-    // flip_y 只翻了方向，不改变偏移方向
-    config.flip_y = true;
-    FGB_CHECK(VrssGazeSink::build_ndc(gaze, kNow, config, ndc));
-    FGB_CHECK_NEAR(ndc[1], 0.5 * 0.5 - 0.2, 1e-5);
+    // 驱动侧的 Y 翻转是最后一步、只改符号：内部 NDC 与偏移方向都不受影响。
+    FGB_CHECK_NEAR(VrssGazeSink::driver_y(0.5f, false), -0.5f, 1e-6);
+    FGB_CHECK_NEAR(VrssGazeSink::driver_y(0.5f, true), 0.5f, 1e-6);
+    FGB_CHECK_NEAR(VrssGazeSink::driver_y(0.0f, false), 0.0f, 1e-6);
 }
 
 // 双眼补偿：一正一负的横移。正值内收（左眼右移、右眼左移），用来抵消驱动侧视差。

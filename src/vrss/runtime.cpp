@@ -2,6 +2,7 @@
 
 #include "base/json_value.hpp"
 #include "base/log.hpp"
+#include "vrss/identity.hpp"
 #include "vrss/paths.hpp"
 
 #include <algorithm>
@@ -180,6 +181,33 @@ double mtime_age_seconds(const std::filesystem::path& path) {
     return static_cast<double>(age.count()) / 1000.0;
 }
 
+// provider 的错误原文是英文的、面向开发者的；页面必须给可操作的中文原因。
+// 只映射会影响"用户下一步做什么"的几条，其余原样返回（诊断包里仍有英文原文）。
+std::string friendly_provider_error(std::string text) {
+    if (text.empty()) {
+        return text;
+    }
+    const auto has = [&text](const char* needle) { return text.find(needle) != std::string::npos; };
+    if (has("Another generic VRSS provider")) {
+        return "另一个通用 VRSS 提供程序（common_vrss_provider.exe）正在运行；请先结束它再启动注视路径";
+    }
+    if (has("Another Tuner provider owns")) {
+        return "这个头显路由已被另一个 VRSS 提供程序占用（常见是上一轮的提权进程没退）；"
+               "请在任务管理器结束 fgb-vrss-provider.exe 后重试";
+    }
+    if (has("existing provider event is inaccessible")) {
+        return "上一轮的 VRSS 事件无法访问（权限残留）；请重启本软件，必要时重启系统后再试";
+    }
+    if (has("existing provider bridge")) {
+        return "上一轮的 VRSS 桥仍存在且未允许热重连；请先正常关闭 VRChat，再启动注视路径";
+    }
+    if (has("retains the previous connection")) {
+        return "NVIDIA 拒绝热重连：VRChat 仍持有上一轮连接。"
+               "请先正常关闭 VRChat，启动注视路径，再重新打开 VRChat";
+    }
+    return text;
+}
+
 std::string contract_key(const std::filesystem::path& path) {
     const std::string body = read_text(path);
     const std::string api  = field_value(body, "api_sha256");
@@ -251,24 +279,47 @@ bool Runtime::export_geometry(HmdGeometry& out, std::string& error) {
     }
     std::filesystem::create_directories(run_dir());
     const std::filesystem::path target = run_dir() / "geometry.txt";
-    FGB_INFO("vrss", "导出几何 → %s", target.string().c_str());
-    std::error_code remove_error;
-    std::filesystem::remove(target, remove_error);
-    int code = 0;
-    std::string output;
-    const std::string arguments = "\"" + target.string() + "\"";
-    FGB_INFO("vrss", "运行 %s %s", exporter_exe().string().c_str(), arguments.c_str());
-    if (!run_capture(exporter_exe(), arguments, 10000, code, output) || code != 0 ||
-        !std::filesystem::is_regular_file(target)) {
-        FGB_WARN("vrss", "几何导出失败 code=%d output=%s", code, output.c_str());
-        error = output.empty() ? "OpenVR 几何导出失败（请确认 SteamVR 已启动并连接头显）"
-                               : "OpenVR 几何导出失败：" + output;
+
+    // 每次导出都覆盖同一份文件；返回 false 时保留上一次成功的内容不参与判断。
+    const auto export_once = [&](const std::string& extra) {
+        std::error_code remove_error;
+        std::filesystem::remove(target, remove_error);
+        const std::string arguments = "\"" + target.string() + "\"" + extra;
+        FGB_INFO("vrss", "运行 %s %s", exporter_exe().string().c_str(), arguments.c_str());
+        int code = 0;
+        std::string output;
+        if (!run_capture(exporter_exe(), arguments, 10000, code, output) || code != 0 ||
+            !std::filesystem::is_regular_file(target)) {
+            FGB_WARN("vrss", "几何导出失败 code=%d output=%s", code, output.c_str());
+            error = output.empty() ? "OpenVR 几何导出失败（请确认 SteamVR 已启动并连接头显）"
+                                   : "OpenVR 几何导出失败：" + output;
+            return false;
+        }
+        std::string parse_error;
+        if (!load_geometry(target, out, parse_error)) {
+            error = parse_error;
+            return false;
+        }
+        return true;
+    };
+
+    if (!export_once({})) {
         return false;
     }
-    std::string parse_error;
-    if (!load_geometry(target, out, parse_error)) {
-        error = parse_error;
-        return false;
+    // 没有 EDID 的头显（PICO/串流）：第一次拿到的是按序列号哈希的 candidate 身份，
+    // 串流会话换序列号就会变。持久化的环境变量必须是常量，所以改用固定会话键。
+    // 有真 EDID 时保留头显自己的身份，不替换（换成 0xFEEE 会让真机反而失配）。
+    if (needs_identity_override(out.identity_source) && out.identity_source != "tuner-session") {
+        FGB_INFO("vrss", "身份来源 %s：改用固定会话键 %s:%s",
+                 out.identity_source.c_str(), identity_env_text(kSessionVendor).c_str(),
+                 identity_env_text(kSessionProduct).c_str());
+        if (!export_once(" --common-session-key")) {
+            FGB_WARN("vrss", "固定会话键导出失败，沿用序列号派生身份：%s", error.c_str());
+            // 退回第一次的结果：功能仍可用，只是持久身份会随序列号变化
+            if (!export_once({})) {
+                return false;
+            }
+        }
     }
     return true;
 #else
@@ -431,19 +482,33 @@ bool Runtime::start_provider(int port, const std::string& contract, float area_p
         arguments += " --experimental-contract \"" + contract + "\"";
     }
 
+    // lpFile / lpDirectory 指向的宽字符串必须在调用期间一直存活。以前写成
+    // provider_exe().wstring().c_str()：临时字符串在语句结束就析构，ShellExecuteExW
+    // 拿到的是悬垂指针 —— 表现是 Windows 自己弹"找不到文件"（文件名还是空的），
+    // 而不是我们的错误文案。
+    const std::wstring provider_path = provider_exe().wstring();
+    const std::wstring working_dir   = runtime_dir().wstring();
+    const std::wstring wide_args     = to_wide(arguments);
+    if (!std::filesystem::is_regular_file(provider_exe())) {
+        error = "找不到 " + provider_exe().string() + "（VRSS 组件未安装或被杀软隔离）";
+        return false;
+    }
+
     SHELLEXECUTEINFOW info{};
     info.cbSize      = sizeof(info);
-    info.fMask       = SEE_MASK_NOCLOSEPROCESS;
+    // FLAG_NO_UI：失败时不要弹系统的错误框，让原因回到页面上，别再出现"文件名是空的"。
+    info.fMask       = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
     info.lpVerb      = L"runas";
-    info.lpFile      = provider_exe().wstring().c_str();
-    const std::wstring wide_args = to_wide(arguments);
+    info.lpFile      = provider_path.c_str();
     info.lpParameters = wide_args.c_str();
-    info.lpDirectory  = runtime_dir().wstring().c_str();
+    info.lpDirectory  = working_dir.c_str();
     info.nShow        = SW_HIDE;
     if (!ShellExecuteExW(&info)) {
         const DWORD code = GetLastError();
-        error = code == ERROR_CANCELLED ? "需要管理员权限（UAC 已取消）"
-                                        : "启动 provider 失败（错误码 " + std::to_string(code) + "）";
+        error = code == ERROR_CANCELLED
+                    ? "需要管理员权限（UAC 已取消）"
+                    : "启动 provider 失败（错误码 " + std::to_string(code) + "，路径 " +
+                          provider_exe().string() + "）";
         return false;
     }
     if (info.hProcess) {
@@ -503,8 +568,8 @@ bool Runtime::set_area(float percent, std::string& error) {
     if (!installed(error)) {
         return false;
     }
-    if (percent < 1.0f || percent > 100.0f) {
-        error = "VRSS 抗锯齿范围必须在 1..100%";
+    if (percent < 1.0f || percent > 50.0f) {
+        error = "VRSS 抗锯齿范围必须在 1..50%";
         return false;
     }
     std::filesystem::create_directories(run_dir());
@@ -513,20 +578,25 @@ bool Runtime::set_area(float percent, std::string& error) {
     const std::string arguments =
         "--set-vrss-area " + std::to_string(percent) + " --output \"" + run_dir().string() + "\"";
 
+    // 同 start_provider：路径字符串必须活到 ShellExecuteExW 返回之后。
+    const std::wstring provider_path = provider_exe().wstring();
+    const std::wstring working_dir   = runtime_dir().wstring();
+    const std::wstring wide_args     = to_wide(arguments);
+
     SHELLEXECUTEINFOW info{};
     info.cbSize      = sizeof(info);
-    info.fMask       = SEE_MASK_NOCLOSEPROCESS;
+    info.fMask       = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
     info.lpVerb      = L"runas";
-    info.lpFile      = provider_exe().wstring().c_str();
-    const std::wstring wide_args = to_wide(arguments);
+    info.lpFile      = provider_path.c_str();
     info.lpParameters = wide_args.c_str();
-    info.lpDirectory  = runtime_dir().wstring().c_str();
+    info.lpDirectory  = working_dir.c_str();
     info.nShow        = SW_HIDE;
     if (!ShellExecuteExW(&info)) {
         const DWORD code = GetLastError();
-        error = code == ERROR_CANCELLED ? "需要管理员权限（UAC 已取消）"
-                                        : "无法启动 VRSS 设置助手（错误码 " +
-                                              std::to_string(code) + "）";
+        error = code == ERROR_CANCELLED
+                    ? "需要管理员权限（UAC 已取消）"
+                    : "无法启动 VRSS 设置助手（错误码 " + std::to_string(code) + "，路径 " +
+                          provider_exe().string() + "）";
         return false;
     }
     if (info.hProcess == nullptr) {
@@ -648,7 +718,7 @@ std::string Runtime::last_error_text() const {
         return {};
     }
     const std::size_t newline = body.find('\n');
-    return newline == std::string::npos ? body : body.substr(newline + 1);
+    return friendly_provider_error(newline == std::string::npos ? body : body.substr(newline + 1));
 }
 
 void Runtime::write_lease() const {
@@ -749,6 +819,14 @@ void restore_env(const wchar_t* name, const std::wstring& old, bool had_old) {
 
 } // namespace
 #endif
+
+bool Runtime::steamvr_running() const {
+#ifdef _WIN32
+    return running_process(L"vrserver.exe");
+#else
+    return false;
+#endif
+}
 
 bool Runtime::vrchat_running() const {
 #ifdef _WIN32

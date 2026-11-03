@@ -1278,6 +1278,15 @@ input[type="number"]::-webkit-outer-spin-button {
 .cal-stage .hint { margin: 8px 0 0; font-size: 11.5px; }
 .cal-side { min-width: 0; }
 
+/* 右侧是一列卡片：纵向间距统一在这里给。
+   以前靠每张卡写 inline margin-bottom，漏写一张（注视点校准）就和下一张黏在一起。
+   间距走 margin-bottom 而不是 gap：.cal-side 里还夹着提示文字与形状列表，
+   它们之间的松紧不该跟卡片一样。 */
+.cal-side > .card { margin-bottom: 14px; }
+
+/* 直接把卡片放在页面下的页面（VRSS 等）：相邻卡片之间同样要有间距。 */
+.page > .card + .card { margin-top: 14px; }
+
 .cal-row.selected {
   border-color: rgb(59 130 246 / .75);
   box-shadow: 0 0 0 1px rgb(59 130 246 / .25);

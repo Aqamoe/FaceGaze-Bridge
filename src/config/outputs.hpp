@@ -47,18 +47,30 @@ struct OutputOptions {
     bool vrss_enabled          = false;
     std::uint16_t vrss_port    = 5556;
     int vrss_rate_hz           = 90;
-    float vrss_x_gain          = 1.0f;
-    float vrss_y_gain          = 1.0f;
-    // 中心偏移（归一化单位，NDC）：正 x = 右、正 y = 上。
+    // 默认增益 0.5 不是随手取的：实测 NVIDIA 的 normalized location 里 1 等于
+    // 一个完整视口宽（而不是半个），FGB 的 NDC 换算按半宽算，所以正好差 2 倍。
+    // 这套值在真机上验证过：注视点校准完成后直接就能用，不需要手工微调；
+    // 用户觉得幅度不对时再往 1.0/2.0 方向调。
+    float vrss_x_gain          = 0.5f;
+    float vrss_y_gain          = 0.5f;
+    // 中心偏移（归一化单位，内部 NDC）：正 x = 右、正 y = 上。
     // 和增益一起构成一次仿射校正：ndc = point * gain + offset。
     float vrss_x_offset        = 0.0f;
     float vrss_y_offset        = 0.0f;
     // 双眼对称补偿：正值内收（左眼右移、右眼左移），抵消驱动侧的双眼视差。
     float vrss_stereo_offset   = 0.0f;
-    bool vrss_flip_y           = false;
-    // 中央超采样区域，写入 NVIDIA 的 VRChat profile（1..100，常用 10..15）。
-    float vrss_area_percent    = 12.0f;
+    // Y 轴方向由代码统一处理（驱动 +Y 向下，发之前翻一次），所以默认不需要这个开关。
+    // 只有区域真的上下颠倒时（换驱动/换来源）才打开，等于取消内部那次翻转。
+    bool vrss_y_invert         = false;
+    // 中央超采样区域，写入 NVIDIA 的 VRChat profile（1..50，常用 10..15）。
+    float vrss_area_percent    = 10.0f;
     bool vrss_auto_launch_vrchat = false;
+    // 跟随 SteamVR 自动注册：FGB 随 SteamVR 启动后自己跑完流程（会弹一次 UAC），
+    // 之后用户直接用 Steam 启动游戏即可。
+    bool vrss_auto_start       = false;
+    // 无 EDID 头显（PICO/串流）把 provider 的 HMD 身份写成用户级环境变量，
+    // 让 Steam 正常启动的游戏也能对上。真 EDID 头显会自动清掉。
+    bool vrss_persist_identity = true;
     // 实验：允许把"来源空间"的原始逐眼 2D 点按两眼中点喂给 VRSS。
     // 默认关：ADR-0033 说这类点不是屏幕位置，必须真机四方向确认后才算可用。
     bool vrss_allow_source_points = false;

@@ -67,6 +67,8 @@ public:
     bool launch_vrchat(std::string& error) const;
     bool admin_enabled() const;
     bool port_available(int port) const;
+    // SteamVR 的 vrserver.exe 是否在跑；自动启用流程据此判断"该不该现在注册"。
+    bool steamvr_running() const;
 
     // 最近一次驱动检查使用的合同路径（空 = 内建白名单）。
     const std::string& contract() const noexcept { return contract_; }

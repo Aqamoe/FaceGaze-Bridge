@@ -32,7 +32,7 @@
 
 页面文案统一使用"注视点抗锯齿 / 可变速率超采样"，不得写"注视点渲染"。
 
-**抗锯齿范围**：1–100%（常用 10–15%）。这是 NVIDIA VRChat profile 里的隐藏
+**抗锯齿范围**：1–50%（常用 10–15%，默认 10%）。这是 NVIDIA VRChat profile 里的隐藏
 VRSS area 设置（`0x00524254`），FGB 只写这一个字段，不伪造 allow/mode；写入需要
 管理员权限，**重启 VRChat 后生效**。
 
@@ -149,7 +149,11 @@ projection1=...
 eyeToHead1=...
 ```
 
-**PICO 串流身份**：PICO Connect 这类虚拟 HMD 可能没有 EDID，导出器会按 `Prop_TrackingSystemName_String` + `SerialNumber` 派生候选身份（`candidate-auto`）。这是真机验收项；失败就报"无法取得头显身份"，不猜。
+**PICO 串流身份**：PICO Connect 这类虚拟 HMD 可能没有 EDID，导出器先按
+`Prop_TrackingSystemName_String` + `SerialNumber` 派生候选身份（`candidate-auto`）。
+由于串流会话序列号可能变化，FGB 随后会用 `--common-session-key` 重导一次，改成固定
+会话键 `0xFEEE:0x0001`（`identitySource=tuner-session`），这样持久化的环境变量不会失效。
+真机验收：失败就报"无法取得头显身份"，不猜。
 
 ### 3.5 实验驱动合同
 
@@ -284,12 +288,14 @@ method_rvas=<8 个 0x... 逗号分隔>
 vrss_enabled   = false       ; 默认关
 vrss_port      = 5556        ; 只允许回环
 vrss_rate_hz   = 90          ; 30..120
-vrss_x_gain    = 1.0         ; 0.1..2
-vrss_y_gain    = 1.0         ; 0.1..2
+vrss_x_gain    = 0.5         ; 0.1..2；驱动坐标 1 = 一个视口宽，故默认 0.5
+vrss_y_gain    = 0.5         ; 0.1..2
 vrss_x_offset  = 0.0         ; -1..1（中心偏移，归一化单位）
 vrss_y_offset  = 0.0         ; -1..1
-vrss_flip_y    = false       ; 方向仍反时手动翻 Y
+vrss_y_invert  = false       ; Y 轴方向由代码统一翻转；仅区域上下颠倒时开
 vrss_auto_launch_vrchat = false  ; 一键流程最后一步是否自动启动 VRChat
+vrss_auto_start       = false    ; 跟随 SteamVR 自动注册（一轮会话只跑一次）
+vrss_persist_identity = true     ; 无 EDID 头显把身份写成用户级环境变量
 ```
 
 - 校验范围与上游 `ReadGain` 一致；`vrss_port` 只接受 `127.0.0.1`。
@@ -328,7 +334,7 @@ vrss_auto_launch_vrchat = false  ; 一键流程最后一步是否自动启动 VR
   "driver": {"supported": true, "version": "610.88", "contract": "audited|experimental|none"},
   "setup": {"steamvr": true, "geometry": true, "identity": "openvr-edid", "admin": true},
   "lease_age_s": 1.2,
-  "calibration": {"x_gain": 1.0, "y_gain": 1.0, "x_offset": 0.0, "y_offset": 0.0, "flip_y": false},
+  "calibration": {"x_gain": 0.5, "y_gain": 0.5, "x_offset": 0.0, "y_offset": 0.0, "y_invert": false},
   "last_error": ""
 }
 ```
@@ -408,7 +414,7 @@ IDLE
 |---|---|
 | 应用位置 | Sink 内、发 UDP 前：`ndc = clamp(ndc * gain + offset, -1, 1)`，两眼共用同一组 offset |
 | 保存 | 页面内保存到 `outputs.ini`；随预设一起保存/应用 |
-| 默认 | `0/0/1/1`，即纯换算 |
+| 默认 | 增益 0.5 / 偏移 0 / 翻转开（真机对齐值）；`1.0` 会让区域走两倍距离 |
 | 标定 | 不提供 9 点标定；只提供四方向验证 + gain/offset + 恢复默认 |
 
 ### P3.7 文档修正与定位
@@ -469,7 +475,7 @@ v1 用步骤 3 的**一键确认按钮**（点击即通过并进入下一步）�
 | provider 崩溃 | `status.json` 停更 → 页面 `failed`；提供「重新启动」 |
 | VRChat 已持有旧连接 | 重注册报 `-175`；页面明确"先正常关闭 VRChat，再启动注视路径，再开 VRChat" |
 | UAC 取消 | 步骤 4 `failed`"需要管理员权限"；不自动重试 |
-| VRChat 启动 | 有 EDID 的头显用 `steam://rungameid/438100`；**无 EDID 的 PICO/串流头显必须用 `start_protected_game.exe` 并注入 `TEST_VENDOR_ID` / `TEST_PRODUCT_ID`**，否则游戏与 provider 的 HMD 身份不一致，`consumerCount` 会一直是 0 |
+| VRChat 启动 | 有 EDID 的头显用 `steam://rungameid/438100`；无 EDID 的 PICO/串流头显默认走**持久身份**：把同一对 `TEST_VENDOR_ID` / `TEST_PRODUCT_ID` 写进 `HKCU\Environment`，用户重启 Steam 后用普通 Steam 启动即可（ADR-0040 第 9 条）。关闭持久身份时才退回 `start_protected_game.exe` 注入。两种方式缺少时 `consumerCount` 会一直是 0 |
 
 **权限原则**：
 - 外壳与引擎始终 `asInvoker`；只有 provider 提权。
@@ -527,6 +533,8 @@ v1 用步骤 3 的**一键确认按钮**（点击即通过并进入下一步）�
 | D8 | 页面位置与命名 | 侧栏「VRSS」，标题「VRSS 可变速率超采样」 |
 | D9 | 非 `POINT_VIEWPORT` 的 2D 源 | **拒绝启用**并提示修模块 |
 | D10 | 校准归属 | **FGB 侧**（UDP 路径 provider 不套 gain） |
+| D11 | 无 EDID 头显的身份 | **持久化为用户级环境变量**（固定会话键 `0xFEEE:0x0001`）；Steam 正常启动游戏即可，注入口径降级为兜底 |
+| D12 | 是否跟随 SteamVR 自动注册 | **可选开关，默认关**；开启后一轮 SteamVR 会话自动跑一次，取消 UAC 或点停止后本轮不再重试 |
 
 ---
 

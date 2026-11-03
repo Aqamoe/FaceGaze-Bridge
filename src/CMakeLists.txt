@@ -106,12 +106,14 @@ target_link_libraries(fgb_process PUBLIC fgb_core)
 # 不依赖 engine，避免 engine -> vrss -> engine 的环。
 add_library(fgb_vrss STATIC
     vrss/geometry.cpp
+    vrss/identity.cpp
     vrss/paths.cpp
     vrss/runtime.cpp
     vrss/workflow.cpp)
 target_link_libraries(fgb_vrss PUBLIC fgb_core fgb_config)
 if(WIN32)
-    target_link_libraries(fgb_vrss PRIVATE shell32 advapi32 ws2_32)
+    # user32: 持久身份写入后广播 WM_SETTINGCHANGE（SendMessageTimeoutW）
+    target_link_libraries(fgb_vrss PRIVATE shell32 advapi32 ws2_32 user32)
 endif()
 
 # VMC 协议的共享部分（blendshape 名字表）：输入和输出都用它，

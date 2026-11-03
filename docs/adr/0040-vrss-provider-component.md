@@ -33,9 +33,34 @@ GUI、多厂商桥接、未文档化 NVAPI 私有调用与管理员权限要求�
    自退并 unregister。托盘退出时写 `stop.request`。
 7. **一键流程在引擎侧状态机**：六步（环境 / 驱动 / 探测 / 权限与 MSAA / provider /
    VRChat / 验证），需要用户操作的步骤停在 blocked，不自动猜。
-8. **无 EDID 头显的启动身份注入**：PICO/串流等 `candidate-auto` 身份必须通过
-   `TEST_VENDOR_ID` / `TEST_PRODUCT_ID` 传给 VRChat 的受保护启动器；普通 Steam
-   启动不会注入，provider 注册成功但 `consumerCount` 会一直是 0。
+8. **无 EDID 头显的启动身份注入（v1，已降级为兜底）**：PICO/串流等 `candidate-auto`
+   身份通过 `TEST_VENDOR_ID` / `TEST_PRODUCT_ID` 传给 VRChat 的受保护启动器。
+   只在"持久身份关闭"时使用。
+9. **持久 HMD 身份（v2，默认开）**：无 EDID 头显改用固定会话键 `0xFEEE:0x0001`
+   （导出器 `--common-session-key`），把同一对值写成 `HKCU\Environment` 的
+   `TEST_VENDOR_ID` / `TEST_PRODUCT_ID`（不需要管理员）。之后 **Steam 正常启动的
+   VRChat 也能对上 provider**，不必由本软件代起游戏。
+   - 生效条件：Steam 在进程启动时固定环境块，写完必须完全退出并重启 Steam。
+   - 有真 EDID 的头显自动清除这对变量（否则游戏上报假身份，反而失配）。
+   - 只删自己写的值：`%LOCALAPPDATA%\FaceGazeBridge\vrss\persist-identity.txt`
+     记录 vendor/product 与写入时间；值被外部改过就不动。
+   - **机制未确认**：`TEST_VENDOR_ID` 在 SteamVR / VRChat / PICO Connect 驱动的
+     明文里都搜不到（ASCII 与 UTF-16 都扫过），大概率在加壳的受保护启动器里读取。
+     这是实测有效的经验结论（2026-11-03 真机 A/B 验证），不是文档化契约。
+10. **跟随 SteamVR 自动注册（可选）**：`vrss_auto_start` 打开时，FGB 随 SteamVR
+    启动后自己跑流程（自动跳过 MSAA 确认按钮，仍由验证步骤兜底），一轮 SteamVR
+    会话只自动跑一次；用户取消 UAC 或点「停止」后本轮不再重试。
+    provider 需要管理员权限，因此**每次会话仍有一次 UAC**，不做计划任务/服务常驻。
+11. **默认微调参数按实测对齐**：X/Y 增益 0.5、抗锯齿范围 10%（上限 50%）。
+    依据是真机把注视点与高质量区位置逐方向比对：NVIDIA normalized location 的
+    1 = 一个完整视口宽，而 FGB 的 NDC 换算按半宽算，正好差 2 倍。结果是"做完注视点
+    校准就能直接用"，用户只在幅度/中心偏了时才手动调。
+    注意这是**驱动侧显示偏差**的补偿，与注视校准（把原始点映射到视口）不是一回事。
+12. **Y 轴方向不暴露给用户**：驱动 normalized location 的 +Y 向下，FGB 内部一律
+    按 +Y 向上算，在 `submit()` 最后一步统一翻转（`driver_y`），因此增益/偏移的语义
+    始终是"正 y = 上"。保留 `y_invert` 只作兜底（换驱动/来源导致上下颠倒时取消内部
+    翻转），默认关闭；旧键 `flip_y` 不再读取，避免旧值（=1，旧语义为"翻转"）在新语义
+    下被误解成"不翻转"。
 
 ## 上游补丁（`third_party/vrss/PATCHES.md`）
 
@@ -44,6 +69,8 @@ GUI、多厂商桥接、未文档化 NVAPI 私有调用与管理员权限要求�
 - `--experimental-contract <path>`（参数优先于环境变量，提权进程继承不可靠）
 - `--driver-audit 1 --contract-out <path>` + `driverVersion=` 输出
 - 异常写 `run/error.txt`（带 `E_DRIVER` / `E_ADMIN` 等原因码）
+- 重连检查改为路由感知：厂商自带的 `vrss_gaze_provider.exe`（Pimax）只告警不阻断，
+  只有通用桥 `common_vrss_provider.exe` 才拒绝；枚举失败不再当作"有冲突"
 
 ## 不采用的做法
 
@@ -52,7 +79,7 @@ GUI、多厂商桥接、未文档化 NVAPI 私有调用与管理员权限要求�
 | 把 provider 链接进主进程 | 管理员令牌、私有 NVAPI、崩溃域污染 |
 | 直接复用 Baballonia OSC 路径 | 它没有逐眼方向/置信度/时间戳，精度不如 FGB 的 2D 点 |
 | 让 provider 套 gain | UDP 路由此路径不生效，会造成两处调参 |
-| 自动改 NVIDIA profile | 只允许用户显式调整 VRSS area（1–100%，默认 12%）；不伪造 allow/mode，也不改其它 profile 值 |
+| 自动改 NVIDIA profile | 只允许用户显式调整 VRSS area（1–50%，默认 10%）；不伪造 allow/mode，也不改其它 profile 值 |
 | 9 点标定 | VRSS 要每眼视口位置，不是角度；标定解决的是世界固定屏幕 |
 
 ## 风险
@@ -60,4 +87,8 @@ GUI、多厂商桥接、未文档化 NVAPI 私有调用与管理员权限要求�
 - 驱动镜像 SHA-256 / vtable RVA 一旦变化，功能失效；只能重新审计或等上游。
 - 探测通过 ≠ 渲染正确；必须真机看四方向，UI 文案固定说明。
 - UAC、杀软误报、未文档化 API 均无法消除，只能隔离与默认关闭。
-- PICO 串流可能没有 EDID，依赖 `candidate-auto` 身份；失败时明确报错。
+- PICO 串流可能没有 EDID，依赖候选身份；失败时明确报错。
+- 持久身份是**用户级全局变量**：会影响该用户下所有 OpenVR 应用（其它 VR 游戏会看到
+  假 HMD 身份）。换真机头显、或不再使用 VRSS 时必须清除（首页提供「清除持久身份」）。
+- 持久身份与 MSAA 是**两个独立前提**：真机验证里 AA=x1 时 consumer 恒为 0，改 x4 后
+  11 秒内变 1。页面文案不能只提身份。

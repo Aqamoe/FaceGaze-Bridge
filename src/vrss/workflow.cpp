@@ -1,5 +1,8 @@
 #include "vrss/workflow.hpp"
 
+#include "base/log.hpp"
+#include "vrss/paths.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <exception>
@@ -38,6 +41,9 @@ Workflow::~Workflow() {
     if (area_worker_.joinable()) {
         area_worker_.join();
     }
+    if (identity_worker_.joinable()) {
+        identity_worker_.join();
+    }
 }
 
 void Workflow::join_worker() {
@@ -46,16 +52,22 @@ void Workflow::join_worker() {
     }
 }
 
-void Workflow::configure(bool enabled, int port, bool auto_launch_vrchat, float area_percent) {
+void Workflow::configure(bool enabled, int port, bool auto_launch_vrchat, float area_percent,
+                         bool auto_start, bool persist_identity) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        enabled_         = enabled;
-        port_            = port;
-        auto_launch_     = auto_launch_vrchat;
-        area_percent_    = area_percent;
-        snap_.enabled    = enabled;
+        enabled_          = enabled;
+        port_             = port;
+        auto_launch_      = auto_launch_vrchat;
+        area_percent_     = area_percent;
+        auto_start_       = auto_start;
+        persist_identity_ = persist_identity;
+        snap_.enabled     = enabled;
+        snap_.auto_start  = auto_start;
+        snap_.persist_identity = persist_identity;
         if (!enabled) {
-            snap_.state = "off";
+            snap_.state  = "off";
+            auto_session_ = false; // 关掉再打开时允许重新自动注册
         } else if (snap_.state == "off") {
             snap_.state = "blocked";
         }
@@ -136,12 +148,31 @@ void Workflow::apply_area(float percent) {
     });
 }
 
+void Workflow::clear_identity() {
+    if (identity_worker_.joinable()) {
+        identity_worker_.join();
+    }
+    identity_worker_ = std::thread([this] {
+        std::string error;
+        const bool ok = clear_persistent_identity(error);
+        const PersistentIdentity state = persistent_identity();
+        std::lock_guard<std::mutex> lock(mutex_);
+        snap_.identity  = state;
+        identity_ready_ = false;
+        if (!ok) {
+            snap_.last_error = "清除持久身份失败：" + error;
+        }
+    });
+}
+
 void Workflow::cancel() {
     cancel_ = true;
 }
 
 void Workflow::stop() {
     cancel_ = true;
+    // 用户显式停止：本轮 SteamVR 会话内不要再自动拉起，否则"停止"形同虚设。
+    auto_session_ = true;
     if (stopper_.joinable()) {
         stopper_.join();
     }
@@ -191,35 +222,81 @@ void Workflow::refresh() {
     runtime_.write_lease();
     ProviderStatus status;
     runtime_.read_status(status);
-    const bool vrchat = runtime_.vrchat_running();
-    std::lock_guard<std::mutex> lock(mutex_);
-    snap_.provider       = status;
-    snap_.vrchat_running = vrchat;
-    if (StepStatus* verify = find_step(snap_, StepId::Verify);
-        verify && verify->state != StepState::Pass && status.consumer_count > 0) {
-        if (status.fresh) {
-            verify->state  = StepState::Pass;
-            verify->detail = "VRChat 已连接，注视数据正在提交";
-        } else if (status.sent == 0) {
-            // consumer 有、但一帧都没提交过：驱动只会把区域留在上一次/默认位置，
-            // 头显里看就是"固定在一个角上不跟随"。这里必须报失败，不能报通过。
-            verify->state  = StepState::Fail;
-            verify->detail = "VRChat 已连接，但 provider 一帧注视都没收到（FGB 没有发送）";
-        } else {
-            verify->state  = StepState::Blocked;
-            verify->detail = "VRChat 已连接，等待新的注视数据";
+    const bool vrchat  = runtime_.vrchat_running();
+    const bool steamvr = runtime_.steamvr_running();
+    const PersistentIdentity identity = persistent_identity();
+
+    bool trigger_auto   = false;
+    bool verify_changed = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        snap_.provider       = status;
+        snap_.vrchat_running = vrchat;
+        snap_.steamvr        = steamvr;
+        snap_.identity       = identity;
+        // 用户手动删掉/改了变量时，"持久身份已就绪"必须跟着失效，
+        // 否则下一步会误判"可以直接从 Steam 启动游戏"。
+        if (identity_ready_ && (!identity.set || !identity.ours)) {
+            identity_ready_ = false;
+        }
+        // 必须确认 provider 真的在跑：软件关掉后 status.json 会停在最后一帧，
+        // 里面的 consumerCount=1 会让页面误报"VRChat 已连接、正在提交"。
+        if (StepStatus* verify = find_step(snap_, StepId::Verify);
+            verify && verify->state != StepState::Pass && status.running &&
+            status.consumer_count > 0) {
+            if (status.fresh) {
+                verify->state  = StepState::Pass;
+                verify->detail = "VRChat 已连接，注视数据正在提交";
+            } else if (status.sent == 0) {
+                // consumer 有、但一帧都没提交过：驱动只会把区域留在上一次/默认位置，
+                // 头显里看就是"固定在一个角上不跟随"。这里必须报失败，不能报通过。
+                verify->state  = StepState::Fail;
+                verify->detail = "VRChat 已连接，但 provider 一帧注视都没收到（FGB 没有发送）";
+            } else {
+                verify->state  = StepState::Blocked;
+                verify->detail = "VRChat 已连接，等待新的注视数据";
+            }
+            verify_changed = true;
+        }
+        if (snap_.state == "running" && !status.running) {
+            // 只有 provider 步骤已经通过、随后进程消失，才算"provider 退出"。
+            // 流程刚起步时 provider 本来就没运行，refresh 不能把它误判成失败。
+            StepStatus* provider = find_step(snap_, StepId::Provider);
+            if (provider != nullptr && provider->state == StepState::Pass) {
+                snap_.state      = "failed";
+                snap_.last_error = "provider 已退出";
+                provider->state  = StepState::Fail;
+                provider->detail = "provider 已退出";
+            }
+        }
+        // 用户按提示正常关掉 VRChat 之后自动继续，不必再点一次「一键启用」。
+        if (auto_start_ && !busy_ && !vrchat) {
+            if (StepStatus* provider = find_step(snap_, StepId::Provider);
+                provider && provider->state == StepState::Blocked &&
+                provider->detail.rfind("VRChat 仍持有", 0) == 0) {
+                provider->state = StepState::Pending;
+                provider->detail.clear();
+                auto_session_ = false; // 允许下一拍重新自动跑
+            }
+        }
+        // 跟随 SteamVR 自动注册：SteamVR 不在时清会话标记，下次出现可以再自动跑一次。
+        // 用户取消 UAC 后本轮不再重试，避免每 2 秒弹一次。
+        // 即使 provider 已经注册也跑一轮：FGB 重启后环境变量可能被清掉，
+        // 流程本身是幂等的（provider 已就绪时沿用几何、不重复 UAC）。
+        if (!steamvr) {
+            auto_session_ = false;
+        } else if (auto_start_ && enabled_ && !auto_session_ && !busy_) {
+            auto_session_ = true;
+            trigger_auto  = true;
         }
     }
-    if (snap_.state == "running" && !status.running) {
-        // 只有 provider 步骤已经通过、随后进程消失，才算"provider 退出"。
-        // 流程刚起步时 provider 本来就没运行，refresh 不能把它误判成失败。
-        StepStatus* provider = find_step(snap_, StepId::Provider);
-        if (provider != nullptr && provider->state == StepState::Pass) {
-            snap_.state      = "failed";
-            snap_.last_error = "provider 已退出";
-            provider->state  = StepState::Fail;
-            provider->detail = "provider 已退出";
-        }
+    if (trigger_auto) {
+        FGB_INFO("vrss", "检测到 SteamVR，自动启动 VRSS 注册流程");
+        start();
+    }
+    if (verify_changed) {
+        // 验证结果变了要重算整体状态，否则消费方连上后页面仍停在 blocked。
+        finish_state();
     }
 }
 
@@ -247,28 +324,77 @@ void Workflow::run_steps() {
     // 1. 环境自检：SteamVR / HMD / 几何 / 身份。provider 已在跑时不再重导。
     if (!step_passed(StepId::Env)) {
         set_step(StepId::Env, StepState::Running, "检查 SteamVR 与头显几何");
+        HmdGeometry geometry;
+        std::string detail;
+        bool have_geometry = false;
         if (provider_ready) {
-            set_step(StepId::Env, StepState::Pass, "provider 已运行，沿用现有几何");
-            std::lock_guard<std::mutex> lock(mutex_);
-            snap_.steamvr  = true;
-            snap_.geometry = true;
+            std::string parse_error;
+            have_geometry = load_geometry(run_dir() / "geometry.txt", geometry, parse_error);
+            detail        = "provider 已运行，沿用现有几何";
         } else {
-            HmdGeometry geometry;
             std::string error;
             if (!runtime_.export_geometry(geometry, error)) {
                 set_step(StepId::Env, StepState::Fail, error);
                 finish_state();
                 return;
             }
+            have_geometry = true;
+            detail        = "身份 " + geometry.identity_source + " / " +
+                     std::to_string(geometry.vendor) + ":" + std::to_string(geometry.product);
+        }
+
+        std::string identity_detail;
+        if (have_geometry) {
+            const bool override_identity = needs_identity_override(geometry.identity_source);
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                snap_.steamvr  = true;
-                snap_.geometry = true;
+                snap_.identity_source = geometry.identity_source;
             }
-            set_step(StepId::Env, StepState::Pass,
-                     "身份 " + geometry.identity_source + " / " + std::to_string(geometry.vendor) +
-                         ":" + std::to_string(geometry.product));
+            if (!persist_identity_) {
+                // 关掉开关要顺手把自己写过的变量清掉：否则游戏还会上报假身份，
+                // provider 那边却按用户预期不再管，结果是"看起来能连、其实对不上"。
+                std::string clear_error;
+                clear_persistent_identity(clear_error);
+                identity_ready_ = false;
+                identity_detail = override_identity
+                                      ? "；持久身份已关闭，需从本页启动 VRChat"
+                                      : "；头显自带 EDID";
+            } else if (override_identity) {
+                std::string error;
+                if (!apply_persistent_identity(geometry.vendor, geometry.product, error)) {
+                    set_step(StepId::Env, StepState::Fail, "写入持久 HMD 身份失败：" + error);
+                    finish_state();
+                    return;
+                }
+                const PersistentIdentity state = persistent_identity();
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    snap_.identity = state;
+                }
+                identity_ready_ = state.set && state.vendor == geometry.vendor &&
+                                  state.product == geometry.product;
+                identity_detail = "；持久身份 " + identity_env_text(geometry.vendor) + ":" +
+                                  identity_env_text(geometry.product);
+                if (state.steam_restart_required) {
+                    identity_detail += "（需重启 Steam 生效）";
+                }
+            } else {
+                // 真 EDID 头显：清掉以前为无 EDID 设备写下的变量，否则游戏上报的假身份
+                // 会和 provider 的真身份对不上。
+                std::string clear_error;
+                if (!clear_persistent_identity(clear_error)) {
+                    FGB_WARN("vrss", "清除持久身份失败：%s", clear_error.c_str());
+                }
+                identity_ready_ = false;
+                identity_detail = "；头显自带 EDID（未使用持久身份）";
+            }
         }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            snap_.steamvr  = true;
+            snap_.geometry = have_geometry;
+        }
+        set_step(StepId::Env, StepState::Pass, detail + identity_detail);
     }
     if (cancel_) {
         return;
@@ -311,7 +437,9 @@ void Workflow::run_steps() {
     // 3. 权限与互斥：MSAA/VRSS allow 由用户一键确认。
     if (!step_passed(StepId::Admin)) {
         set_step(StepId::Admin, StepState::Running, "检查端口与管理员权限");
-        if (!msaa_confirmed_) {
+        // 自动模式不能停下来等人点确认，否则"跟随 SteamVR 自动注册"永远走不到下一步。
+        // MSAA 仍由验证步骤兜底：没开 x4 时 consumer 一直是 0，页面会明确要求去开。
+        if (!msaa_confirmed_ && !auto_start_) {
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 snap_.admin = runtime_.admin_enabled();
@@ -331,7 +459,9 @@ void Workflow::run_steps() {
             std::lock_guard<std::mutex> lock(mutex_);
             snap_.admin = runtime_.admin_enabled();
         }
-        set_step(StepId::Admin, StepState::Pass, "启动时将请求管理员权限");
+        set_step(StepId::Admin, StepState::Pass,
+                 msaa_confirmed_ ? "启动时将请求管理员权限"
+                                 : "自动模式：跳过 MSAA 确认（请保持 VRChat 内 MSAA x4）");
     }
     if (cancel_) {
         return;
@@ -341,6 +471,17 @@ void Workflow::run_steps() {
     if (!step_passed(StepId::Provider)) {
         set_step(StepId::Provider, StepState::Running, "启动 provider（会弹出 UAC）");
         if (!provider_ready) {
+            // 上一轮 VRChat 还持有连接时，NVIDIA 会拒绝重注册（-175）。先拦下来：
+            // 省掉一次没意义的 UAC，并明确告诉用户下一步该做什么。
+            if (!status.running && status.consumer_count > 0 && runtime_.vrchat_running()) {
+                set_step(StepId::Provider, StepState::Blocked,
+                         auto_start_ ? "VRChat 仍持有上一轮 VRSS 连接：请先正常关闭 VRChat，"
+                                       "关闭后会自动继续"
+                                     : "VRChat 仍持有上一轮 VRSS 连接：请先正常关闭 VRChat，"
+                                       "然后点「一键启用」重试");
+                finish_state();
+                return;
+            }
             std::string error;
             if (!runtime_.start_provider(port_, runtime_.contract(), area_percent_, error)) {
                 set_step(StepId::Provider, StepState::Fail, error);
@@ -387,6 +528,11 @@ void Workflow::run_steps() {
         if (runtime_.vrchat_running()) {
             set_step(StepId::Vrchat, StepState::Pass,
                      "VRChat 已运行；若刚改范围，需重启 VRChat 才生效");
+        } else if (identity_ready_) {
+            // 持久身份已经把 provider 的键写进了用户环境变量，Steam 正常启动的游戏
+            // 也能对上，这里不再需要代起游戏，直接进入"等它连上来"。
+            set_step(StepId::Vrchat, StepState::Pass,
+                     "持久身份已生效：可从 Steam 直接启动 VRChat（本页不再代启）");
         } else if (vrchat_requested_ || auto_launch_) {
             std::string error;
             if (!runtime_.launch_vrchat(error)) {

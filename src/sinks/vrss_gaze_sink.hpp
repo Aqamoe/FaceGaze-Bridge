@@ -30,7 +30,10 @@ struct VrssSinkConfig {
     // 双眼对称补偿：正值 = 内收（左眼往右、右眼往左），用来抵消驱动侧自己加出来的视差。
     // 实测：给两眼发完全相同的 NDC，头显里右眼镜区偏右、左眼镜区偏左。
     float stereo_offset           = 0.0f;
-    bool flip_y                   = false; // 标准路线 +Y 向上；方向仍反时手动翻一次
+    // Y 轴：驱动侧 normalized location 的 +Y 向下，FGB 内部一律按 +Y 向上算，
+    // 发送前统一翻转一次（driver_y），所以这里**默认不需要动**。
+    // 只有区域确实上下颠倒时（换驱动/换来源）才打开，等于把内部那次翻转取消。
+    bool invert_y                 = false;
     bool enabled                  = true;  // 可在运行时开关，不必重启引擎
     // 实验：允许用"来源空间"的原始逐眼 2D 点（ADR-0033 里明确不能当屏幕位置的那类）。
     // 打开后按两眼中点算一个位置给两眼，绕开两眼约 0.3 的视差；必须真机四方向确认。
@@ -104,7 +107,10 @@ public:
     // 供单测：把注视状态换算成左右眼 NDC。返回 false 表示这一帧不该发送。
     static bool build_ndc(const GazeState& gaze, std::uint64_t now_ns,
                           const VrssSinkConfig& config, std::array<float, 4>& ndc) noexcept;
-    // 视口坐标 [0,1]（左上原点）→ NDC。
+    // 内部 NDC（+Y 向上）→ 驱动坐标（+Y 向下）。invert = true 表示把这次翻转取消（兜底）。
+    static float driver_y(float y, bool invert) noexcept;
+
+    // 视口坐标 [0,1]（左上原点）→ NDC（+Y 向上）。
     static void point_to_ndc(float px, float py, float& x, float& y) noexcept;
     // 来源空间原始点 [0,1]（**左下原点**，实测该来源 +y 向上）→ NDC。
     static void source_point_to_ndc(float px, float py, float& x, float& y) noexcept;

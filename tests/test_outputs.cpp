@@ -59,9 +59,11 @@ config::OutputOptions sample() {
     out.vrss_x_offset  = 0.15f;
     out.vrss_y_offset  = -0.25f;
     out.vrss_stereo_offset = 0.075f;
-    out.vrss_flip_y    = true;
+    out.vrss_y_invert  = true;
     out.vrss_area_percent = 12.5f;
     out.vrss_auto_launch_vrchat = true;
+    out.vrss_auto_start       = true;
+    out.vrss_persist_identity = false;
     return out;
 }
 
@@ -151,6 +153,35 @@ FGB_TEST(outputs_vrchat_enabled_defaults_on_and_persists) {
     FGB_CHECK(config::save_outputs(path, off, error));
     FGB_CHECK(config::load_outputs(path, loaded, error));
     FGB_CHECK(!loaded.vrchat_enabled);
+}
+
+// 默认值是真机对齐过的：增益 0.5（驱动坐标 1 = 一个视口宽，FGB 按半宽算，差 2 倍）、
+// 范围 10%（上限 50%）；Y 轴由代码统一翻转，所以 y_invert 默认关。
+// 持久身份默认开——它是"不用从本软件启动游戏"的前提。
+FGB_TEST(outputs_vrss_defaults) {
+    config::OutputOptions options;
+    FGB_CHECK_NEAR(options.vrss_area_percent, 10.0, 1e-6);
+    FGB_CHECK_NEAR(options.vrss_x_gain, 0.5, 1e-6);
+    FGB_CHECK_NEAR(options.vrss_y_gain, 0.5, 1e-6);
+    FGB_CHECK_NEAR(options.vrss_x_offset, 0.0, 1e-6);
+    FGB_CHECK_NEAR(options.vrss_stereo_offset, 0.0, 1e-6);
+    FGB_CHECK(!options.vrss_y_invert);
+    FGB_CHECK(options.vrss_persist_identity);
+    FGB_CHECK(!options.vrss_auto_start);
+    // 默认值必须本身就是合法的，否则新用户第一次保存就被拦下
+    std::string error;
+    FGB_CHECK(config::validate_outputs(options, error));
+}
+
+// 抗锯齿范围上限收到 50%：超过就拒绝，别让用户把区域铺满整个视口当"抗锯齿"。
+FGB_TEST(outputs_vrss_area_cap) {
+    config::OutputOptions options;
+    options.vrss_enabled = true;
+    std::string error;
+    options.vrss_area_percent = 50.0f;
+    FGB_CHECK(config::validate_outputs(options, error));
+    options.vrss_area_percent = 50.5f;
+    FGB_CHECK(!config::validate_outputs(options, error));
 }
 
 FGB_TEST(outputs_save_load_roundtrip) {

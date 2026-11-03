@@ -519,7 +519,7 @@ int cmd_run(int argc, char** argv) {
         vrss_out_cfg.x_offset    = saved_outputs.vrss_x_offset;
         vrss_out_cfg.y_offset    = saved_outputs.vrss_y_offset;
         vrss_out_cfg.stereo_offset = saved_outputs.vrss_stereo_offset;
-        vrss_out_cfg.flip_y      = saved_outputs.vrss_flip_y;
+        vrss_out_cfg.invert_y    = saved_outputs.vrss_y_invert;
         vrss_out_cfg.allow_source_points = saved_outputs.vrss_allow_source_points;
     }
 
@@ -1536,7 +1536,9 @@ int cmd_run(int argc, char** argv) {
         vrss_workflow = std::make_unique<fgb::vrss::Workflow>();
         vrss_workflow->configure(vrss_out_enabled, vrss_out_cfg.port,
                                  saved_outputs.vrss_auto_launch_vrchat,
-                                 saved_outputs.vrss_area_percent);
+                                 saved_outputs.vrss_area_percent,
+                                 saved_outputs.vrss_auto_start,
+                                 saved_outputs.vrss_persist_identity);
         ctx.vrss = vrss_workflow.get();
 
         ctx.modules          = module_registry.get();

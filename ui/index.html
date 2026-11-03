@@ -340,7 +340,7 @@
           <div class="cal-side">
             <!-- 眼动是两步一条线：先角度粗调、再屏幕标定。眼睑是另一件事，放在两步之后。 -->
             <p class="hint cal-flow" data-i18n="calibration.flow.hint">眼动分两步：① 先调角度粗调（决定 look 幅度），② 再做 VR 圆盘标定（决定屏幕位置）。改了 ① 之后要回到 ② 重标。</p>
-            <article class="card cal-eye-card" style="margin-bottom:14px">
+            <article class="card cal-eye-card">
               <div class="cal-eye-head">
                 <h2><span class="cal-step-no" aria-hidden="true">1</span><span data-i18n="calibration.eye.title">视线角度</span></h2>
                 <label class="switch"><input type="checkbox" id="cal-eye-active"> <span data-i18n="calibration.eye.enable">启用视线校准</span></label>
@@ -417,7 +417,7 @@
             </article>
 
             <!-- 眼睑与上面两步都无关：它既不参与角度粗调，也不参与屏幕标定 -->
-            <article class="card cal-eyelid-card" style="margin-bottom:14px">
+            <article class="card cal-eyelid-card">
               <h2 data-i18n="calibration.eyelid.title">眼睑开合</h2>
               <p class="hint" data-i18n="calibration.eyelid.hint">与上面的视线角度无关：它改的是睁眼幅度，不受「启用视线校准」开关影响。</p>
               <div class="cal-param">
@@ -731,8 +731,8 @@
             本功能只做中央超采样抗锯齿，不承诺帧率收益。
           </p>
           <p class="hint" data-i18n="vrss.warn_identity">
-            PICO / 串流等没有 EDID 的头显：必须用本页「启动 VRChat」，它会注入与 provider
-            相同的 HMD 身份；直接从 Steam 启动不会连接，验证步骤会一直显示 consumer 0。
+            PICO / 串流等没有 EDID 的头显：打开下面的「持久 HMD 身份」后，可以从 Steam 正常启动
+            VRChat；关闭时必须用本页「启动 VRChat」注入身份，否则验证步骤会一直显示 consumer 0。
           </p>
           <p class="hint" id="v-error"></p>
         </article>
@@ -745,6 +745,8 @@
             <span id="v-setup-status">—</span></div>
           <div class="out-row"><span data-i18n="vrss.status.provider">Provider</span>
             <span id="v-provider-status">—</span></div>
+          <div class="out-row"><span data-i18n="vrss.status.identity">HMD 身份</span>
+            <span id="v-identity-status">—</span></div>
           <div class="out-row"><span data-i18n="vrss.status.area">抗锯齿范围</span>
             <span id="v-area-status">—</span></div>
         </article>
@@ -763,12 +765,29 @@
             <span data-i18n="vrss.settings.auto_launch">一键流程自动启动 VRChat</span>
             <label class="switch"><input type="checkbox" id="v-auto"></label>
           </div>
+          <div class="out-row">
+            <span data-i18n="vrss.settings.auto_start">随 SteamVR 自动注册</span>
+            <label class="switch"><input type="checkbox" id="v-auto-start"></label>
+          </div>
+          <p class="hint" data-i18n="vrss.settings.auto_start_hint">
+            打开后会把 FGB 注册为 SteamVR 启动项：SteamVR 起来时自动跑完注册流程（会弹一次 UAC），
+            之后直接用 Steam 启动游戏即可，不需要再点「一键启用」。
+          </p>
+          <div class="out-row">
+            <span data-i18n="vrss.settings.persist">持久 HMD 身份（无 EDID 头显）</span>
+            <label class="switch"><input type="checkbox" id="v-persist"></label>
+          </div>
+          <p class="hint" data-i18n="vrss.settings.persist_hint">
+            把 provider 使用的 HMD 身份写进用户环境变量，让 Steam 正常启动的 VRChat 也能对上。
+            写入后需要完全退出并重启 Steam 才生效；该变量会影响本用户下所有 OpenVR 应用，
+            换回自带 EDID 的头显会自动清除。
+          </p>
           <div class="out-row v-range-row">
             <span data-i18n="vrss.settings.area">抗锯齿范围（%）</span>
             <div class="v-range">
-              <input type="range" id="v-area" min="1" max="100" step="1">
-              <input type="number" id="v-area-number" min="1" max="100" step="1" value="12">
-              <b id="v-area-value">12%</b>
+              <input type="range" id="v-area" min="1" max="50" step="1">
+              <input type="number" id="v-area-number" min="1" max="50" step="1" value="10">
+              <b id="v-area-value">10%</b>
             </div>
           </div>
           <p class="hint" data-i18n="vrss.settings.area_hint">
@@ -777,15 +796,15 @@
           <div class="out-row v-range-row">
             <span data-i18n="vrss.settings.x_gain">X 增益</span>
             <div class="v-range">
-              <input type="range" id="v-xgain" min="0.1" max="2" step="0.01" value="1">
-              <b id="v-xgain-v">1.00</b>
+              <input type="range" id="v-xgain" min="0.1" max="2" step="0.01" value="0.5">
+              <b id="v-xgain-v">0.50</b>
             </div>
           </div>
           <div class="out-row v-range-row">
             <span data-i18n="vrss.settings.y_gain">Y 增益</span>
             <div class="v-range">
-              <input type="range" id="v-ygain" min="0.1" max="2" step="0.01" value="1">
-              <b id="v-ygain-v">1.00</b>
+              <input type="range" id="v-ygain" min="0.1" max="2" step="0.01" value="0.5">
+              <b id="v-ygain-v">0.50</b>
             </div>
           </div>
           <div class="out-row v-range-row">
@@ -810,9 +829,13 @@
             </div>
           </div>
           <div class="out-row">
-            <span data-i18n="vrss.settings.flip_y">Y 轴翻转</span>
-            <label class="switch"><input type="checkbox" id="v-flip-y"></label>
+            <span data-i18n="vrss.settings.y_invert">Y 轴反向（兜底）</span>
+            <label class="switch"><input type="checkbox" id="v-yinvert"></label>
           </div>
+          <p class="hint" data-i18n="vrss.settings.y_invert_hint">
+            软件已按驱动坐标自动翻转 Y，正常保持关闭。只有区域真的上下颠倒时才打开，
+            等于取消内部那次翻转。
+          </p>
           <p class="hint" id="v-calib-note" hidden data-i18n="vrss.settings.calibrated_note">
             已加载注视标定档案：下面的增益与中心偏移不再参与换算，只保留「双眼内收」这一项显示侧补偿。
           </p>
@@ -830,6 +853,7 @@
             <button class="btn primary" id="v-save" data-i18n="vrss.settings.save">保存</button>
             <button class="btn" id="v-save-restart" data-i18n="vrss.settings.save_restart">保存并重启引擎</button>
             <button class="btn" id="v-apply-area" data-i18n="vrss.settings.apply_area">应用抗锯齿范围（需 UAC）</button>
+            <button class="btn ghost" id="v-clear-identity" data-i18n="vrss.settings.clear_identity">清除持久身份</button>
             <button class="btn ghost" id="v-reset-gain" data-i18n="vrss.settings.reset">恢复默认增益</button>
           </div>
           <p class="hint" data-i18n="vrss.settings.hint">

@@ -894,9 +894,31 @@ function render_vrss() {
     `failures ${provider.submit_failures || 0}` +
     (sink_bits.length ? ` · ${sink_bits.join(" · ")}` : "");
 
+  // 持久身份：有没有写、是不是我们写的、要不要重启 Steam。
+  // 这三件事少一件，用户看到的就是"consumer 一直是 0"却不知道下一步做什么。
+  const identity = vrss.identity || {};
+  const identity_bits = [];
+  if (!vrss.persist_identity) {
+    identity_bits.push(t("vrss.identity.off"));
+  } else if (!identity.set) {
+    identity_bits.push(t("vrss.identity.unset"));
+  } else {
+    const hex = (value) => `0x${Number(value || 0).toString(16).toUpperCase()}`;
+    identity_bits.push(
+      `${identity.ours ? t("vrss.identity.ours") : t("vrss.identity.foreign")} ` +
+      `${hex(identity.vendor)}:${hex(identity.product)}`);
+    if (identity.steam_restart_required) {
+      identity_bits.push(t("vrss.identity.restart_steam"));
+    }
+  }
+  if (identity.source) {
+    identity_bits.push(identity.source);
+  }
+  $("v-identity-status").textContent = identity_bits.join(" · ");
+
   const area_detail = vrss.area_detail || "";
   $("v-area-status").textContent =
-    `${vrss.calibration?.area ?? 12}% · ` +
+    `${vrss.calibration?.area ?? 10}% · ` +
     t(`vrss.area_state.${vrss.area_state || "idle"}`) +
     (area_detail ? `（${area_detail}）` : "");
 
@@ -906,11 +928,17 @@ function render_vrss() {
     $("v-port").value = calibration.port || 5556;
     $("v-rate").value = calibration.rate || 90;
     $("v-auto").checked = !!calibration.auto_launch_vrchat;
-    $("v-area").value = calibration.area ?? 12;
+    $("v-auto-start").checked = !!vrss.auto_start;
+    $("v-persist").checked = vrss.persist_identity !== false;
+    $("v-area").value = calibration.area ?? 10;
     $("v-area-number").value = Math.round($("v-area").value);
     $("v-area-value").textContent = `${Math.round($("v-area").value)}%`;
-    sync_slider("v-xgain", calibration.x_gain ?? 1, 2);
-    sync_slider("v-ygain", calibration.y_gain ?? 1, 2);
+    // 进度条（--fill）只在 input 事件里重画，程序化赋值不会触发事件。
+    // 不补这一句，每次打开页面都会看到"滑块在 8%，蓝色却画到一半"。
+    paint_range($("v-area"));
+    // 默认 0.5/0.5：驱动侧 1 = 一个视口宽，而 NDC 按半宽算，正好差 2 倍。
+    sync_slider("v-xgain", calibration.x_gain ?? 0.5, 2);
+    sync_slider("v-ygain", calibration.y_gain ?? 0.5, 2);
     sync_slider("v-xoffset", calibration.x_offset ?? 0, 2);
     // 标定生效后这四条仍然生效，但含义变成"显示侧微调"：注尺寸换算由档案负责，
     // 它们只补驱动把区域放偏/放大的那一层。文案在 hint 里说清楚，不做硬性禁用。
@@ -920,7 +948,7 @@ function render_vrss() {
     }
     sync_slider("v-yoffset", calibration.y_offset ?? 0, 2);
     sync_slider("v-stereo", calibration.stereo_offset ?? 0, 3);
-    $("v-flip-y").checked = !!calibration.flip_y;
+    $("v-yinvert").checked = !!calibration.y_invert;
     $("v-allow-source").checked = !!calibration.allow_source_points;
   }
 }
@@ -936,13 +964,15 @@ function collect_vrss() {
     port: Number($("v-port").value),
     rate: Number($("v-rate").value),
     auto_launch_vrchat: $("v-auto").checked,
+    auto_start: $("v-auto-start").checked,
+    persist_identity: $("v-persist").checked,
     area: Number($("v-area").value),
     x_gain: Number($("v-xgain").value),
     y_gain: Number($("v-ygain").value),
     x_offset: Number($("v-xoffset").value),
     y_offset: Number($("v-yoffset").value),
     stereo_offset: Number($("v-stereo").value),
-    flip_y: $("v-flip-y").checked,
+    y_invert: $("v-yinvert").checked,
     allow_source_points: $("v-allow-source").checked,
   };
 }
@@ -966,14 +996,15 @@ function run_vrss() {
 }
 
 function reset_vrss_gain() {
-  // 恢复默认 = 纯换算：增益 1、中心偏移 0、不翻转。
-  for (const [id, value] of [["v-xgain", 1], ["v-ygain", 1], ["v-xoffset", 0], ["v-yoffset", 0],
-                             ["v-stereo", 0]]) {
+  // 恢复默认 = 真机对齐过的那一套：增益 0.5（驱动侧 2 倍换算）、中心偏移 0、
+  // Y 轴反向保持关闭（方向由代码统一处理）。回到 1.0 等于把区域放大一倍。
+  for (const [id, value] of [["v-xgain", 0.5], ["v-ygain", 0.5], ["v-xoffset", 0],
+                             ["v-yoffset", 0], ["v-stereo", 0]]) {
     $(id).value = value;
     paint_range($(id));
     $(`${id}-v`).textContent = Number(value).toFixed(id === "v-stereo" ? 3 : 2);
   }
-  $("v-flip-y").checked = false;
+  $("v-yinvert").checked = false;
   save_vrss(true);
 }
 
@@ -984,12 +1015,13 @@ function apply_vrss_area() {
 function sync_vrss_area(source) {
   let value = Number(source.value);
   if (!Number.isFinite(value)) {
-    value = 12;
+    value = 10;
   }
-  value = Math.min(100, Math.max(1, Math.round(value)));
+  value = Math.min(50, Math.max(1, Math.round(value)));
   $("v-area").value = value;
   $("v-area-number").value = value;
   $("v-area-value").textContent = `${value}%`;
+  paint_range($("v-area"));
   set_vrss_dirty(true);
 }
 
@@ -4737,14 +4769,15 @@ function wire() {
   });
   $("v-confirm").addEventListener("click", () => send({ type: "vrss_confirm_msaa" }));
   $("v-launch").addEventListener("click", () => send({ type: "vrss_launch_vrchat" }));
+  $("v-clear-identity").addEventListener("click", () => send({ type: "vrss_clear_identity" }));
   $("v-save").addEventListener("click", () => save_vrss(false));
   $("v-save-restart").addEventListener("click", () => save_vrss(true));
   $("v-reset-gain").addEventListener("click", reset_vrss_gain);
   $("v-apply-area").addEventListener("click", apply_vrss_area);
   $("v-area").addEventListener("input", () => sync_vrss_area($("v-area")));
   $("v-area-number").addEventListener("input", () => sync_vrss_area($("v-area-number")));
-  for (const id of ["v-enabled", "v-port", "v-rate", "v-auto", "v-area", "v-area-number",
-                    "v-flip-y", "v-allow-source"]) {
+  for (const id of ["v-enabled", "v-port", "v-rate", "v-auto", "v-auto-start", "v-persist",
+                    "v-area", "v-area-number", "v-yinvert", "v-allow-source"]) {
     const node = $(id);
     node.addEventListener("input", () => set_vrss_dirty(true));
     node.addEventListener("change", () => set_vrss_dirty(true));

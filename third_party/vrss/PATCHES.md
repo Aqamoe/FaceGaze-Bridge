@@ -30,6 +30,13 @@
 8. `catch` 写 `run/error.txt`，首行是机器可读原因码
    （`E_DRIVER` / `E_ADMIN` / `E_RECONNECT` / `E_PORT` / `E_IDENTITY` / `E_GENERIC`）。
 9. `--input-route` 宽字符串逐字符收窄，消除 C4244 警告（路由名均为 ASCII）。
+10. **重连时的"其它提供程序"检查改为路由感知**：上游只要有 `common_vrss_provider.exe`
+    或 `vrss_gaze_provider.exe` 在跑就拒绝重连。实测装了 Pimax Runtime 的机器上，
+    Pimax 自带的 `vrss_gaze_provider.exe` 常驻，导致"关掉 FGB 再打开"必然失败
+    （`An existing provider bridge is present or inaccessible`）。路由键是
+    (vendor, product)，`0xFEEE` 这类私有键只可能来自本工具，因此：只有通用桥
+    `common_vrss_provider.exe` 仍然阻断（它可能被指到同一路由），厂商自带的桥只打
+    `RECONNECT warning ...` 后继续；枚举失败也不再当成"有冲突"。
 
 ## 许可
 

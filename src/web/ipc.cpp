@@ -886,6 +886,21 @@ void IpcServer::build_vrss(std::string& out) {
     writer.key("vrchat_running").boolean(snap.vrchat_running);
     writer.obj_end();
 
+    // 无 EDID 头显的持久身份：页面要能看出"到底写没写、要不要重启 Steam"，
+    // 否则用户只会看到 consumer 一直是 0。
+    writer.key("auto_start").boolean(snap.auto_start);
+    writer.key("persist_identity").boolean(snap.persist_identity);
+    writer.key("identity");
+    writer.obj_begin();
+    writer.key("set").boolean(snap.identity.set);
+    writer.key("ours").boolean(snap.identity.ours);
+    writer.key("vendor").integer(static_cast<long long>(snap.identity.vendor));
+    writer.key("product").integer(static_cast<long long>(snap.identity.product));
+    writer.key("steam_restart_required").boolean(snap.identity.steam_restart_required);
+    writer.key("source").str(snap.identity_source);
+    writer.key("error").str(snap.identity.error);
+    writer.obj_end();
+
     writer.key("calibration");
     writer.obj_begin();
     writer.key("port").integer(static_cast<long long>(ctx_.outputs.vrss_port));
@@ -896,7 +911,7 @@ void IpcServer::build_vrss(std::string& out) {
     writer.key("x_offset").num(ctx_.outputs.vrss_x_offset, 3);
     writer.key("y_offset").num(ctx_.outputs.vrss_y_offset, 3);
     writer.key("stereo_offset").num(ctx_.outputs.vrss_stereo_offset, 3);
-    writer.key("flip_y").boolean(ctx_.outputs.vrss_flip_y);
+    writer.key("y_invert").boolean(ctx_.outputs.vrss_y_invert);
     writer.key("auto_launch_vrchat").boolean(ctx_.outputs.vrss_auto_launch_vrchat);
     writer.key("allow_source_points").boolean(ctx_.outputs.vrss_allow_source_points);
     writer.obj_end();
@@ -2878,6 +2893,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         }
     } else if (has_type && type == "set_vrss") {
         config::OutputOptions next = ctx_.outputs;
+        const bool auto_start_was = ctx_.outputs.vrss_auto_start;
         bool enabled = next.vrss_enabled;
         bool auto_launch = next.vrss_auto_launch_vrchat;
         double port = next.vrss_port;
@@ -2887,12 +2903,16 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         double x_offset = next.vrss_x_offset;
         double y_offset = next.vrss_y_offset;
         double stereo_offset = next.vrss_stereo_offset;
-        bool flip_y = next.vrss_flip_y;
+        bool y_invert = next.vrss_y_invert;
         double area = next.vrss_area_percent;
         bool allow_source = next.vrss_allow_source_points;
+        bool auto_start = next.vrss_auto_start;
+        bool persist_identity = next.vrss_persist_identity;
         json::field_bool(text, "enabled", enabled);
         json::field_bool(text, "auto_launch_vrchat", auto_launch);
         json::field_bool(text, "allow_source_points", allow_source);
+        json::field_bool(text, "auto_start", auto_start);
+        json::field_bool(text, "persist_identity", persist_identity);
         json::field_number(text, "port", port);
         json::field_number(text, "rate", rate);
         json::field_number(text, "x_gain", x_gain);
@@ -2900,7 +2920,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         json::field_number(text, "x_offset", x_offset);
         json::field_number(text, "y_offset", y_offset);
         json::field_number(text, "stereo_offset", stereo_offset);
-        json::field_bool(text, "flip_y", flip_y);
+        json::field_bool(text, "y_invert", y_invert);
         json::field_number(text, "area", area);
         if (port < 1 || port > 65535) {
             error = "VRSS 端口必须是 1..65535";
@@ -2914,8 +2934,10 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             next.vrss_x_offset         = static_cast<float>(x_offset);
             next.vrss_y_offset         = static_cast<float>(y_offset);
             next.vrss_stereo_offset    = static_cast<float>(stereo_offset);
-            next.vrss_flip_y           = flip_y;
+            next.vrss_y_invert         = y_invert;
             next.vrss_area_percent     = static_cast<float>(area);
+            next.vrss_auto_start       = auto_start;
+            next.vrss_persist_identity = persist_identity;
             next.vrss_allow_source_points = allow_source;
             if (!config::validate_outputs(next, error)) {
                 // validate_outputs 已经写好原因
@@ -2937,26 +2959,35 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
                     sink_config.x_offset       = next.vrss_x_offset;
                     sink_config.y_offset       = next.vrss_y_offset;
                     sink_config.stereo_offset  = next.vrss_stereo_offset;
-                    sink_config.flip_y         = next.vrss_flip_y;
+                    sink_config.invert_y       = next.vrss_y_invert;
                     sink_config.allow_source_points = next.vrss_allow_source_points;
                     ctx_.vrss_out->set_config(sink_config);
                 }
                 if (ctx_.vrss != nullptr) {
                     ctx_.vrss->configure(next.vrss_enabled, next.vrss_port,
                                          next.vrss_auto_launch_vrchat,
-                                         next.vrss_area_percent);
+                                         next.vrss_area_percent,
+                                         next.vrss_auto_start,
+                                         next.vrss_persist_identity);
                 }
                 ok           = true;
                 vrss_touched = true;
                 outputs_touched = true;
                 ack_message  = "VRSS 设置已保存并立即生效";
+                // 打开自动注册时顺手把 FGB 注册成 SteamVR 启动项，否则"跟随 SteamVR
+                // 启动"只是句空话。SteamVR 没在跑时 Service 会返回失败状态而不是卡死。
+                if (next.vrss_auto_start && !auto_start_was && steamvr_ != nullptr) {
+                    steamvr_->request(steamvr::Service::Op::Enable);
+                    steamvr_touched = true;
+                    ack_message += "；已请求把 FGB 注册为 SteamVR 启动项";
+                }
             }
         }
     } else if (has_type && type == "set_vrss_area") {
         double percent = ctx_.outputs.vrss_area_percent;
         json::field_number(text, "percent", percent);
-        if (percent < 1.0 || percent > 100.0) {
-            error = "VRSS 抗锯齿范围必须在 1..100%";
+        if (percent < 1.0 || percent > 50.0) {
+            error = "VRSS 抗锯齿范围必须在 1..50%";
         } else {
             config::OutputOptions next = ctx_.outputs;
             next.vrss_area_percent = static_cast<float>(percent);
@@ -3014,6 +3045,15 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             ok           = true;
             vrss_touched = true;
             ack_message  = "正在停止 VRSS 注视路径";
+        }
+    } else if (has_type && type == "vrss_clear_identity") {
+        if (ctx_.vrss == nullptr) {
+            error = "VRSS 流程不可用";
+        } else {
+            ctx_.vrss->clear_identity();
+            ok           = true;
+            vrss_touched = true;
+            ack_message  = "正在清除持久 HMD 身份（需重启 Steam 后完全生效）";
         }
     } else if (has_type && type == "set_gaze_calib_span") {
         std::string span_text;
