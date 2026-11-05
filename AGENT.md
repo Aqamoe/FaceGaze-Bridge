@@ -336,6 +336,7 @@ gh run watch <id> --exit-status
 | 崩溃后找不到转储 | 看 `%LOCALAPPDATA%\FaceGazeBridge\crashes\` 的 `.dmp`+`.txt`；设置页可导出诊断包 | MiniDump 不是全内存 dump；堆损坏严重时可能写失败（ADR-0028） |
 | PowerShell/Inno 脚本中文乱码或解析失败 | `.ps1`/`.iss` 必须保存为 **UTF-8 with BOM**（Windows PowerShell 5.1 按 ANSI 读无 BOM 文件） | 编辑后确认前 3 字节是 EF BB BF |
 | 安装器找不到 ISCC.exe | Inno Setup 可能装在 `%LOCALAPPDATA%\Programs\Inno Setup 6` | `build_installer.ps1` 已覆盖该路径；也可 `winget install JRSoftware.InnoSetup` |
+| 参数页 / `fgb-cli params` 显示某参数"未发送" | 头像只声明了二进制位（`<名>1/2/4`）时参数**确实在发**，但 `address()` 只有主参数地址，判空就成了"没绑定"——用户会报"这个参数没有输出" | 判断绑定用 `ParamRouter::bound()` / `VrchatSink::bound_flags()`；`address()` 只用于取主参数地址 |
 
 ## 6. 代码地图
 

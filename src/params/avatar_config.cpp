@@ -403,6 +403,7 @@ bool ParamRouter::match_binary_tail(std::string_view address, std::string_view n
 void ParamRouter::clear() {
     addresses_.clear();
     targets_.clear();
+    target_begin_.clear(); // 与 targets_ 一起清，否则 bound() 会指向已释放的区间
     matched_       = 0;
     binary_params_ = 0;
     bound_         = false;
@@ -435,6 +436,7 @@ bool binary_shift_of(int index, std::uint8_t& shift) noexcept {
 void ParamRouter::rebuild(std::string_view v2_prefix, const AvatarConfig* config) {
     addresses_.clear();
     targets_.clear();
+    target_begin_.clear();
     matched_       = 0;
     param_count_   = 0;
     binary_params_ = 0;
@@ -442,6 +444,7 @@ void ParamRouter::rebuild(std::string_view v2_prefix, const AvatarConfig* config
 
     for (const Group& group : groups()) {
         for (const ParamEntry& entry : group.entries) {
+            target_begin_.push_back(static_cast<std::uint32_t>(targets_.size()));
             std::string primary;
             std::string negative;
             std::vector<OutputTarget> bits;
@@ -545,6 +548,8 @@ void ParamRouter::rebuild(std::string_view v2_prefix, const AvatarConfig* config
             }
         }
     }
+    // 哨兵：第 i 个参数的区间右端 = target_begin_[i + 1]
+    target_begin_.push_back(static_cast<std::uint32_t>(targets_.size()));
 
     if (config != nullptr) {
         // 统计"不同的参数个数"，别用 matched_（那是"绑定条数"，符号位会重复计入）
@@ -568,6 +573,22 @@ void ParamRouter::rebuild(std::string_view v2_prefix, const AvatarConfig* config
 const std::string& ParamRouter::address(std::size_t flat_index) const noexcept {
     static const std::string kEmpty;
     return flat_index < addresses_.size() ? addresses_[flat_index] : kEmpty;
+}
+
+bool ParamRouter::bound(std::size_t flat_index) const noexcept {
+    if (flat_index + 1 >= target_begin_.size()) {
+        return false;
+    }
+    return target_begin_[flat_index + 1] != target_begin_[flat_index];
+}
+
+std::span<const OutputTarget> ParamRouter::targets_of(std::size_t flat_index) const noexcept {
+    if (flat_index + 1 >= target_begin_.size()) {
+        return {};
+    }
+    const std::size_t begin = target_begin_[flat_index];
+    const std::size_t end   = target_begin_[flat_index + 1];
+    return {targets_.data() + begin, end - begin};
 }
 
 } // namespace fgb::params

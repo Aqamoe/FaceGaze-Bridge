@@ -518,12 +518,11 @@ RouterStatus VrchatSink::status() const {
     return status;
 }
 
-std::vector<std::string> VrchatSink::bound_addresses() const {
+std::vector<std::uint8_t> VrchatSink::bound_flags() const {
     std::shared_lock lock(router_mutex_);
-    std::vector<std::string> out;
-    out.reserve(router_.total());
-    for (std::size_t i = 0; i < router_.total(); ++i) {
-        out.push_back(router_.address(i));
+    std::vector<std::uint8_t> out(router_.total(), 0);
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        out[i] = router_.bound(i) ? 1 : 0;
     }
     return out;
 }

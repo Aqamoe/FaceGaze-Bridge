@@ -133,8 +133,10 @@ public:
 
     // 供控制面显示"现在绑的是哪个头像、发了多少参数"
     RouterStatus status() const;
-    // 供参数页判断哪些逻辑参数已绑定（按 catalog 扁平索引）
-    std::vector<std::string> bound_addresses() const;
+    // 每个逻辑参数是否有落地目标（1/0），顺序同 catalog。
+    // 【别再用"主地址是否为空"判断绑定】二进制形式的参数（头像只声明了 `<名>1/2/4`）
+    // 没有主地址却在发，用地址判空会把 PupilDilation、JawX 这类参数标成"未发送"。
+    std::vector<std::uint8_t> bound_flags() const;
 
 private:
     struct PendingAvatar {

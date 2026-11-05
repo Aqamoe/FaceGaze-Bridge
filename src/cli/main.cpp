@@ -1964,13 +1964,26 @@ int cmd_params(int argc, char** argv) {
             continue;
         }
         for (const auto& entry : groups[g].entries) {
-            const std::string& addr = router.address(slot++);
-            if (addr.empty()) {
+            const std::size_t flat = slot++;
+            // 二进制形式的参数（头像只声明了 `<名>1/2/4`）没有主地址，但它们确实在发。
+            // 用 bound() 判定，否则排查时会得出"这个参数没有输出"的错误结论。
+            if (!router.bound(flat)) {
                 continue;
             }
             if (shown < 40) {
+                const auto targets = router.targets_of(flat);
+                const std::string& primary = router.address(flat);
+                std::string where = primary;
+                if (where.empty()) {
+                    for (const auto& t : targets) {
+                        if (!where.empty()) {
+                            where += ", ";
+                        }
+                        where += t.address;
+                    }
+                }
                 std::printf("  %-28.*s -> %s\n", static_cast<int>(entry.name.size()),
-                            entry.name.data(), addr.c_str());
+                            entry.name.data(), where.c_str());
                 ++shown;
             }
         }

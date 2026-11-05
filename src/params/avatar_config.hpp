@@ -24,6 +24,7 @@
 #include "params/catalog.hpp"
 
 #include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -123,8 +124,18 @@ public:
 
     void clear();
 
-    // 与 catalog::groups() 展开后的扁平索引一一对应
+    // 与 catalog::groups() 展开后的扁平索引一一对应。
+    // 【只是"主参数地址"】二进制形式的参数（头像只声明了 `<名>1/2/4`）没有主地址，
+    // 这里返回空串但它们其实在发；判断"有没有绑定"必须用 bound()。
     const std::string& address(std::size_t flat_index) const noexcept;
+
+    // 这个参数有没有任何落地目标（主参数 / 符号位 / 二进制位）。
+    // 界面上的"已发送"标记和 `fgb-cli params` 都靠它——只看 address() 会把
+    // 二进制参数标成"未绑定"，用户看到的现象就是"这个参数没有输出"。
+    bool bound(std::size_t flat_index) const noexcept;
+
+    // 该参数的全部落地目标（顺序同 targets_：主参数 → 符号位 → 二进制位），供诊断打印。
+    std::span<const OutputTarget> targets_of(std::size_t flat_index) const noexcept;
 
     std::size_t total() const noexcept { return addresses_.size(); }
     // 绑定条数（一个参数的 float 与符号位各算一条）
@@ -149,6 +160,9 @@ private:
 
     std::vector<std::string> addresses_;
     std::vector<OutputTarget> targets_;
+    // targets_ 里每个参数占用的区间：第 i 个参数是 [target_begin_[i], target_begin_[i+1])。
+    // 比"再存一份每参数目标个数"少一次查表，也不会和 targets_ 的顺序脱节。
+    std::vector<std::uint32_t> target_begin_;
     std::size_t matched_       = 0;
     std::size_t param_count_   = 0;
     std::size_t binary_params_ = 0;

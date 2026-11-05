@@ -547,9 +547,11 @@ void IpcServer::build_catalog(std::string& out) {
     writer.obj_begin();
     writer.key("type").str("catalog");
 
-    // 快照一次：引擎线程可能正在因为换头像重绑 router
-    const std::vector<std::string> addresses =
-        ctx_.sink != nullptr ? ctx_.sink->bound_addresses() : std::vector<std::string>{};
+    // 快照一次：引擎线程可能正在因为换头像重绑 router。
+    // 用 bound_flags 而不是地址：只声明了 `<名>1/2/4` 的二进制参数没有主地址，
+    // 用地址判空会在界面上把 PupilDilation / JawX 这类参数误标成"未绑定"。
+    const std::vector<std::uint8_t> bound_flags =
+        ctx_.sink != nullptr ? ctx_.sink->bound_flags() : std::vector<std::uint8_t>{};
     std::size_t index = 0;
 
     writer.key("names").arr_begin();
@@ -569,7 +571,7 @@ void IpcServer::build_catalog(std::string& out) {
         const bool allowed = mode_allows(ctx_.params_mode, is_v2_group(group));
         for (const params::ParamEntry& entry : group.entries) {
             (void)entry;
-            const bool bound = index < addresses.size() && !addresses[index].empty();
+            const bool bound = index < bound_flags.size() && bound_flags[index] != 0;
             writer.boolean(allowed && bound);
             ++index;
         }

@@ -381,6 +381,87 @@ FGB_TEST(router_builds_binary_targets) {
     FGB_CHECK(router.address(jaw).empty());
 }
 
+// 二进制参数没有主地址，但确实在发：显示层必须按 bound() 判断，
+// 否则界面上会把这些参数标成"未绑定"（用户看到的就是"这个参数没有输出"）。
+FGB_TEST(router_binary_only_param_counts_as_bound) {
+    AvatarConfig cfg;
+    cfg.params.push_back({"/avatar/parameters/EchoFT/v2/PupilDilation1", ParamKind::Bool});
+    cfg.params.push_back({"/avatar/parameters/EchoFT/v2/PupilDilation2", ParamKind::Bool});
+    cfg.params.push_back({"/avatar/parameters/EchoFT/v2/PupilDilation4", ParamKind::Bool});
+
+    ParamRouter router;
+    router.bind(cfg);
+
+    bool found = false;
+    const std::size_t pupil =
+        flat_index_of(kV2CompositeGroup, "PupilDilation", ParamKind::Float, found);
+    FGB_CHECK(found);
+    FGB_CHECK(router.address(pupil).empty()); // 没有主地址
+    FGB_CHECK(router.bound(pupil));           // 但确实是绑定的
+
+    const auto targets = router.targets_of(pupil);
+    FGB_CHECK(targets.size() == 3);
+    for (const auto& t : targets) {
+        FGB_CHECK(t.kind == OutputTarget::Kind::BinaryBit);
+        FGB_CHECK(t.bit_count == 3);
+        FGB_CHECK(t.address.find("PupilDilation") != std::string::npos);
+    }
+
+    // 头像没声明的参数既没有目标也不算绑定
+    const std::size_t smile =
+        flat_index_of(kV2CompositeGroup, "MouthSmileLeft", ParamKind::Float, found);
+    FGB_CHECK(found);
+    FGB_CHECK(!router.bound(smile));
+    FGB_CHECK(router.targets_of(smile).empty());
+}
+
+FGB_TEST(router_bound_matches_primary_and_negative) {
+    AvatarConfig cfg;
+    cfg.params.push_back({"/avatar/parameters/FT/v2/JawX", ParamKind::Float});
+    cfg.params.push_back({"/avatar/parameters/FT/v2/JawXNegative", ParamKind::Bool});
+
+    ParamRouter router;
+    router.bind(cfg);
+
+    bool found = false;
+    const std::size_t jawx = flat_index_of(kV2CompositeGroup, "JawX", ParamKind::Float, found);
+    FGB_CHECK(found);
+    FGB_CHECK(router.bound(jawx));
+
+    // 主参数 + 符号位：两条目标，顺序固定（主在前）
+    const auto targets = router.targets_of(jawx);
+    FGB_CHECK(targets.size() == 2);
+    FGB_CHECK(targets[0].kind == OutputTarget::Kind::Float);
+    FGB_CHECK(targets[0].address == "/avatar/parameters/FT/v2/JawX");
+    FGB_CHECK(targets[0].has_negative);
+    FGB_CHECK(targets[1].kind == OutputTarget::Kind::Negative);
+    FGB_CHECK(targets[1].address == "/avatar/parameters/FT/v2/JawXNegative");
+
+    // 每个参数的区间必须连续且不重叠：所有 bound() 为真的参数目标数之和 == targets().size()
+    std::size_t total = 0;
+    std::size_t bound_count = 0;
+    for (std::size_t i = 0; i < router.total(); ++i) {
+        if (router.bound(i)) {
+            total += router.targets_of(i).size();
+            ++bound_count;
+        }
+    }
+    FGB_CHECK(total == router.targets().size());
+    FGB_CHECK(bound_count == router.param_count());
+}
+
+FGB_TEST(router_fallback_marks_every_param_bound) {
+    // 没有头像参数表时按固定前缀拼地址，此时全部参数都有目标
+    ParamRouter router;
+    router.use_fallback("FT/v2/");
+    FGB_CHECK(router.param_count() == 0); // 这条路径不算"命中头像"
+    for (std::size_t i = 0; i < router.total(); ++i) {
+        FGB_CHECK(router.bound(i));
+        FGB_CHECK(!router.address(i).empty());
+        FGB_CHECK(router.targets_of(i).size() == 1);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 当前头像识别
 // ---------------------------------------------------------------------------
