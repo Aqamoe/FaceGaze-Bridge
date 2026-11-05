@@ -338,11 +338,12 @@ gh run watch <id> --exit-status
 | PowerShell/Inno 脚本中文乱码或解析失败 | `.ps1`/`.iss` 必须保存为 **UTF-8 with BOM**（Windows PowerShell 5.1 按 ANSI 读无 BOM 文件） | 编辑后确认前 3 字节是 EF BB BF |
 | 安装器找不到 ISCC.exe | Inno Setup 可能装在 `%LOCALAPPDATA%\Programs\Inno Setup 6` | `build_installer.ps1` 已覆盖该路径；也可 `winget install JRSoftware.InnoSetup` |
 | 参数页 / `fgb-cli params` 显示某参数"未发送" | 头像只声明了二进制位（`<名>1/2/4`）时参数**确实在发**，但 `address()` 只有主参数地址，判空就成了"没绑定"——用户会报"这个参数没有输出" | 判断绑定用 `ParamRouter::bound()` / `VrchatSink::bound_flags()`；`address()` 只用于取主参数地址 |
+| `engine.log` 一天涨到 GB 级 | 上游模块在 `update()` 里每帧报同一句话（真机：100 行/秒刷同一个未识别 OSC 地址 + 一个算错时钟的"没有数据"看门狗），宿主原样透传、文件只追加 | 模块日志与状态错误都过 `log::RepetitionGate`（`sources/native_source`，数字抹平后 10 s 一处 + 结算计数）；外壳每次拉起引擎前按 16 MB 滚动 `engine.log` → `engine.log.1`。见 [ADR-0046](docs/adr/0046-module-log-fold-and-rotate.md) |
 
 ## 6. 代码地图
 
 ```
-src/base/      日志（含订阅回调）、时钟、极简 JSON（一层标量）/ JSON 树（模块库深结构）、
+src/base/      日志（含订阅回调、重复折叠 log_gate、文件滚动 log_rotate）、时钟、极简 JSON（一层标量）/ JSON 树（模块库深结构）、
                文件摘要（SHA-256/MD5）、进程资源、崩溃转储、诊断包
 src/core/      数据模型（含 GazeState）、无锁容器、滤波、校准与 GazeEstimator
 src/osc/       OSC 编解码（零分配写入器）

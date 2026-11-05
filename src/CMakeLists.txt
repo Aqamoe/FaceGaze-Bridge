@@ -1,5 +1,7 @@
 add_library(fgb_base STATIC
     base/log.cpp
+    base/log_gate.cpp
+    base/log_rotate.cpp
     base/clock.cpp
     base/json.cpp
     base/json_value.cpp

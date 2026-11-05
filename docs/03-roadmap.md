@@ -310,6 +310,15 @@ VMC 协议简单、可控、无需逆向，能在 2 天内拿到真实数据跑�
 > 立刻不再显示它，不需要重启引擎。相关：
 > `ModuleRegistry::peek_package_id`（安装前探测目标模块）、
 > `tests/test_modules.cpp` 与 `tools/probe_module_actions.py`（真停实例的端到端探针）。
+>
+> **模块日志折叠与日志滚动已实施（2026-11-05）**：一份用户诊断包里的 `engine.log`
+> 是 494,262 行 / 71 MB，95% 是模块每帧重报的同一句话（未识别 OSC 地址 + 一个算错
+> 时钟的"没有数据"看门狗）。模块是第三方代码，但"它报什么就原样写多少"是宿主的选择：
+> 现在模块日志与状态错误都过 `log::RepetitionGate`（数字抹平后 10 s 一处 + 结算计数），
+> 外壳每次拉起引擎前把超过 16 MB 的 `engine.log` 滚成 `engine.log.1`。单测
+> `tests/test_log_gate.cpp` + 夹具模块 `tests/fixtures/log_spam_module.cpp`；
+> 真机 25 秒复现从 21,600 行降到 12 行。见
+> [ADR-0046](adr/0046-module-log-fold-and-rotate.md)。
 
 **验收**：5 个 Sink 同时输出时，主链路延迟不增加 > 0.5 ms；录制 10 分钟文件 < 20 MB。
 

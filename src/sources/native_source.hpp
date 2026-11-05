@@ -5,6 +5,7 @@
 // 不做跨线程保护。
 #pragma once
 
+#include "base/log_gate.hpp"
 #include "fgb_module_api.h"
 #include "sources/source.hpp"
 
@@ -50,6 +51,14 @@ private:
     static std::int32_t host_shape_index(void* ctx, const char* name);
 
     void apply_slot(const FgbFrameSlot& slot, std::uint64_t capture_ts_ns);
+    // 落一行模块日志（原始文本，不加前缀）
+    void write_line(int level, const std::string& line);
+    // 落一条模块日志（补 "模块名: " 前缀，跨进程模式下同时写 log_sink）
+    void emit_log(int level, const std::string& message);
+    // 落一条状态错误（"模块名 报告错误：正文"，沿用既有格式）
+    void emit_report(const std::string& text);
+    // 把闸门里过期的折叠小结补出来（每 tick 一次，见 ADR-0046）
+    void drain_folded_logs(std::uint64_t now_ns);
     // 模块写了自己没声明的能力位时告警一次（不改数据）。
     void check_capabilities(std::uint64_t attributes);
     // 注视数据的两个"看着不像真的"指纹，各告警一次（不改数据）。
@@ -75,6 +84,10 @@ private:
     int range_frames_         = 0; // 2D 点持续越界（ADR-0033）
     bool range_warned_        = false;
     bool capability_warned_   = false; // 属性与能力位不一致
+    // 模块日志与状态错误的去重闸门：上游模块每帧报同一句话时把日志折叠成
+    // 首条 + 一条计数，否则 engine.log 能涨到 GB 级（ADR-0046）
+    log::RepetitionGate log_gate_;
+    log::RepetitionGate report_gate_;
 
     std::atomic<std::uint64_t> frames_{0};
     std::atomic<bool> alive_{false};

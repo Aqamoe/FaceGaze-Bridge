@@ -33,7 +33,8 @@ add_executable(fgb-tests
     test_steamvr.cpp
     test_vrss.cpp
     test_gaze_pipeline.cpp
-    test_gaze_calib.cpp)
+    test_gaze_calib.cpp
+    test_log_gate.cpp)
 
 target_include_directories(fgb-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(fgb-tests PRIVATE FGB_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -63,6 +64,17 @@ set_target_properties(fgb-test-status-cycle PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 add_dependencies(fgb-tests fgb-test-status-cycle)
+
+# 日志刷屏夹具：每帧报同一句话（内容是递增计数），验证宿主侧折叠闸门（ADR-0046）。
+add_library(fgb-test-log-spam MODULE fixtures/log_spam_module.cpp)
+target_include_directories(fgb-test-log-spam PRIVATE "${CMAKE_SOURCE_DIR}/sdk")
+target_link_libraries(fgb-test-log-spam PRIVATE fgb_options)
+set_target_properties(fgb-test-log-spam PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "fgb-test-log-spam"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+add_dependencies(fgb-tests fgb-test-log-spam)
 
 # C4127: 测试里比较编译期常量（如 kShapeCount == 86）是有意为之——
 #        这些断言的作用就是在编译期常量被误改时炸掉。

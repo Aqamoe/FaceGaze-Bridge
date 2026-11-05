@@ -18,6 +18,7 @@
 //
 // 运行时依赖：WebView2 Evergreen Runtime。Win10/11 通常已随 Edge 预装。
 #include "base/crash.hpp"
+#include "base/log_rotate.hpp"
 
 #include <winsock2.h>
 
@@ -842,6 +843,10 @@ void write_log_header(HANDLE log, const std::wstring& command) {
     ::WriteFile(log, utf8.data(), static_cast<DWORD>(utf8.size() - 1), &written, nullptr);
 }
 
+// engine.log 只追加不轮转，上游模块一句话刷一晚上就能把它写到 GB 级（ADR-0046）。
+// 每次拉起引擎前把超限的旧日志滚成 engine.log.1，只留一份备份。
+constexpr std::uintmax_t kEngineLogMaxBytes = 16ull * 1024 * 1024;
+
 bool spawn_engine(const std::wstring& source) {
     const std::filesystem::path directory = exe_directory();
     const std::filesystem::path engine    = directory / L"fgb-cli.exe";
@@ -870,6 +875,9 @@ bool spawn_engine(const std::wstring& source) {
     }
 
     std::filesystem::create_directories(std::filesystem::path{g_host.engine_log}.parent_path(), ec);
+
+    // 滚不动（旧引擎的句柄还在、杀软占用）也照常追加：写不进日志比日志太大更糟
+    (void)fgb::rotate_log_file(g_host.engine_log, kEngineLogMaxBytes);
 
     SECURITY_ATTRIBUTES inherit{};
     inherit.nLength        = sizeof(inherit);

@@ -44,31 +44,62 @@ NativeModuleSource::NativeModuleSource(NativeSourceConfig config)
 
 NativeModuleSource::~NativeModuleSource() { stop(); }
 
+void NativeModuleSource::write_line(int level, const std::string& line) {
+    switch (level) {
+    case FGB_LOG_TRACE:
+        FGB_TRACE(kTag, "%s", line.c_str());
+        break;
+    case FGB_LOG_DEBUG:
+        FGB_DEBUG(kTag, "%s", line.c_str());
+        break;
+    case FGB_LOG_WARN:
+        FGB_WARN(kTag, "%s", line.c_str());
+        break;
+    case FGB_LOG_ERROR:
+        FGB_ERROR(kTag, "%s", line.c_str());
+        break;
+    default:
+        FGB_INFO(kTag, "%s", line.c_str());
+        break;
+    }
+    if (config_.log_sink) {
+        config_.log_sink(level, line.c_str());
+    }
+}
+
+void NativeModuleSource::emit_log(int level, const std::string& message) {
+    write_line(level, std::string{config_.module_name} + ": " + message);
+}
+
+void NativeModuleSource::emit_report(const std::string& text) {
+    // 保持既有格式：模块名 + 报告错误：正文（界面/文档里按这个串找）
+    write_line(FGB_LOG_WARN, std::string{config_.module_name} + " 报告错误：" + text);
+}
+
+void NativeModuleSource::drain_folded_logs(std::uint64_t now_ns) {
+    // 折叠小结不能等"下一次同类消息"才吐：模块一见停就不再说话了，
+    // 用户就永远看不到"还折叠了多少条"。
+    for (const auto& text : log_gate_.drain_expired(now_ns)) {
+        emit_log(FGB_LOG_WARN, text);
+    }
+    for (const auto& text : report_gate_.drain_expired(now_ns)) {
+        emit_report(text);
+    }
+}
+
 void NativeModuleSource::host_log(void* ctx, int level, const char* message) {
     if (ctx == nullptr || message == nullptr) {
         return;
     }
     auto* self = static_cast<NativeModuleSource*>(ctx);
-    const std::string detail = std::string{self->config_.module_name} + ": " + message;
-    switch (level) {
-    case FGB_LOG_TRACE:
-        FGB_TRACE(kTag, "%s", detail.c_str());
-        break;
-    case FGB_LOG_DEBUG:
-        FGB_DEBUG(kTag, "%s", detail.c_str());
-        break;
-    case FGB_LOG_WARN:
-        FGB_WARN(kTag, "%s", detail.c_str());
-        break;
-    case FGB_LOG_ERROR:
-        FGB_ERROR(kTag, "%s", detail.c_str());
-        break;
-    default:
-        FGB_INFO(kTag, "%s", detail.c_str());
-        break;
+    // 模块可以在 update() 里每帧报同一句话。真机上有个模块按 100 行/秒刷同一个
+    // 未识别地址，不去重能把 engine.log 写到 GB 级（ADR-0046）。
+    const auto emitted = self->log_gate_.offer(message, clock::now_ns());
+    if (!emitted.folded.empty()) {
+        self->emit_log(level, emitted.folded);
     }
-    if (self->config_.log_sink) {
-        self->config_.log_sink(level, detail.c_str());
+    if (!emitted.line.empty()) {
+        self->emit_log(level, emitted.line);
     }
 }
 
@@ -78,19 +109,33 @@ void NativeModuleSource::host_report(void* ctx, int state, const char* detail) {
     }
     auto* self = static_cast<NativeModuleSource*>(ctx);
     switch (state) {
-    case FGB_STATUS_ERROR:
+    case FGB_STATUS_ERROR: {
         self->alive_.store(true, std::memory_order_release);
         self->last_error_ = (detail != nullptr && detail[0] != '\0') ? detail : "模块报告错误";
-        FGB_WARN(kTag, "%s 报告错误：%s", self->config_.module_name.c_str(),
-                 self->last_error_.c_str());
+        // 界面上要的"当前错误"照旧每帧镜像；只是日志按类折叠，不然一个坏掉的
+        // 看门狗能每 0.3 秒写一行写一整晚（ADR-0046）
+        const auto emitted = self->report_gate_.offer(self->last_error_, clock::now_ns());
+        if (!emitted.folded.empty()) {
+            self->emit_report(emitted.folded);
+        }
+        if (!emitted.line.empty()) {
+            self->emit_report(emitted.line);
+        }
         break;
+    }
     case FGB_STATUS_STOPPED:
         self->alive_.store(false, std::memory_order_release);
         break;
-    case FGB_STATUS_ACTIVE:
+    case FGB_STATUS_ACTIVE: {
         self->last_error_.clear();
         self->alive_.store(true, std::memory_order_release);
+        // 恢复意味着这一类错误结束：把欠下的条数结清，下一轮同样的错误重新计
+        for (const auto& text : self->report_gate_.flush()) {
+            self->emit_report(text);
+        }
+        self->report_gate_.reset();
         break;
+    }
     default:
         self->alive_.store(true, std::memory_order_release);
         break;
@@ -489,6 +534,9 @@ void NativeModuleSource::stop() noexcept {
     range_frames_        = 0;
     range_warned_        = false;
     capability_warned_   = false;
+    // 重新加载的模块是新一轮，别让它继承上一轮的折叠窗口
+    log_gate_.reset();
+    report_gate_.reset();
 #ifdef _WIN32
     if (library_ != nullptr) {
         ::FreeLibrary(static_cast<HMODULE>(library_));
@@ -516,6 +564,7 @@ bool NativeModuleSource::poll(FaceFrame& out) {
         return false;
     }
     api_->update(self_);
+    drain_folded_logs(clock::now_ns());
     if (!has_frame_) {
         return false;
     }

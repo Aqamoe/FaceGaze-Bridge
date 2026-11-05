@@ -181,6 +181,7 @@ VRCFT 运行时
   控制面地址：默认 http://127.0.0.1:8787/，端口被其它程序占用时自动顺延到 8788/8789…
   （界面「设置」页会显示实际地址；浏览器也能打开，方便对照）
   引擎日志：%LOCALAPPDATA%\FaceGazeBridge\engine.log
+            （超过 16 MB 的话，下次启动引擎时会滚成 engine.log.1，只留一份旧日志）
   模块仓：%LOCALAPPDATA%\FaceGazeBridge\modules
   模块库缓存：%LOCALAPPDATA%\FaceGazeBridge\library.json
   校准档案：%LOCALAPPDATA%\FaceGazeBridge\calibration.ini（上一版自动留成 .bak）
