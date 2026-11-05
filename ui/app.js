@@ -206,6 +206,14 @@ const state = {
   // 换档案或断开重连都会回到校准后——这个状态不该悄悄跨会话存活。
   gaze_raw: false,
   gaze_profile_seen: -1,
+  // 上一帧"完整"的注视 + 时刻：模块保持旧帧时管道会短暂判过期，
+  // 那几十毫秒不值得把整张卡片重排一次
+  gaze_last_good: null,
+  gaze_last_msg: null,
+  gaze_good_at: 0,
+  gaze_holding: false,
+  gaze_note_until: 0,
+  gaze_note_ms: 0,
   shape_labels: null,   // ui/shapes.json：协议名 → 人话名称/分组/说明
   shape_labels_pending: false,
   param_desc: null,     // ui/param_desc.json：非基础参数的说明（基础 88 个回落到 shapes.json）
@@ -627,7 +635,60 @@ function gaze_dir_space_text(gaze, has_dir, has_point) {
     : t("status.gaze.dir.source");
 }
 
-function render_gaze(gaze) {
+// 一帧的"可显示要素"：判断这一帧是不是比上一帧少了东西（有点→没点、校准→未校准）
+function gaze_summary(gaze) {
+  if (!gaze) {
+    return { any: false, point: false, space: "source", version: 0 };
+  }
+  const left = gaze.left_point_valid === undefined
+    ? !!gaze.point2d_valid : !!gaze.left_point_valid;
+  const right = gaze.right_point_valid === undefined
+    ? !!gaze.point2d_valid : !!gaze.right_point_valid;
+  return {
+    any: !!gaze.valid || left || right,
+    point: left || right,
+    space: gaze.point_space || "source",
+    version: Number(gaze.profile_version || 0),
+  };
+}
+
+// 模块"保持上一帧"时，管道会按 50 ms 判过期：那几十毫秒里 point_space 从
+// calibrated 掉回 source、profile_version 归零，整张卡跟着重排——看起来就是闪。
+// 缺口短就沿用上一帧并在提示行标出来；超过这个时长就老实显示掉线后的样子。
+const GAZE_HOLD_MS = 600;
+// 几十毫秒的保持值根本不变，为它弹一行黄字只会闪眼；提示出现后也要留一会儿。
+const GAZE_NOTE_MIN_MS = 250;
+const GAZE_NOTE_KEEP_MS = 1200;
+
+function render_gaze(gaze, held_ms) {
+  if (held_ms === undefined) {
+    const now = performance.now();
+    const cur = gaze_summary(gaze);
+    const prev = state.gaze_last_good;
+    const degraded = !!prev && (!cur.any ||
+      (prev.point && !cur.point) ||
+      (prev.space === "calibrated" && cur.space !== "calibrated"));
+    const gap = prev ? now - state.gaze_good_at : 0;
+    if (prev && degraded && gap < GAZE_HOLD_MS) {
+      state.gaze_holding = true;
+      return render_gaze(state.gaze_last_msg, gap);
+    }
+    if (state.gaze_holding) {
+      // 保持刚结束。只有数据真的回来时才说"已恢复"——停摆期间说恢复是撒谎，
+      // 那种情况交给下面的 nodata 分支报真实原因。
+      state.gaze_holding = false;
+      if (cur.any && gap >= GAZE_NOTE_MIN_MS) {
+        state.gaze_note_ms = Math.round(gap);
+        state.gaze_note_until = now + GAZE_NOTE_KEEP_MS;
+      }
+    }
+    if (cur.any) {
+      state.gaze_last_good = cur;
+      state.gaze_last_msg = gaze;
+      state.gaze_good_at = now;
+    }
+    held_ms = 0;
+  }
   // valid = 有可用的合并方向；2D 点是否有效是另一件事（2D-only 源 valid 为假）
   const has_dir = !!(gaze && gaze.valid);
   const eye_point = (side) => {
@@ -644,9 +705,10 @@ function render_gaze(gaze) {
   // calibrated 也是视口坐标（ADR-0042：非 source 即可用），不能再当成原始点。
   const point_space = (gaze && gaze.point_space) || "source";
   const point_viewport = point_space !== "source";
-  // 换了档案（或第一次拿到档案）就退出"看原始"：否则上一版映射的原始值会冒充这一版
+  // 换档案（或第一次拿到档案）就退出"看原始"。掉线那几帧 version 会归零，
+  // 那不是换档案，别拿它当复位条件——否则眨眼两次就把人踢回校准后。
   const profile_version = Number((gaze && gaze.profile_version) || 0);
-  if (profile_version !== state.gaze_profile_seen) {
+  if (profile_version > 0 && profile_version !== state.gaze_profile_seen) {
     state.gaze_profile_seen = profile_version;
     state.gaze_raw = false;
   }
@@ -743,10 +805,19 @@ function render_gaze(gaze) {
   dir_space_el.classList.toggle(
     "warn", has_dir && point_space === "calibrated" && gaze.dir_space !== "calibrated");
 
-  // 一行解释：没数据时说原因，有方向但没几何时说圆点不是屏幕位置
+  // 一行解释：先说"这一帧是保持的"，再说没数据的原因，最后是缺几何。
+  // 几十毫秒的保持值没变，写一行字只会闪眼：低于阈值完全不提。
+  // 提了就至少留 GAZE_NOTE_KEEP_MS，并且换成过去式——保持结束后还能说"正在暂停"就是撒谎。
   const note = $("g-note");
+  const note_now = performance.now();
   let note_text = "";
-  if (!has_data && gaze && gaze.nodata && gaze.nodata !== "none") {
+  if (held_ms >= GAZE_NOTE_MIN_MS) {
+    state.gaze_note_ms = Math.round(held_ms);
+    state.gaze_note_until = note_now + GAZE_NOTE_KEEP_MS;
+    note_text = t("status.gaze.hold", { ms: state.gaze_note_ms });
+  } else if (note_now < state.gaze_note_until) {
+    note_text = t("status.gaze.hold.ended", { ms: state.gaze_note_ms });
+  } else if (!has_data && gaze && gaze.nodata && gaze.nodata !== "none") {
     if (gaze.nodata === "no_source") {
       note_text = t("status.gaze.nodata.no_source");
     } else if (gaze.nodata === "no_direction") {
@@ -759,8 +830,9 @@ function render_gaze(gaze) {
   } else if (gaze && gaze.geometry_missing) {
     note_text = t("status.gaze.note.geometry");
   }
-  note.textContent = note_text;
-  note.hidden = !note_text;
+  // 这一行常驻占位（CSS 给高度，空时也用不换行空格撑住行盒），只换文字不切换
+  // hidden——否则它出现/消失时会把下面的说明整体往下挤一次。
+  note.textContent = note_text || "\u00A0";
 
   place_gaze_dot($("g-dot-left"), left_valid,
     gaze && gaze.left_pitch_deg, gaze && gaze.left_yaw_deg, left_pt);

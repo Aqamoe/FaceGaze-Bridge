@@ -523,6 +523,11 @@ void NativeHostSource::drain_logs() {
     if (view_ == nullptr) {
         return;
     }
+    const std::uint64_t now_ns = clock::now_ns();
+    // 欠账先结算：模块不再说话时，"又折叠了 N 条"也要有个下落
+    for (const std::string& folded : log_gate_.drain_expired(now_ns)) {
+        FGB_INFO(kTag, "%s", folded.c_str());
+    }
     auto* block = static_cast<FgbNativeHostBlockV1*>(view_);
     const std::uint32_t head =
         std::atomic_ref<std::uint32_t>(block->log_head).load(std::memory_order_acquire);
@@ -542,22 +547,30 @@ void NativeHostSource::drain_logs() {
         const char* end = std::find(entry.text, entry.text + FGB_HOST_SHM_LOG_TEXT, '\0');
         const std::string message =
             std::string{entry.text, end} + " [" + config_.display_name + "]";
-        switch (entry.level) {
-        case 0:
-            FGB_TRACE(kTag, "%s", message.c_str());
-            break;
-        case 1:
-            FGB_DEBUG(kTag, "%s", message.c_str());
-            break;
-        case 3:
-            FGB_WARN(kTag, "%s", message.c_str());
-            break;
-        case 4:
-            FGB_ERROR(kTag, "%s", message.c_str());
-            break;
-        default:
-            FGB_INFO(kTag, "%s", message.c_str());
-            break;
+        // 与进程内加载同一套折叠（ADR-0046）。PICO 在眨眼时按帧刷
+        // "no valid eye data ... holding last frame"，不去重就是一天几千行。
+        const log::RepetitionGate::Emission emitted = log_gate_.offer(message, now_ns);
+        if (!emitted.folded.empty()) {
+            FGB_INFO(kTag, "%s", emitted.folded.c_str());
+        }
+        if (!emitted.line.empty()) {
+            switch (entry.level) {
+            case 0:
+                FGB_TRACE(kTag, "%s", emitted.line.c_str());
+                break;
+            case 1:
+                FGB_DEBUG(kTag, "%s", emitted.line.c_str());
+                break;
+            case 3:
+                FGB_WARN(kTag, "%s", emitted.line.c_str());
+                break;
+            case 4:
+                FGB_ERROR(kTag, "%s", emitted.line.c_str());
+                break;
+            default:
+                FGB_INFO(kTag, "%s", emitted.line.c_str());
+                break;
+            }
         }
     }
     last_log_sequence_ = head;

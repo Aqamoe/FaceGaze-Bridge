@@ -5,6 +5,7 @@
 #pragma once
 
 #include "fgb_native_host_shm.h"
+#include "base/log_gate.hpp"
 #include "sources/source.hpp"
 
 #include <atomic>
@@ -74,6 +75,9 @@ private:
     std::uint64_t last_sequence_ = 0;
     std::uint64_t last_heartbeat_ns_ = 0;
     std::uint32_t last_log_sequence_ = 0;
+    // 与进程内加载走同一个去重闸门（ADR-0046）：模块在眨眼/掉数据时会把同一句
+    // "holding last frame" 每帧刷一遍，宿主这条路径以前是 1:1 直转。
+    log::RepetitionGate log_gate_;
     std::atomic<std::uint64_t> frames_{0};
     std::uint32_t capabilities_ = 0;
     std::atomic<bool> restarting_{false};

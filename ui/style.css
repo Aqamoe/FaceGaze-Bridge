@@ -998,6 +998,10 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   .gaze-kv { grid-template-columns: 1fr; }
 }
 
+/* 注视卡片的提示行常驻占位：内容在「有/无」之间切换时不能把下面的说明推下去。
+   1.55em 与 .hint 的行高一致——用 16px 会差 1.8px，那一像素就是"抖"的来源。 */
+.gaze-note { min-height: 1.55em; }
+
 /* ---------- 输出设置：每个输出通道一张卡片 ---------- */
 .out-settings-head { margin-bottom: 4px; }
 .out-settings-hint { margin: 0 0 14px; }
