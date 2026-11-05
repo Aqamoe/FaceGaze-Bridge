@@ -154,6 +154,8 @@ function apply_l10n() {
   if (state.view === "calibration") {
     render_calibration();
   }
+  // 参数卡片的说明是数据表里的中文/英文，切语言要就地换掉
+  refresh_param_descs();
   if (state.view === "settings") {
     render_steamvr();
   }
@@ -202,6 +204,8 @@ const state = {
   cal_preview_on: false,
   shape_labels: null,   // ui/shapes.json：协议名 → 人话名称/分组/说明
   shape_labels_pending: false,
+  param_desc: null,     // ui/param_desc.json：非基础参数的说明（基础 88 个回落到 shapes.json）
+  param_desc_pending: false,
   curve_pop: null,      // 曲线编辑浮层（单例，打开时指向某一行）
   steamvr: null,
   steamvr_busy: false,
@@ -347,6 +351,9 @@ function handle(message) {
       break;
     case "catalog":
       build_catalog(message.names || [], message.sent || []);
+      // 说明表是"锦上添花"：拿不到就只显示参数名，不影响热力图
+      ensure_labels_loaded();
+      ensure_param_desc_loaded();
       break;
     case "status":
       render_status(message);
@@ -1302,18 +1309,25 @@ function build_catalog(names, sent) {
     cell.className = "cell";
     cell.dataset.name = name.toLowerCase();
     cell.dataset.index = String(index);
-    cell.title = name;
 
     const label = document.createElement("span");
     label.className = "cell-name";
     label.textContent = short_name(name);
+    // 说明和名字一起进搜索索引：用户搜"眯眼"要能搜到 EyeSquintLeft
+    const desc = document.createElement("span");
+    desc.className = "cell-desc";
+    const desc_text = param_desc(name);
+    desc.textContent = desc_text;
+    cell.dataset.desc = desc_text.toLowerCase();
+    cell.title = desc_text ? `${name} · ${desc_text}` : name;
+
     const value = document.createElement("span");
     value.className = "cell-val";
     value.textContent = "0.000";
 
-    cell.append(label, value);
+    cell.append(label, desc, value);
     heatmap.append(cell);
-    return { element: cell, value, last: -1 };
+    return { element: cell, value, desc, name, last: -1 };
   });
 
   const mini = $("mini-heat");
@@ -1369,7 +1383,8 @@ function apply_param_filter() {
   let visible = 0;
 
   state.cells.forEach((cell, index) => {
-    const matches_text = !text || cell.element.dataset.name.includes(text);
+    const desc = cell.element.dataset.desc || "";
+    const matches_text = !text || cell.element.dataset.name.includes(text) || desc.includes(text);
     const matches_sent = !only_sent || state.sent[index];
     const show = matches_text && matches_sent;
     cell.element.hidden = !show;
@@ -3101,6 +3116,29 @@ function shape_tip(name) {
   return info.tip || "";
 }
 
+// 参数页卡片的一句话说明。基础 88 个形状的名字在 shapes.json（校准页共用），
+// 其余（v2 派生 / v1 legacy）在 param_desc.json；两份都拿不到就只显示协议名。
+function param_desc(name) {
+  const key = name.startsWith("v2/") ? name.slice(3) : name;
+  const params = state.param_desc && state.param_desc.params;
+  const info = (params && params[key]) || shape_info(key);
+  if (!info) {
+    return "";
+  }
+  return (lang === "zh" ? info.zh : info.en) || info.zh || "";
+}
+
+// 说明表是异步到的，也可能因为切语言而变：把已建好的格子刷一遍，不重建 DOM
+function refresh_param_descs() {
+  for (const cell of state.cells) {
+    const text = param_desc(cell.name || "");
+    cell.element.dataset.desc = text.toLowerCase();
+    if (cell.desc) {
+      cell.desc.textContent = text;
+    }
+  }
+}
+
 function shape_group_id(name) {
   const info = shape_info(name);
   return (info && info.group) || "";
@@ -4464,10 +4502,33 @@ async function ensure_labels_loaded() {
     if (state.view === "calibration") {
       render_calibration();
     }
+    // 参数页的 88 个基础形状也从这张表取名，读完要回填一次
+    refresh_param_descs();
   } catch (error) {
     console.warn("shapes.json 加载失败，退回协议名", error);
   } finally {
     state.shape_labels_pending = false;
+  }
+}
+
+// 「参数在动，但不知道 JawZ 是什么」是参数页最常见的困惑；说明表就是为这个存在的。
+// 同样是锦上添花：读不到就只显示参数名，热力图本身照常工作。
+async function ensure_param_desc_loaded() {
+  if (state.param_desc || state.param_desc_pending) {
+    return;
+  }
+  state.param_desc_pending = true;
+  try {
+    const response = await fetch("param_desc.json", { cache: "force-cache" });
+    if (!response.ok) {
+      throw new Error(`param_desc.json HTTP ${response.status}`);
+    }
+    state.param_desc = await response.json();
+  } catch (error) {
+    console.warn("param_desc.json 加载失败，参数卡片只显示协议名", error);
+  } finally {
+    state.param_desc_pending = false;
+    refresh_param_descs();
   }
 }
 

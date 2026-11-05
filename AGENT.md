@@ -79,6 +79,7 @@
 | 失败文案 | 显示可操作的具体原因（端口占用、缺 DLL、校验失败），不要只给红点或"失败" |
 | 状态一致性 | 服务端消息是唯一事实来源；UI 只做展示与命令发送，不在页面里猜状态。库/模块同步后必须重算"已安装/可更新" |
 | 源名显示 | 引擎里的源名是 `native:xxx` / `vrcft:xxx`（`--eye-source`、`start_instance` 按它匹配，不能改）。界面一律用 `display_source()` 显示成 `FGB:xxx` / `VRCFT:xxx`，tooltip 里留引擎真名 |
+| 参数说明 | 参数卡片除了协议名还要有一句人话说明：基础 88 个形状在 `ui/shapes.json`（校准页共用），其余在 `ui/param_desc.json`（由 `tools/gen_param_desc.py` 生成，别手改）；新增参数忘了配说明时 `fgb-tests` 会红 |
 | 版本比较 | 已安装/有新版本用**语义版本比较**，不要字符串相等；包内版本可能比库条目新 |
 | 边界 | 最小窗口 1100×700 DIP 下布局可用；窄窗口侧栏只留图标；窗口尺寸按 DIP 缩放 |
 | 验证 | 界面改动必须用 `tools/probe_ui.py`（CDP）验证真实数据与交互，不能只靠截图或"看起来对" |
@@ -362,7 +363,8 @@ sdk/           原生模块 SDK：ABI 头（模块 / 共享内存 / UDP / 宿主
                docs/（集成文档）、samples/（无硬件示例与 Unity 包）
 ui/            页面资源（无构建步骤；face.js 是 WebGL2 渲染器，face/ 是模型与映射表）
 tools/         抓包、冒烟、探针，以及 build_vrcft_runtime.py（出精简运行时）、
-               bake_gnm_head.py / face_contract.py / check_face_model.py（3D 资产烘焙与校验）
+               bake_gnm_head.py / face_contract.py / check_face_model.py（3D 资产烘焙与校验）、
+               gen_param_desc.py（参数卡片说明表 → ui/param_desc.json）
 docs/          方案、ADR、路线图、用户手册；SDK 集成文档在 sdk/docs/
 ```
 

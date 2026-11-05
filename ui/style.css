@@ -610,6 +610,18 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   text-overflow: ellipsis;
 }
 
+/* 一行说明：卡片宽度只有 168px，截断靠 title 兜底（悬停看全名+说明） */
+.cell-desc {
+  display: block;
+  font-size: 10px;
+  color: var(--dim);
+  opacity: .85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+
 .cell-val {
   display: block;
   font-size: 10.5px;

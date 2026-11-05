@@ -1,9 +1,17 @@
 #include "params/v2_params.hpp"
 
+#include "base/json_value.hpp"
 #include "test_framework.hpp"
 
 #include <cmath>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <set>
+#include <string>
 #include <string_view>
+#include <vector>
 
 using namespace fgb;
 
@@ -145,4 +153,61 @@ FGB_TEST(params_eye_scale_is_configurable) {
     // 满量程 30° → 0.5；满量程 60° → 0.25
     FGB_CHECK_NEAR(eval(frame, "EyeLeftX", 30.0f), 0.5f, 1e-4);
     FGB_CHECK_NEAR(eval(frame, "EyeLeftX", 60.0f), 0.25f, 1e-4);
+}
+
+// ---------------------------------------------------------------------------
+// 参数卡片的说明表
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// 读 ui/*.json 里某个对象段的键集合
+std::set<std::string> json_keys(const std::filesystem::path& path, std::string_view section) {
+    std::set<std::string> keys;
+    std::ifstream file{path, std::ios::binary};
+    if (!file) {
+        return keys;
+    }
+    const std::string text{std::istreambuf_iterator<char>(file),
+                           std::istreambuf_iterator<char>()};
+    json::Value root;
+    std::string error;
+    if (!json::parse(text, root, error)) {
+        return keys;
+    }
+    const json::Value* node = root.find(section);
+    if (node == nullptr || !node->is_object()) {
+        return keys;
+    }
+    for (const auto& entry : node->object) {
+        keys.insert(entry.first);
+    }
+    return keys;
+}
+
+} // namespace
+
+// 每张参数卡片都要有"人话"说明，否则用户只能看到 JawZ、LipSuckFunnelUpperRight 这种名字。
+// 基础 88 个形状的名字在 shapes.json（校准页共用），其余由 tools/gen_param_desc.py 生成。
+// 新增参数忘了配说明时这里会红——比等用户发现卡片是空的要早。
+FGB_TEST(params_every_card_has_a_description) {
+    const std::filesystem::path ui = std::filesystem::path{FGB_SOURCE_DIR} / "ui";
+    const std::set<std::string> shapes = json_keys(ui / "shapes.json", "shapes");
+    const std::set<std::string> desc   = json_keys(ui / "param_desc.json", "params");
+    FGB_CHECK(shapes.size() == 88);
+    FGB_CHECK(!desc.empty());
+
+    std::vector<std::string> missing;
+    for (const params::Group& group : params::groups()) {
+        for (const params::ParamEntry& entry : group.entries) {
+            const std::string name{entry.name};
+            if (shapes.count(name) == 0 && desc.count(name) == 0) {
+                missing.emplace_back(name);
+            }
+        }
+    }
+    for (const std::string& name : missing) {
+        std::fprintf(stderr, "    缺说明：%s\n", name.c_str());
+    }
+    FGB_CHECK(missing.empty());
 }
