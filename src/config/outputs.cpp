@@ -207,6 +207,11 @@ bool apply_output_entry(const IniEntry& entry, OutputOptions& out, std::string& 
             out.vrss_allow_source_points = parse_bool(entry.value, out.vrss_allow_source_points);
         }
     }
+    if (entry.section == "steamvr") {
+        if (entry.key == "exit_with_steamvr") {
+            out.steamvr_exit_with_steamvr = parse_bool(entry.value, out.steamvr_exit_with_steamvr);
+        }
+    }
     return true;
 }
 
@@ -252,6 +257,9 @@ void write_output_sections(IniWriter& writer, const OutputOptions& options) {
     writer.kv_bool("auto_start", options.vrss_auto_start);
     writer.kv_bool("persist_identity", options.vrss_persist_identity);
     writer.kv_bool("allow_source_points", options.vrss_allow_source_points);
+
+    writer.section("steamvr");
+    writer.kv_bool("exit_with_steamvr", options.steamvr_exit_with_steamvr);
 }
 
 // .tmp → 原子替换；调用方负责先把内容写完

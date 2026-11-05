@@ -1333,6 +1333,9 @@ void IpcServer::build_steamvr(std::string& out) const {
     writer.key("steamvr_running").boolean(status.steamvr_running);
     writer.key("registered").boolean(status.registered);
     writer.key("autolaunch").boolean(status.autolaunch);
+    // 配套开关存在 outputs.ini 里（不是 SteamVR 的状态）：注册项状态由 SteamVR 读回，
+    // 这个值只能由我们自己回答，界面据此渲染「SteamVR 退出后自动退出」那一行。
+    writer.key("exit_with_steamvr").boolean(ctx_.outputs.steamvr_exit_with_steamvr);
     writer.key("runtime_dir").str(status.runtime_dir);
     writer.key("manifest_path").str(status.manifest_path);
     writer.key("binary_path").str(status.binary_path);
@@ -1913,6 +1916,25 @@ std::string IpcServer::persist_settings() {
     return {};
 }
 
+std::string IpcServer::set_exit_with_steamvr(bool enabled) {
+    if (ctx_.outputs.steamvr_exit_with_steamvr == enabled) {
+        return {};
+    }
+    config::OutputOptions next     = ctx_.outputs;
+    next.steamvr_exit_with_steamvr = enabled;
+    if (ctx_.outputs_path.empty()) {
+        // 极简测试环境没有设置文件可写：只改内存，界面上仍然是"生效"的
+        ctx_.outputs = next;
+        return {};
+    }
+    std::string error;
+    if (!config::save_outputs(ctx_.outputs_path, next, error)) {
+        return error.empty() ? "输出设置路径不可用" : error;
+    }
+    ctx_.outputs = next;
+    return {};
+}
+
 void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     std::string type;
     bool ok                 = false;
@@ -2308,11 +2330,37 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         } else if (!json::field_bool(text, "enabled", enabled)) {
             error = "missing enabled";
         } else {
+            // 只有"从关打到开"才算一次开启：这时候把配套的自动退出一起打开。
+            // 用户之后可以单独把它关掉；下次再从关打到开时会重新同步（ADR-0047）。
+            const bool was_autolaunch = steamvr_->snapshot().autolaunch;
             steamvr_->request(enabled ? steamvr::Service::Op::Enable
                                       : steamvr::Service::Op::Disable);
             steamvr_touched = true;
             ack_message     = enabled ? "正在注册 SteamVR 启动项…" : "正在关闭 SteamVR 启动项…";
             ok              = true;
+            if (enabled && !was_autolaunch) {
+                const std::string save_error = set_exit_with_steamvr(true);
+                ack_message += save_error.empty()
+                                   ? "；已同步打开「SteamVR 退出后自动退出」"
+                                   : "；同步自动退出失败：" + save_error;
+            }
+        }
+    } else if (has_type && type == "set_steamvr_exit_with_steamvr") {
+        bool enabled = false;
+        if (!json::field_bool(text, "enabled", enabled)) {
+            error = "missing enabled";
+        } else {
+            const std::string save_error = set_exit_with_steamvr(enabled);
+            if (!save_error.empty()) {
+                error = "自动退出开关保存失败：" + save_error;
+            } else {
+                ok              = true;
+                // 走 steamvr 消息回推：这个开关和「随 SteamVR 启动」在同一张卡片上，
+                // 两条消息分开推会让页面出现两个真值来源。
+                steamvr_touched = true;
+                ack_message     = enabled ? "已开启：SteamVR 退出后 FGB 一起退出"
+                                          : "已关闭：SteamVR 退出后 FGB 继续运行";
+            }
         }
     } else if (has_type && type == "remove_steamvr_manifest") {
         if (steamvr_ == nullptr) {
@@ -3890,6 +3938,27 @@ void IpcServer::pump(int timeout_ms) {
                 std::string message;
                 build_gaze_calib(message);
                 server_.broadcast(message);
+            }
+        }
+    }
+
+    // 「SteamVR 退出后自动退出」：每秒看一次 vrserver.exe，去抖由 ExitWatch 负责。
+    // 必须在下面 ready_count() 那次提前返回之前：窗口收进托盘时页面没连着，
+    // 但用户照样会关 SteamVR，这条判断不能跟着界面一起停。
+    {
+        const auto watch_now = std::chrono::steady_clock::now();
+        if (watch_now - last_steamvr_watch_ >= std::chrono::seconds(1)) {
+            last_steamvr_watch_ = watch_now;
+            const bool wanted  = ctx_.outputs.steamvr_exit_with_steamvr;
+            const bool present = wanted && process_running(L"vrserver.exe");
+            if (steamvr_exit_watch_.observe(wanted, present, clock::now_ns() / 1'000'000ULL)) {
+                FGB_INFO(kTag, "SteamVR 已退出：按设置自动结束 FGB");
+                if (ctx_.steamvr_exit != nullptr) {
+                    ctx_.steamvr_exit->store(true, std::memory_order_release);
+                }
+                if (ctx_.quit != nullptr) {
+                    ctx_.quit->store(true, std::memory_order_release);
+                }
             }
         }
     }

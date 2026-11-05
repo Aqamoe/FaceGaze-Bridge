@@ -24,4 +24,9 @@ private:
     std::uint64_t last_wall_ns_ = 0;
 };
 
+// 某个 exe 名字的进程是否在跑（大小写不敏感，按文件名而不是完整路径比对）。
+// 只用于"SteamVR 还在不在"这类生命周期判断：进程可能在两次调用之间换掉，
+// 所以调用方必须自己决定去抖，不要把一次 false 当成"已经退出"。
+bool process_running(const wchar_t* exe_name) noexcept;
+
 } // namespace fgb

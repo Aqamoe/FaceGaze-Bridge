@@ -2,6 +2,7 @@
 
 #include "base/json_value.hpp"
 #include "base/log.hpp"
+#include "base/process_stats.hpp"
 #include "vrss/identity.hpp"
 #include "vrss/paths.hpp"
 
@@ -17,7 +18,6 @@
 #include <winsock2.h>
 #include <windows.h>
 #include <shellapi.h>
-#include <tlhelp32.h>
 #include <winreg.h>
 #endif
 
@@ -41,25 +41,9 @@ std::wstring quote(const std::wstring& value) {
     return L"\"" + value + L"\"";
 }
 
-bool running_process(const wchar_t* name) {
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot == INVALID_HANDLE_VALUE) {
-        return false;
-    }
-    PROCESSENTRY32W entry{};
-    entry.dwSize = sizeof(entry);
-    bool found    = false;
-    if (Process32FirstW(snapshot, &entry)) {
-        do {
-            if (_wcsicmp(entry.szExeFile, name) == 0) {
-                found = true;
-                break;
-            }
-        } while (Process32NextW(snapshot, &entry));
-    }
-    CloseHandle(snapshot);
-    return found;
-}
+// 进程存在性判定只有一份（base/process_stats）：SteamVR 退出检测也用它，
+// 两份实现迟早对"按名字还是按路径"给出不同答案。
+using fgb::process_running;
 
 bool token_is_admin() {
     SID_IDENTIFIER_AUTHORITY authority = SECURITY_NT_AUTHORITY;
@@ -272,7 +256,7 @@ bool Runtime::export_geometry(HmdGeometry& out, std::string& error) {
     if (!installed(error)) {
         return false;
     }
-    if (!running_process(L"vrserver.exe")) {
+    if (!process_running(L"vrserver.exe")) {
         // 关键：SteamVR 没运行时不能调用 VR_Init——它会尝试拉起 SteamVR 并长时间阻塞。
         error = "SteamVR 未运行，请先启动 SteamVR 并连接头显";
         return false;
@@ -525,7 +509,7 @@ bool Runtime::start_provider(int port, const std::string& contract, float area_p
             error = last_error_text();
             return false;
         }
-        if (!running_process(L"fgb-vrss-provider.exe")) {
+        if (!process_running(L"fgb-vrss-provider.exe")) {
             error = last_error_text();
             if (error.empty()) {
                 error = "provider 启动后立即退出";
@@ -690,7 +674,7 @@ bool Runtime::provider_alive() const {
             return alive;
         }
     }
-    return running_process(L"fgb-vrss-provider.exe");
+    return process_running(L"fgb-vrss-provider.exe");
 #else
     return false;
 #endif
@@ -702,16 +686,16 @@ bool Runtime::read_status(ProviderStatus& out) const {
     const std::filesystem::path path = run_dir() / "status.json";
     const std::string body           = read_text(path);
     if (body.empty()) {
-        out.running = running_process(L"fgb-vrss-provider.exe");
+        out.running = process_running(L"fgb-vrss-provider.exe");
         return false;
     }
     json::Value root;
     std::string error;
     if (!json::parse(body, root, error) || !root.is_object()) {
-        out.running = running_process(L"fgb-vrss-provider.exe");
+        out.running = process_running(L"fgb-vrss-provider.exe");
         return false;
     }
-    out.running           = running_process(L"fgb-vrss-provider.exe");
+    out.running           = process_running(L"fgb-vrss-provider.exe");
     out.pid               = static_cast<int>(root.number_at("pid"));
     out.registered        = root.bool_at("registered");
     out.fresh             = root.bool_at("fresh");
@@ -838,7 +822,7 @@ void restore_env(const wchar_t* name, const std::wstring& old, bool had_old) {
 
 bool Runtime::steamvr_running() const {
 #ifdef _WIN32
-    return running_process(L"vrserver.exe");
+    return process_running(L"vrserver.exe");
 #else
     return false;
 #endif
@@ -846,7 +830,7 @@ bool Runtime::steamvr_running() const {
 
 bool Runtime::vrchat_running() const {
 #ifdef _WIN32
-    return running_process(L"VRChat.exe") || running_process(L"start_protected_game.exe");
+    return process_running(L"VRChat.exe") || process_running(L"start_protected_game.exe");
 #else
     return false;
 #endif

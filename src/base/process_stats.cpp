@@ -5,6 +5,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <psapi.h>
+#include <tlhelp32.h>
 #endif
 
 namespace fgb {
@@ -51,6 +52,34 @@ ProcessStats ProcessSampler::sample() noexcept {
     }
 #endif
     return stats;
+}
+
+bool process_running(const wchar_t* exe_name) noexcept {
+#ifdef _WIN32
+    if (exe_name == nullptr || exe_name[0] == L'\0') {
+        return false;
+    }
+    const HANDLE snapshot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    bool found   = false;
+    if (::Process32FirstW(snapshot, &entry) != FALSE) {
+        do {
+            if (::_wcsicmp(entry.szExeFile, exe_name) == 0) {
+                found = true;
+                break;
+            }
+        } while (::Process32NextW(snapshot, &entry) != FALSE);
+    }
+    ::CloseHandle(snapshot);
+    return found;
+#else
+    (void)exe_name;
+    return false;
+#endif
 }
 
 } // namespace fgb

@@ -64,6 +64,7 @@ config::OutputOptions sample() {
     out.vrss_auto_launch_vrchat = true;
     out.vrss_auto_start       = true;
     out.vrss_persist_identity = false;
+    out.steamvr_exit_with_steamvr = true;
     return out;
 }
 
@@ -171,6 +172,25 @@ FGB_TEST(outputs_vrss_defaults) {
     // 默认值必须本身就是合法的，否则新用户第一次保存就被拦下
     std::string error;
     FGB_CHECK(config::validate_outputs(options, error));
+}
+
+// 「SteamVR 退出后自动退出」默认关：手动双击启动的用户不该被 SteamVR 带走。
+// 它只由界面/命令打开，配置文件里没写这一项时必须是关的（ADR-0047）。
+FGB_TEST(outputs_steamvr_exit_defaults_off) {
+    config::OutputOptions options;
+    FGB_CHECK(!options.steamvr_exit_with_steamvr);
+
+    // 旧版 outputs.ini 没有 [steamvr] 段：读回来仍是关
+    TempDir temp;
+    const fs::path path = temp.path / "outputs.ini";
+    {
+        std::ofstream file{path};
+        file << "[output]\nenabled=true\n";
+    }
+    config::OutputOptions loaded;
+    std::string error;
+    FGB_CHECK(config::load_outputs(path, loaded, error));
+    FGB_CHECK(!loaded.steamvr_exit_with_steamvr);
 }
 
 // 抗锯齿范围上限收到 50%：超过就拒绝，别让用户把区域铺满整个视口当"抗锯齿"。

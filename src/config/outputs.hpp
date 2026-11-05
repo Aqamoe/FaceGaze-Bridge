@@ -75,6 +75,12 @@ struct OutputOptions {
     // 默认关：ADR-0033 说这类点不是屏幕位置，必须真机四方向确认后才算可用。
     bool vrss_allow_source_points = false;
 
+    // SteamVR 退出后连 FGB 一起退出：随 SteamVR 启动的另一半。
+    // 默认关（用户手动双击启动 FGB 时，不该因为关掉 SteamVR 就被带走）；
+    // 界面把「随 SteamVR 启动 FGB」从关打到开时会同步打开它，用户可以单独关掉，
+    // 下次再把那个开关从关打到开时会重新同步（见 ADR-0047）。
+    bool steamvr_exit_with_steamvr = false;
+
     bool operator==(const OutputOptions&) const = default;
 };
 

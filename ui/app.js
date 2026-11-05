@@ -4832,6 +4832,9 @@ function render_steamvr() {
   // 只有 on/off 才是"SteamVR 在跑、可以改"的状态；not_running 时开关禁用并提示先启动
   $("sv-autolaunch").disabled =
     !available || busy || (state_id !== "on" && state_id !== "off");
+  // 自动退出是本地偏好（写 outputs.ini），SteamVR 没跑也能改；引擎没提供控制时整张卡片只读
+  $("sv-exit").checked = !!data.exit_with_steamvr;
+  $("sv-exit").disabled = !available || busy;
   $("sv-refresh").disabled = !available || busy;
   $("sv-remove").disabled = !available || busy || !data.registered;
   $("sv-busy").hidden = !busy;
@@ -4870,6 +4873,16 @@ function request_steamvr_refresh() {
 function set_steamvr_autolaunch(enabled) {
   state.steamvr_busy = true;
   if (!send({ type: "set_steamvr_autolaunch", enabled })) {
+    state.steamvr_busy = false;
+    show_toast(t("link.failed"), "error");
+  }
+  render_steamvr();
+}
+
+// 自动退出开关：引擎会把新值随下一条 steamvr 消息推回来，页面不自己改真值
+function set_steamvr_exit_with_steamvr(enabled) {
+  state.steamvr_busy = true;
+  if (!send({ type: "set_steamvr_exit_with_steamvr", enabled })) {
     state.steamvr_busy = false;
     show_toast(t("link.failed"), "error");
   }
@@ -5093,6 +5106,12 @@ function wire() {
       return;
     }
     set_steamvr_autolaunch($("sv-autolaunch").checked);
+  });
+  $("sv-exit").addEventListener("change", () => {
+    if ($("sv-exit").disabled) {
+      return;
+    }
+    set_steamvr_exit_with_steamvr($("sv-exit").checked);
   });
   $("sv-remove").addEventListener("click", async () => {
     if (!(await ask_confirm({

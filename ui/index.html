@@ -952,6 +952,11 @@
               <span class="pill" id="sv-state">—</span>
             </b></div>
             <label class="switch"><input type="checkbox" id="sv-autolaunch"> <span data-i18n="settings.steamvr.autolaunch">随 SteamVR 启动 FaceGaze Bridge</span></label>
+            <label class="switch"><input type="checkbox" id="sv-exit"> <span data-i18n="settings.steamvr.exit_with_steamvr">SteamVR 退出后自动退出 FaceGaze Bridge</span></label>
+            <p class="hint" data-i18n="settings.steamvr.exit_hint">
+              打开「随 SteamVR 启动」时会顺带打开这一项：SteamVR 关掉后 FGB 自己退出，不用再去托盘里点退出。
+              可以单独关掉；下次再把上面那一项从关打到开时，它会重新同步打开。
+            </p>
             <div class="toolbar" style="margin-top:10px">
               <button class="btn" id="sv-refresh" data-i18n="settings.steamvr.refresh">重新检测</button>
               <button class="btn ghost danger" id="sv-remove" data-i18n="settings.steamvr.remove">移除注册</button>

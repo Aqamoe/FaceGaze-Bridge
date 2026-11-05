@@ -67,8 +67,11 @@ std::atomic<bool> g_stop{false};
 std::atomic<bool> g_restart{false};
 // 更新安装器已经起来了（退出码 4）：外壳要安静退出，别重启引擎、别报"启动失败"
 std::atomic<bool> g_apply_update{false};
+// SteamVR 退出触发了自动退出（退出码 5）：外壳连窗口/托盘一起收掉，别当成"引擎被停了"
+std::atomic<bool> g_exit_with_steamvr{false};
 constexpr int kExitRestartEngine = 3;
 constexpr int kExitApplyUpdate   = 4;
+constexpr int kExitWithSteamVr   = 5;
 
 #ifdef _WIN32
 BOOL WINAPI console_handler(DWORD type) {
@@ -1488,6 +1491,7 @@ int cmd_run(int argc, char** argv) {
         ctx.quit        = &g_stop;
         ctx.restart_engine = &g_restart;
         ctx.apply_update   = &g_apply_update;
+        ctx.steamvr_exit   = &g_exit_with_steamvr;
         ctx.auto_update    = auto_update_check;
         ctx.update_assume_installed = update_assume_installed;
         ctx.preview     = preview_raw;
@@ -1639,6 +1643,11 @@ int cmd_run(int argc, char** argv) {
     if (g_restart.load(std::memory_order_acquire)) {
         FGB_INFO("cli", "按界面请求重启引擎（退出码 %d）", kExitRestartEngine);
         return kExitRestartEngine;
+    }
+    if (g_exit_with_steamvr.load(std::memory_order_acquire)) {
+        // 放在最后：重启/装更新优先，那两个场景下 SteamVR 退没退都无所谓
+        FGB_INFO("cli", "SteamVR 已退出，按设置自动结束（退出码 %d）", kExitWithSteamVr);
+        return kExitWithSteamVr;
     }
     return 0;
 }

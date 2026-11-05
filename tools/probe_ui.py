@@ -715,6 +715,10 @@ def main():
             "    reason_text: document.getElementById('sv-detail').textContent,"
             "    pill: document.getElementById('sv-state').textContent,"
             "    toggle_disabled: document.getElementById('sv-autolaunch').disabled,"
+            "    exit_present: !!document.getElementById('sv-exit'),"
+            "    exit_checked: document.getElementById('sv-exit').checked,"
+            "    exit_value: !!s.exit_with_steamvr,"
+            "    exit_disabled: document.getElementById('sv-exit').disabled,"
             "    remove_disabled: document.getElementById('sv-remove').disabled"
             "  });"
             "})()"))
@@ -1147,6 +1151,19 @@ def main():
         ok = False
     if not steamvr.get("manifest") or not steamvr.get("reason_text"):
         print("FAIL SteamVR 卡片缺少 manifest 或原因文案")
+        ok = False
+
+    # 「SteamVR 退出后自动退出」开关（ADR-0047）：页面显示的值必须就是引擎里存的那个值，
+    # 不能在 JS 里自己推算——这个开关会被自启动开关同步打开，两边不一致时用户会被骗。
+    if not steamvr.get("exit_present"):
+        print("FAIL SteamVR 卡片缺少「退出后自动退出」开关")
+        ok = False
+    elif steamvr.get("exit_checked") != steamvr.get("exit_value"):
+        print(f"FAIL 自动退出开关显示({steamvr.get('exit_checked')})与引擎值"
+              f"({steamvr.get('exit_value')})不一致")
+        ok = False
+    if steamvr.get("exit_disabled") and steamvr.get("available") and not steamvr.get("busy"):
+        print("FAIL SteamVR 可用时自动退出开关被禁用")
         ok = False
 
     print("PASS" if ok else "FAILED")

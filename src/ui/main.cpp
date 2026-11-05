@@ -57,6 +57,8 @@ constexpr int kIconResource       = 101;
 constexpr DWORD kEngineRestartExit = 3;
 // 引擎启动了更新安装器并主动让路（ADR-0036）：外壳要安静退出，不重启、不报错
 constexpr DWORD kEngineApplyUpdateExit = 4;
+// 引擎跟随 SteamVR 退出（ADR-0047）：外壳连托盘一起收掉，用户关掉 SteamVR 就该看不到 FGB
+constexpr DWORD kEngineSteamVrExit = 5;
 
 // 托盘：图标回调消息与菜单项 id
 constexpr UINT kTrayCallback = WM_APP + 21;
@@ -979,6 +981,14 @@ void on_engine_exit(DWORD exit_code) {
     // 装完由 Inno 的 [Run]（/RELAUNCH=1）把新版本拉起来，这里不要重启引擎。
     if (exit_code == kEngineApplyUpdateExit) {
         trace_startup(L"引擎退出：正在安装更新");
+        quit_app();
+        return;
+    }
+
+    // SteamVR 退出，引擎按设置跟着结束了：整个程序一起走。留在托盘里只会剩一个
+    // 连不上引擎的空壳，用户下次还得自己点「退出」（ADR-0047）。
+    if (exit_code == kEngineSteamVrExit) {
+        trace_startup(L"引擎退出：SteamVR 已退出，自动结束");
         quit_app();
         return;
     }

@@ -87,6 +87,7 @@ target_link_libraries(fgb_config PUBLIC fgb_base)
 # 动态加载 openvr_api.dll（不产生再分发义务，见 ADR-0020）。
 add_library(fgb_steamvr STATIC
     openvr/steamvr.cpp
+    openvr/steamvr_watch.cpp
     openvr/overlay.cpp)
 target_include_directories(fgb_steamvr PUBLIC "${CMAKE_SOURCE_DIR}/third_party")
 target_link_libraries(fgb_steamvr PUBLIC fgb_base)

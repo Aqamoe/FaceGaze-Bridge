@@ -1,7 +1,9 @@
 #include "openvr/steamvr.hpp"
+#include "openvr/steamvr_watch.hpp"
 
 #include "test_framework.hpp"
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 
@@ -71,4 +73,67 @@ FGB_TEST(steamvr_classify_init_errors) {
     FGB_CHECK(std::string{state_name(State::NotInstalled)} == "not_installed");
     FGB_CHECK(std::string{state_name(State::NotRunning)} == "not_running");
     FGB_CHECK(std::string{state_name(State::On)} == "on");
+}
+
+// 没打开开关时，SteamVR 退出多少次都不该有动作
+FGB_TEST(steamvr_exit_watch_stays_quiet_when_disabled) {
+    ExitWatch watch;
+    std::uint64_t now = 1000;
+    for (int i = 0; i < 20; ++i, now += 1000) {
+        FGB_CHECK(!watch.observe(false, false, now));
+    }
+}
+
+// 用户先开 FGB、SteamVR 后起来：没看见过 vrserver 就不能判"它退出了"
+FGB_TEST(steamvr_exit_watch_needs_a_sighting) {
+    ExitWatch watch;
+    FGB_CHECK(!watch.observe(true, false, 0));
+    FGB_CHECK(!watch.saw_steamvr());
+    FGB_CHECK(!watch.observe(true, false, 60000));
+    FGB_CHECK(!watch.saw_steamvr());
+
+    FGB_CHECK(!watch.observe(true, true, 61000));
+    FGB_CHECK(watch.saw_steamvr());
+}
+
+// 关 SteamVR 要连续消失到超时才算退出，中途回来（vrserver 自己重启）就重新计时
+FGB_TEST(steamvr_exit_watch_debounces_vrserver_restart) {
+    ExitWatch watch;
+    FGB_CHECK(!watch.observe(true, true, 0));
+
+    // 消失 3 秒后又回来：仍在去抖窗口内，不算退出
+    FGB_CHECK(!watch.observe(true, false, 1000));
+    FGB_CHECK(!watch.observe(true, false, 3000));
+    FGB_CHECK(!watch.observe(true, true, 4000));
+
+    // 再消失，必须从这一刻重新数满 kGoneTimeoutMs
+    FGB_CHECK(!watch.observe(true, false, 5000));
+    FGB_CHECK(!watch.observe(true, false, 5000 + ExitWatch::kGoneTimeoutMs - 1));
+    FGB_CHECK(watch.observe(true, false, 5000 + ExitWatch::kGoneTimeoutMs));
+    // 只报一次：引擎没退成也不会每拍都报
+    FGB_CHECK(!watch.observe(true, false, 5000 + ExitWatch::kGoneTimeoutMs + 5000));
+
+    watch.reset();
+    FGB_CHECK(!watch.saw_steamvr());
+    FGB_CHECK(!watch.observe(true, false, 100000)); // 复位后要重新看见过
+}
+
+// 开关中途关掉再打开：不能沿用上次的倒计时（否则一开就立刻退出）
+FGB_TEST(steamvr_exit_watch_disable_clears_countdown) {
+    ExitWatch watch;
+    FGB_CHECK(!watch.observe(true, true, 0));
+    FGB_CHECK(!watch.observe(true, false, 1000));
+    FGB_CHECK(!watch.observe(false, false, 2000));
+    FGB_CHECK(!watch.observe(true, false, 3000));
+    FGB_CHECK(!watch.observe(true, false, 3000 + ExitWatch::kGoneTimeoutMs));
+}
+
+// 休眠恢复后 now_ms 可能跳变。跳变要重新计时，不能当成"消失很久了"直接退出
+FGB_TEST(steamvr_exit_watch_handles_clock_jump_backwards) {
+    ExitWatch watch;
+    FGB_CHECK(!watch.observe(true, true, 100000));
+    FGB_CHECK(!watch.observe(true, false, 101000));
+    FGB_CHECK(!watch.observe(true, false, 500));                              // 时间倒退
+    FGB_CHECK(!watch.observe(true, false, 500 + ExitWatch::kGoneTimeoutMs - 1)); // 重新计时中
+    FGB_CHECK(watch.observe(true, false, 500 + ExitWatch::kGoneTimeoutMs));
 }

@@ -24,6 +24,7 @@
 #include "net/update_manager.hpp"
 #include "net/ws_server.hpp"
 #include "openvr/steamvr.hpp"
+#include "openvr/steamvr_watch.hpp"
 #include "params/calibration.hpp"
 #include "params/preview_tap.hpp"
 #include "sinks/shm_sink.hpp"
@@ -121,6 +122,9 @@ struct IpcContext {
     std::string active_module_id; // 注册表里"下次启动加载"的那个，与运行态不是一回事
 
     std::atomic<bool>* quit = nullptr;
+    // 「SteamVR 退出后自动退出」真的触发时置位：引擎以退出码 5 结束，外壳据此
+    // 把窗口/托盘一起收掉，而不是当成"引擎被用户停了"继续驻留（ADR-0047）
+    std::atomic<bool>* steamvr_exit = nullptr;
 };
 
 class IpcServer {
@@ -190,6 +194,9 @@ private:
     // 把 ctx_.settings 写回 settings.ini；返回空串表示成功（没有路径可写也算成功）。
     // 界面没有"保存"按钮，所以每个改设置的命令都要走这里，否则重启就回到默认值。
     std::string persist_settings();
+    // 写「SteamVR 退出后自动退出」并落盘；返回空串表示成功（没有路径可写也算成功）。
+    // 自启动开关从关打到开时，这个函数会被顺手调用一次（ADR-0047）。
+    std::string set_exit_with_steamvr(bool enabled);
 
     // 删除 / 安装 / 更新要替换 DLL，而 Windows 不允许改写正在被加载的文件。
     // 以前的做法是弹窗让用户自己去实例行点「停止」；现在由这三个协助函数代劳。
@@ -282,6 +289,9 @@ private:
     std::chrono::steady_clock::time_point last_library_push_{};
     std::chrono::steady_clock::time_point last_vrss_{};
     std::chrono::steady_clock::time_point last_gaze_calib_{};
+    // SteamVR 退出检测：每秒查一次 vrserver.exe，判定去抖在 ExitWatch 里
+    steamvr::ExitWatch steamvr_exit_watch_;
+    std::chrono::steady_clock::time_point last_steamvr_watch_{};
 };
 
 } // namespace fgb::web
