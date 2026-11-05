@@ -226,6 +226,92 @@ FGB_TEST(gaze_calibrator_ignores_profile_from_other_branch) {
     FGB_CHECK(gaze.profile_version == 0u);
 }
 
+FGB_TEST(gaze_calibrator_refines_direction_from_calibrated_points) {
+    // 角度分支：点已经过仿射，方向必须跟着换口径，否则读方向的消费端拿到未校准值。
+    GazeCalibrator calibrator;
+    const GazeProjection projection = unit_projection();
+    calibrator.set_projection(projection);
+
+    GazeProfile profile;
+    profile.version      = 5;
+    profile.source_kind  = GazeSourceKind::angles;
+    profile.residual_p95 = 0.015f;
+    for (GazeEyeMap& eye : profile.eyes) {
+        eye.active = true;
+        eye.a      = 1.3f; // X' = 1.3x - 0.1
+        eye.c      = -0.1f;
+        eye.e      = 1.3f; // Y' = 1.3y - 0.05
+        eye.f      = -0.05f;
+    }
+    calibrator.set_profile(profile);
+
+    GazeState gaze;
+    gaze.capture_ts_ns   = kNow;
+    gaze.valid           = true;
+    gaze.dir_space       = GazeDirSpace::source;
+    gaze.left_valid      = true;
+    gaze.right_valid     = true;
+    const Vec3 start_dir = pitch_yaw_deg_to_dir(0.0f, 20.0f);
+    gaze.left_dir_local  = start_dir;
+    gaze.right_dir_local = start_dir;
+
+    calibrator.apply(gaze);
+
+    FGB_CHECK(gaze.space == GazeSpace::calibrated);
+    FGB_CHECK(gaze.dir_space == GazeDirSpace::calibrated);
+    // 映射把点往右推，方向必须跟着往右；只看点不看方向就漏了这件事
+    FGB_CHECK(gaze.left_dir_local.x > start_dir.x + 0.05f);
+    FGB_CHECK(gaze.left_pitch_deg < -1.0f); // 点下移 → 俯仰为负
+    // 方向必须正好是"校准后那个点"反投影出来的方向
+    Vec3 want{};
+    FGB_CHECK(unproject_viewport(gaze.left_point_2d, projection.eyes[0], want));
+    FGB_CHECK_NEAR(gaze.left_dir_local.x, want.x, 1e-4f);
+    FGB_CHECK_NEAR(gaze.left_dir_local.y, want.y, 1e-4f);
+    FGB_CHECK_NEAR(gaze.left_dir_local.z, want.z, 1e-4f);
+    // 合并方向/角度跟着重算，不能留在映射前
+    FGB_CHECK_NEAR(gaze.yaw_deg, gaze.left_yaw_deg, 1e-4f);
+    FGB_CHECK_NEAR(gaze.pitch_deg, gaze.left_pitch_deg, 1e-4f);
+}
+
+FGB_TEST(gaze_calibrator_leaves_direction_on_points_branch) {
+    // 点型分支没有角度模型：点被校准了，方向仍是来源的，不能拿几何凭空编一个
+    GazeCalibrator calibrator;
+    calibrator.set_projection(unit_projection());
+
+    GazeProfile profile;
+    profile.version     = 2;
+    profile.source_kind = GazeSourceKind::points;
+    for (GazeEyeMap& eye : profile.eyes) {
+        eye.active = true;
+        eye.a      = 2.0f; // X' = 2x - 0.1
+        eye.c      = -0.1f;
+    }
+    calibrator.set_profile(profile);
+
+    GazeState gaze;
+    gaze.capture_ts_ns     = kNow;
+    gaze.point_viewport    = true; // 模块声明的视口点
+    gaze.valid             = true;
+    gaze.dir_space         = GazeDirSpace::source;
+    gaze.left_valid        = true;
+    gaze.right_valid       = true;
+    gaze.left_dir_local    = {0.3f, 0.0f, -0.954f};
+    gaze.right_dir_local   = gaze.left_dir_local;
+    gaze.left_point_valid  = true;
+    gaze.right_point_valid = true;
+    gaze.left_point_2d     = {0.30f, 0.40f};
+    gaze.right_point_2d    = {0.40f, 0.40f};
+
+    GazeNormalizer normalizer;
+    normalizer.apply(gaze, kNow);
+    calibrator.apply(gaze);
+
+    FGB_CHECK(gaze.space == GazeSpace::calibrated);
+    FGB_CHECK(gaze.dir_space == GazeDirSpace::source);
+    FGB_CHECK_NEAR(gaze.left_dir_local.x, 0.3f, 1e-6f);
+    FGB_CHECK_NEAR(gaze.left_point_2d.x, 0.5, 1e-5);
+}
+
 FGB_TEST(gaze_profile_roundtrip) {
     GazeProfile profile;
     profile.version      = 4;

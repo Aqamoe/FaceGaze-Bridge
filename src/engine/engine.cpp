@@ -212,6 +212,8 @@ GazeState Engine::assemble_gaze(const FaceFrame& frame) const noexcept {
             return gaze;
         }
         gaze.valid = true;
+        // 方向来自来源本身；标定阶段可能把它换成"由校准后的点反投影"（GazeCalibrator）
+        gaze.dir_space = GazeDirSpace::source;
 
         if (g.combinedValid) {
             gaze.dir_local = g.combinedDirLocal;
@@ -256,6 +258,7 @@ GazeState Engine::assemble_gaze(const FaceFrame& frame) const noexcept {
 
     const ChannelStamp& stamp = frame.channelStamps[channel::index(channel::kEyes)];
     gaze.valid                = true;
+    gaze.dir_space            = GazeDirSpace::source; // 眼睛反算，未随注视标定
     gaze.left_valid           = l_gaze;
     gaze.right_valid          = r_gaze;
     // 方向与角度必须同源：角度是校准后的（CalibrationApplier 改的就是它），

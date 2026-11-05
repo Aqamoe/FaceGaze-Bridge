@@ -64,6 +64,9 @@ void GazeCalibrator::apply(GazeState& gaze) noexcept {
     }
 
     GazeSourceKind branch = GazeSourceKind::none;
+    // 角度分支专用：这只眼的方向是真的投影成功过，还是靠镜像补出来的位置。
+    // 反投影只对前者有意义——镜像出来的点跟那只眼的真实方向没有关系。
+    bool projected[2] = {false, false};
 
     if (has_points && gaze.space == GazeSpace::viewport) {
         // 模块已声明该眼视口坐标，无需换算；档案只做小幅校正。
@@ -88,6 +91,8 @@ void GazeCalibrator::apply(GazeState& gaze) noexcept {
         if (!right_ok) {
             right = left;
         }
+        projected[0]          = left_ok;
+        projected[1]          = right_ok;
         gaze.left_point_2d    = left;
         gaze.right_point_2d   = right;
         gaze.left_point_valid = true;
@@ -108,7 +113,8 @@ void GazeCalibrator::apply(GazeState& gaze) noexcept {
         return;
     }
 
-    bool applied = false;
+    bool applied   = false;
+    bool mapped[2] = {false, false};
     for (std::size_t i = 0; i < 2; ++i) {
         Vec2& point = i == 0 ? gaze.left_point_2d : gaze.right_point_2d;
         bool& valid = i == 0 ? gaze.left_point_valid : gaze.right_point_valid;
@@ -126,7 +132,8 @@ void GazeCalibrator::apply(GazeState& gaze) noexcept {
             valid = false; // 映射把点算炸了：这一眼判无效，别发出去
             continue;
         }
-        point   = Vec2{x, y};
+        point     = Vec2{x, y};
+        mapped[i] = true;
         applied = true;
     }
 
@@ -214,6 +221,69 @@ void GazeCalibrator::apply(GazeState& gaze) noexcept {
         left_hold_      = 0;
         right_hold_     = 0;
         have_prev_raw_  = false;
+    }
+
+    // 角度分支：点已经落到视口里（可能还过了仿射），方向却还停在映射前。
+    // 用几何把点反投影回方向，dir / pitch / yaw 与点才描述同一件事——否则读方向的
+    // 消费端（SHM/UDP 方向字段、VRSS 的角度路径）拿到未校准值，而读点的拿到校准值，
+    // 正是 ADR-0042 P0 为眼睛路径修过的那类"同一只眼两套值"。
+    // 点型分支不做：来源没有角度模型，反投影等于拿几何凭空编一个方向。
+    if (applied && branch == GazeSourceKind::angles) {
+        bool refined[2]     = {false, false};
+        Vec3 refined_dir[2] = {gaze.left_dir_local, gaze.right_dir_local};
+        for (std::size_t i = 0; i < 2; ++i) {
+            // 只反投影"真投影过、且这眼确实被档案改过"的点；镜像补出来的位置不算
+            if (!mapped[i] || !projected[i]) {
+                continue;
+            }
+            const bool point_ok = i == 0 ? gaze.left_point_valid : gaze.right_point_valid;
+            const Vec2 point    = i == 0 ? gaze.left_point_2d : gaze.right_point_2d;
+            Vec3 dir{};
+            if (!point_ok || !unproject_viewport(point, projection_.eyes[i], dir)) {
+                continue;
+            }
+            refined_dir[i] = dir;
+            refined[i]     = true;
+        }
+        if (refined[0] || refined[1]) {
+            if (refined[0]) {
+                gaze.left_dir_local = refined_dir[0];
+                const Vec2 py       = dir_to_pitch_yaw_deg(refined_dir[0]);
+                gaze.left_pitch_deg = py.x;
+                gaze.left_yaw_deg   = py.y;
+            }
+            if (refined[1]) {
+                gaze.right_dir_local = refined_dir[1];
+                const Vec2 py        = dir_to_pitch_yaw_deg(refined_dir[1]);
+                gaze.right_pitch_deg = py.x;
+                gaze.right_yaw_deg   = py.y;
+            }
+            // 合并方向/角度跟着重算：否则逐眼行已经变了、合并行还停在旧方向
+            Vec3 sum{0.0f, 0.0f, 0.0f};
+            int count = 0;
+            if (gaze.left_valid) {
+                sum = sum + gaze.left_dir_local;
+                ++count;
+            }
+            if (gaze.right_valid) {
+                sum = sum + gaze.right_dir_local;
+                ++count;
+            }
+            if (count > 0) {
+                const Vec3 combined = normalize(sum);
+                if (std::isfinite(combined.x) && std::isfinite(combined.y) &&
+                    std::isfinite(combined.z)) {
+                    gaze.dir_local  = combined;
+                    const Vec2 py   = dir_to_pitch_yaw_deg(combined);
+                    gaze.pitch_deg  = py.x;
+                    gaze.yaw_deg    = py.y;
+                }
+            }
+            // 该有方向的眼全换过口径才敢说是"随点校准"；只换了半只眼就老实报源方向
+            const bool all = (!gaze.left_valid || refined[0]) &&
+                             (!gaze.right_valid || refined[1]);
+            gaze.dir_space = all ? GazeDirSpace::calibrated : GazeDirSpace::source;
+        }
     }
 }
 

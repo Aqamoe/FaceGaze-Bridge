@@ -1075,6 +1075,9 @@ void IpcServer::build_gaze(std::string& out) {
     // 点的坐标系（ADR-0042 §3）：viewport = 该眼视口归一化（模块声明或几何投影）；
     // calibrated = 过 FGB 拟合映射；source = 来源原始坐标，只能展示/看趋势
     writer.key("point_space").str(gaze_space_name(gaze.space));
+    // 方向的口径单独报：点型来源没有角度模型，点能校准而方向不能，
+    // 界面要能说出"方向还是原始的"，而不是让两行看起来同源。
+    writer.key("dir_space").str(gaze_dir_space_name(gaze.dir_space));
     // 标定前的原始点 + 饱和标记：来源到不了 [0,1] 时，这是判断"边缘为什么不动"的唯一依据
     writer.key("raw_point_valid").boolean(gaze.raw_point_valid);
     writer.key("raw_left_point").arr_begin();
@@ -1109,17 +1112,46 @@ void IpcServer::build_gaze(std::string& out) {
     // 逐通道来源：状态页要显示"注视来自哪个实例、多久前"。源名在合并层的 report 里。
     std::string gaze_source;
     std::uint64_t gaze_age_ms = 0;
+    // 没有可用注视时给一个原因：用户分不清"模块根本没给方向"和"给了但断了"。
+    // 只按能力位与年龄判，不猜引擎内部为什么没产出。
+    std::string nodata_reason   = "none";
+    std::uint64_t nodata_age_ms = 0;
+    const bool no_gaze_at_all = !gaze.valid && !gaze.left_point_valid && !gaze.right_point_valid;
     if (ctx_.engine != nullptr) {
+        constexpr std::uint64_t kGazeFreshMs = 500;
+        bool any_capability = false;
+        bool any_gaze       = false;
+        bool any_fresh_gaze = false;
         for (const SourceReport& report : ctx_.engine->source_report()) {
             if (report.used_gaze) {
                 gaze_source = report.name;
                 gaze_age_ms = report.age_ns / 1'000'000ULL;
-                break;
+            }
+            if (!report.provides_gaze && !report.provides_eyes) {
+                continue;
+            }
+            any_capability = true;
+            const std::uint64_t age_ms = report.age_ns / 1'000'000ULL;
+            nodata_age_ms              = std::max(nodata_age_ms, age_ms);
+            if (report.provides_gaze) {
+                any_gaze       = true;
+                any_fresh_gaze = any_fresh_gaze || age_ms < kGazeFreshMs;
+            }
+        }
+        if (no_gaze_at_all) {
+            if (!any_capability) {
+                nodata_reason = "no_source";
+            } else if (any_gaze && !any_fresh_gaze) {
+                nodata_reason = "stale";
+            } else {
+                nodata_reason = "no_direction";
             }
         }
     }
     writer.key("source").str(gaze_source);
     writer.key("source_age_ms").integer(static_cast<long long>(gaze_age_ms));
+    writer.key("nodata").str(nodata_reason);
+    writer.key("nodata_age_ms").integer(static_cast<long long>(nodata_age_ms));
     writer.key("source_id").integer(static_cast<long long>(gaze.source));
     writer.key("source_mask").integer(static_cast<long long>(gaze.source_mask));
     writer.key("left_source").integer(static_cast<long long>(gaze.left_source));

@@ -959,6 +959,20 @@ input[type="range"]:disabled::-webkit-slider-thumb {
   color: var(--dim);
   letter-spacing: .06em;
 }
+/* 「看原始」按钮靠右：它只影响这张卡的显示口径，不参与圆点图例 */
+.gaze-legend .gaze-raw {
+  margin-left: auto;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+/* 看原始时圆点画成空心：实心=实际输出的位置，空心=标定前的位置 */
+.gaze-dot.raw {
+  background: transparent;
+  box-shadow: none;
+  border: 2px solid var(--acc);
+}
+.gaze-dot-left.raw { border-color: #38bdf8; }
+.gaze-dot-right.raw { border-color: var(--warn); }
 .gaze-key {
   display: inline-block;
   width: 8px;

@@ -72,6 +72,12 @@ fixation 阈值都与单位相关，只有先落到视口坐标，这些阈值�
 `calibrated` 与 `viewport` 分开，是为了让"模块声明的"和"我们自己算的"在数据里可区分：
 出问题时能立刻回答"是模块给错了，还是我们把标定拟合错了"。
 
+方向单独有一个 `dir_space`（`none` / `source` / `calibrated`）：角度分支下点经过映射后，
+方向与逐眼角度由**校准后的点反投影**派生，报 `calibrated`——这就是 §2 说的"派生表示"。
+点型来源没有角度模型，反投影等于拿几何凭空编方向，所以 `dir_space` 保持 `source`，
+界面写"不适用"。两个标签分开报，是为了让"点校准了、方向没校准"这件事在数据里可见，
+而不是靠界面看 `2D` 前缀去猜。
+
 ### 4. `GazeProfile`：独立档案
 
 - 文件：`%LOCALAPPDATA%\FaceGazeBridge\gaze.ini`，与 `calibration.ini`（形状/眼睑）分离。

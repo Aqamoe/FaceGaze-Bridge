@@ -202,6 +202,10 @@ const state = {
   split_pairs: load_split_pairs(), // 被拆成左右两张卡的基名集合
   cal_curves_sig: "",
   cal_preview_on: false,
+  // 注视卡片：临时看标定前的原始点。只在"有原始点 + 已校准"时可用，
+  // 换档案或断开重连都会回到校准后——这个状态不该悄悄跨会话存活。
+  gaze_raw: false,
+  gaze_profile_seen: -1,
   shape_labels: null,   // ui/shapes.json：协议名 → 人话名称/分组/说明
   shape_labels_pending: false,
   param_desc: null,     // ui/param_desc.json：非基础参数的说明（基础 88 个回落到 shapes.json）
@@ -297,6 +301,9 @@ function connect() {
 
   socket.onclose = () => {
     state.connected = false;
+    // 断线后"看原始"没有意义：重连拿到的可能是另一套档案，回到校准后更安全
+    state.gaze_raw = false;
+    state.gaze_profile_seen = -1;
     set_link(false, t("link.disconnected"));
     schedule_reconnect();
   };
@@ -529,13 +536,14 @@ function fmt_vec(v, digits) {
 // 逐眼一行：来源给的是 2D 点就显示点，否则显示方向 + 该眼自己的俯仰/偏航。
 // 为什么优先点：只做 2D 眼追的模块（如 PICO Connect 私有通道）没有方向模型，
 // 方向字段是模块填的占位 -Z，照着显示会让两眼看起来完全一样，把真正的差别藏起来。
-function fmt_eye(valid, dir, pitch, yaw, point, viewport) {
+function fmt_eye(valid, dir, pitch, yaw, point, in_viewport) {
   if (!valid) {
     return "—";
   }
   if (point) {
-    // viewport = 该眼视口归一化（ADR-0033）；否则是来源自己的原始坐标，带 ~ 区分
-    const mark = viewport ? "2D" : "2D~";
+    // in_viewport = 已在该眼视口坐标系（模块声明，或 FGB 拟合后 = calibrated）；
+    // 否则是来源自己的原始坐标，带 ~ 区分。只认字面 "viewport" 会把校准后的点标成原始。
+    const mark = in_viewport ? "2D" : "2D~";
     return `${mark} (${Number(point[0]).toFixed(2)},${Number(point[1]).toFixed(2)})`;
   }
   if (!dir) {
@@ -585,6 +593,40 @@ function place_gaze_dot(el, valid, pitch, yaw, point) {
   el.hidden = false;
 }
 
+// 点空间：说清"这个点是哪来的"。校准后必须带上档案版本与残差——
+// 排障时第一个问题就是"这套映射准不准"，答案只有残差能给。
+// raw_mode 时改报"标定前"，否则界面上写校准后、数字却是原始值，截图会骗人。
+function gaze_point_space_text(gaze, has_point, raw_mode) {
+  if (!has_point) {
+    return "—";
+  }
+  if (raw_mode) {
+    return t("status.gaze.space.raw", { version: Number(gaze.profile_version || 0) });
+  }
+  if (gaze.point_space === "calibrated") {
+    let text = t("status.gaze.space.calibrated", { version: Number(gaze.profile_version || 0) });
+    const residual = Number(gaze.residual);
+    if (Number.isFinite(residual) && residual >= 0) {
+      text += " · " + t("status.gaze.residual", { value: `${(residual * 100).toFixed(2)}%` });
+    }
+    return text;
+  }
+  return gaze.point_space === "viewport"
+    ? t("status.gaze.space.viewport")
+    : t("status.gaze.space.source");
+}
+
+// 方向空间：点型来源没有角度模型，方向就只能报"不适用"——
+// 硬把它说成"未标定"会让用户以为调一调还能对上。
+function gaze_dir_space_text(gaze, has_dir, has_point) {
+  if (!has_dir) {
+    return has_point ? t("status.gaze.dir.unused") : "—";
+  }
+  return gaze.dir_space === "calibrated"
+    ? t("status.gaze.dir.calibrated")
+    : t("status.gaze.dir.source");
+}
+
 function render_gaze(gaze) {
   // valid = 有可用的合并方向；2D 点是否有效是另一件事（2D-only 源 valid 为假）
   const has_dir = !!(gaze && gaze.valid);
@@ -598,8 +640,30 @@ function render_gaze(gaze) {
   const left_point = eye_point("left");
   const right_point = eye_point("right");
   const has_point = left_point || right_point;
-  // 旧引擎没有 point_space 字段：当时约定就是"由来源定义"，按原始坐标处理更安全
-  const point_viewport = !!(gaze && gaze.point_space === "viewport");
+  // 旧引擎没有 point_space 字段：当时约定就是"由来源定义"，按原始坐标处理更安全。
+  // calibrated 也是视口坐标（ADR-0042：非 source 即可用），不能再当成原始点。
+  const point_space = (gaze && gaze.point_space) || "source";
+  const point_viewport = point_space !== "source";
+  // 换了档案（或第一次拿到档案）就退出"看原始"：否则上一版映射的原始值会冒充这一版
+  const profile_version = Number((gaze && gaze.profile_version) || 0);
+  if (profile_version !== state.gaze_profile_seen) {
+    state.gaze_profile_seen = profile_version;
+    state.gaze_raw = false;
+  }
+  // 只有"来源空间的点被映射过"才留得住原始值：模块声明的视口点、角度来源都没有
+  // 标定前坐标，硬造一个对照只会骗人。
+  const raw_ok = !!(has_point && gaze && gaze.raw_point_valid &&
+    point_space === "calibrated");
+  if (!raw_ok) {
+    state.gaze_raw = false;
+  }
+  const raw_mode = raw_ok && state.gaze_raw;
+  const left_pt = raw_mode
+    ? (left_point ? gaze.raw_left_point : null)
+    : (left_point ? gaze.left_point_2d : null);
+  const right_pt = raw_mode
+    ? (right_point ? gaze.raw_right_point : null)
+    : (right_point ? gaze.right_point_2d : null);
   const has_data = has_dir || has_point;
   const left_dir = has_dir && !!gaze.left_valid;
   const right_dir = has_dir && !!gaze.right_valid;
@@ -612,11 +676,11 @@ function render_gaze(gaze) {
   $("g-eye-left").textContent = fmt_eye(
     left_valid, left_dir ? gaze.left_dir_local : null,
     gaze && gaze.left_pitch_deg, gaze && gaze.left_yaw_deg,
-    left_point ? gaze.left_point_2d : null, point_viewport);
+    left_pt, raw_mode ? false : point_viewport);
   $("g-eye-right").textContent = fmt_eye(
     right_valid, right_dir ? gaze.right_dir_local : null,
     gaze && gaze.right_pitch_deg, gaze && gaze.right_yaw_deg,
-    right_point ? gaze.right_point_2d : null, point_viewport);
+    right_pt, raw_mode ? false : point_viewport);
   $("g-pitch-yaw").textContent = has_dir
     ? `${Number(gaze.pitch_deg).toFixed(1)}° / ${Number(gaze.yaw_deg).toFixed(1)}°`
     : "—";
@@ -652,12 +716,59 @@ function render_gaze(gaze) {
     ? `p (${gaze.head_pose.p.map((v) => Number(v).toFixed(2)).join(", ")})`
     : "—";
 
+  // 口径两行：点能校准不代表方向能校准，两行分开写才说得清"哪半是标准的"
+  const point_space_el = $("g-point-space");
+  point_space_el.textContent = gaze_point_space_text(gaze, has_point, raw_mode);
+  point_space_el.classList.toggle(
+    "warn", has_point && (raw_mode || point_space === "source"));
+  // 点状态：传感器贴边被冻结时，点会"不动"——不说出来会被当成标定坏了
+  const point_state_el = $("g-point-state");
+  const saturated = !!(has_point && gaze && gaze.saturated);
+  point_state_el.textContent = !has_point
+    ? "—"
+    : (saturated ? t("status.gaze.sat.frozen") : t("status.gaze.sat.ok"));
+  point_state_el.classList.toggle("warn", saturated);
+  // 「看原始」只在真有标定前坐标时出现；没有的时候藏起来，不给假入口
+  const raw_toggle = $("g-raw-toggle");
+  raw_toggle.hidden = !raw_ok;
+  if (raw_ok) {
+    raw_toggle.textContent = raw_mode
+      ? t("status.gaze.raw.back")
+      : t("status.gaze.raw.show");
+    raw_toggle.setAttribute("aria-pressed", raw_mode ? "true" : "false");
+  }
+  const dir_space_el = $("g-dir-space");
+  dir_space_el.textContent = gaze_dir_space_text(gaze, has_dir, has_point);
+  // 点已校准而方向没有：这正是"看起来标定好了、第三方读方向还是偏"的来源
+  dir_space_el.classList.toggle(
+    "warn", has_dir && point_space === "calibrated" && gaze.dir_space !== "calibrated");
+
+  // 一行解释：没数据时说原因，有方向但没几何时说圆点不是屏幕位置
+  const note = $("g-note");
+  let note_text = "";
+  if (!has_data && gaze && gaze.nodata && gaze.nodata !== "none") {
+    if (gaze.nodata === "no_source") {
+      note_text = t("status.gaze.nodata.no_source");
+    } else if (gaze.nodata === "no_direction") {
+      note_text = t("status.gaze.nodata.no_direction");
+    } else if (gaze.nodata === "stale") {
+      note_text = t("status.gaze.nodata.stale", {
+        ms: Math.round(Number(gaze.nodata_age_ms || 0)),
+      });
+    }
+  } else if (gaze && gaze.geometry_missing) {
+    note_text = t("status.gaze.note.geometry");
+  }
+  note.textContent = note_text;
+  note.hidden = !note_text;
+
   place_gaze_dot($("g-dot-left"), left_valid,
-    gaze && gaze.left_pitch_deg, gaze && gaze.left_yaw_deg,
-    left_point ? gaze.left_point_2d : null);
+    gaze && gaze.left_pitch_deg, gaze && gaze.left_yaw_deg, left_pt);
   place_gaze_dot($("g-dot-right"), right_valid,
-    gaze && gaze.right_pitch_deg, gaze && gaze.right_yaw_deg,
-    right_point ? gaze.right_point_2d : null);
+    gaze && gaze.right_pitch_deg, gaze && gaze.right_yaw_deg, right_pt);
+  // 空心 = 正在看标定前的位置，别让截图上的实心点被误当成实际输出
+  $("g-dot-left").classList.toggle("raw", raw_mode);
+  $("g-dot-right").classList.toggle("raw", raw_mode);
 }
 
 function sync_output_form() {
@@ -5154,6 +5265,14 @@ function wire() {
   $("log-clear").addEventListener("click", () => {
     state.logs = [];
     $("logs").textContent = "";
+  });
+
+  // 「看原始」只切显示口径，不动数据：断开重连或换档案都会回到校准后
+  $("g-raw-toggle").addEventListener("click", () => {
+    state.gaze_raw = !state.gaze_raw;
+    if (state.gaze) {
+      render_gaze(state.gaze);
+    }
   });
 
   $("s-level").addEventListener("change", () => {

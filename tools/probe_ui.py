@@ -246,6 +246,16 @@ def main():
         "    right_text: document.getElementById('g-eye-right').textContent,"
         "    eye_source_text: document.getElementById('g-eye-source').textContent,"
         "    fixation_text: document.getElementById('g-fixation').textContent,"
+        "    point_space_text: document.getElementById('g-point-space').textContent,"
+        "    point_state_text: document.getElementById('g-point-state').textContent,"
+        "    raw_point_valid: g ? !!g.raw_point_valid : null,"
+        "    saturated: g ? !!g.saturated : null,"
+        "    raw_toggle_hidden: document.getElementById('g-raw-toggle').hidden,"
+        "    dir_space_text: document.getElementById('g-dir-space').textContent,"
+        "    note_text: document.getElementById('g-note').hidden"
+        "      ? '' : document.getElementById('g-note').textContent,"
+        "    dir_space: g ? (g.dir_space || null) : null,"
+        "    geometry_missing: g ? !!g.geometry_missing : null,"
         "    dot_left: !document.getElementById('g-dot-left').hidden,"
         "    dot_right: !document.getElementById('g-dot-right').hidden"
         "  });"
@@ -963,9 +973,9 @@ def main():
                 print(f"FAIL {side} 眼没有单独渲染")
                 ok = False
             # 有 2D 点就必须显示点，而不是模块填的占位方向；
-            # 视口坐标写 "2D ("，来源原始坐标写 "2D~ ("（ADR-0033）
+            # 视口坐标（含标定后的 calibrated）写 "2D ("，来源原始坐标写 "2D~ ("（ADR-0033/0042）
             elif gaze.get(f"{side}_point_valid"):
-                expect = "2D (" if gaze.get("point_space") == "viewport" else "2D~ ("
+                expect = "2D~ (" if gaze.get("point_space") == "source" else "2D ("
                 if not text.startswith(expect):
                     print(f"FAIL {side} 眼 2D 点显示与坐标空间不符"
                           f"（point_space={gaze.get('point_space')}）：{text}")
@@ -979,6 +989,48 @@ def main():
             if not has_eye and (gaze.get(f"{side}_text") or "").strip() != "—":
                 print(f"FAIL {side} 眼无效时仍显示了数据：{gaze.get(f'{side}_text')}")
                 ok = False
+    # 口径两行：有数据就必须写出"点从哪来、方向跟着校准没有"，
+    # 否则用户只能从 2D/2D~ 前缀猜（ADR-0042 的校准态在那个前缀里看不出来）
+    if gaze.get("valid") or gaze.get("point2d_valid"):
+        if (gaze.get("point_space_text") or "").strip() in ("", "—"):
+            print("FAIL 注视卡片的「点空间」没有渲染")
+            ok = False
+        if (gaze.get("left_point_valid") or gaze.get("right_point_valid")) and \
+                (gaze.get("dir_space_text") or "").strip() in ("", "—"):
+            print("FAIL 有 2D 点时「方向空间」仍是空")
+            ok = False
+    if gaze.get("geometry_missing") and not (gaze.get("note_text") or "").strip():
+        print("FAIL 缺头显几何时没有提示圆点不代表屏幕位置")
+        ok = False
+    # 有 2D 点就必须说出"点是不是被冻结了"，否则边缘不动会被当成标定坏了
+    if gaze.get("point2d_valid") and (gaze.get("point_state_text") or "").strip() in ("", "—"):
+        print("FAIL 有 2D 点时「点状态」没有渲染")
+        ok = False
+    # 「看原始」只在真有标定前坐标时出现；点一下必须真的切到原始值（2D~ + 空心点）
+    if gaze.get("raw_point_valid") and gaze.get("point_space") == "calibrated":
+        if gaze.get("raw_toggle_hidden"):
+            print("FAIL 有原始点却没有「看原始」入口")
+            ok = False
+        else:
+            flipped = json.loads(cdp.evaluate(
+                "(() => {"
+                "  document.getElementById('g-raw-toggle').click();"
+                "  return JSON.stringify({"
+                "    left: document.getElementById('g-eye-left').textContent,"
+                "    dot: document.getElementById('g-dot-left').classList.contains('raw')"
+                "  });"
+                "})()"))
+            if not (flipped.get("left") or "").startswith("2D~ ("):
+                print(f"FAIL 切到原始后左眼没有换成原始坐标：{flipped.get('left')}")
+                ok = False
+            if not flipped.get("dot"):
+                print("FAIL 切到原始后圆点没有变成空心")
+                ok = False
+            # 复位：不能把后面的检查留在原始模式里
+            cdp.evaluate("(() => {"
+                         "  document.getElementById('g-raw-toggle').click();"
+                         "  return '';"
+                         "})()")
     if sources.get("rows") != sources.get("expected"):
         print("FAIL 输入源卡片行数与 status.sources 不一致")
         ok = False

@@ -28,6 +28,23 @@ inline const char* gaze_space_name(GazeSpace space) noexcept {
     return "source";
 }
 
+// 方向/角度处在哪个口径。点和方向可以不同源：点型来源没有角度模型，
+// 方向型来源在标定后则由校准后的点反投影派生（见 GazeCalibrator）。
+enum class GazeDirSpace : std::uint8_t {
+    none       = 0, // 没有方向
+    source     = 1, // 来源给的方向/眼睛反算，未经注视标定
+    calibrated = 2, // 由校准后的视口点反投影得到，与点同一口径
+};
+
+inline const char* gaze_dir_space_name(GazeDirSpace space) noexcept {
+    switch (space) {
+    case GazeDirSpace::none: return "none";
+    case GazeDirSpace::source: return "source";
+    case GazeDirSpace::calibrated: return "calibrated";
+    }
+    return "none";
+}
+
 struct GazeState {
     bool valid = false;
     Vec3 dir_local{0.0f, 0.0f, -1.0f}; // 合并/渲染方向，HMD 局部单位向量
@@ -61,6 +78,9 @@ struct GazeState {
     bool point_viewport    = false;
     // 规范管线产出（ADR-0042）：这条数据处在哪个空间、用哪版档案、残差多少。
     GazeSpace space        = GazeSpace::source;
+    // 方向口径与点口径分开报：点已校准而方向没校准时，界面要能说出这件事，
+    // 而不是让两个字段看起来同源。
+    GazeDirSpace dir_space = GazeDirSpace::none;
     // 标定前的原始点（只做诊断/饱和判定用；消费端不要拿它当屏幕位置）
     Vec2 raw_left_point_2d{0.0f, 0.0f};
     Vec2 raw_right_point_2d{0.0f, 0.0f};

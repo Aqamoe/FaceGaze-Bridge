@@ -154,6 +154,7 @@
               <div class="gaze-legend">
                 <span><i class="gaze-key gaze-key-left"></i>L</span>
                 <span><i class="gaze-key gaze-key-right"></i>R</span>
+                <button class="btn tiny gaze-raw" id="g-raw-toggle" hidden></button>
               </div>
             </div>
             <div class="gaze-kv">
@@ -167,9 +168,13 @@
               <div class="kv"><span data-i18n="status.gaze.confidence">置信度</span><b id="g-confidence">—</b></div>
               <div class="kv"><span data-i18n="status.gaze.source">来源 / 年龄</span><b id="g-source">—</b></div>
               <div class="kv"><span data-i18n="status.gaze.eye_source">逐眼来源</span><b id="g-eye-source" class="mono">—</b></div>
+              <div class="kv"><span data-i18n="status.gaze.point_space">点空间</span><b id="g-point-space">—</b></div>
+              <div class="kv"><span data-i18n="status.gaze.point_state">点状态</span><b id="g-point-state">—</b></div>
+              <div class="kv"><span data-i18n="status.gaze.dir_space">方向空间</span><b id="g-dir-space">—</b></div>
               <div class="kv"><span data-i18n="status.gaze.head">头姿</span><b id="g-head" class="mono">—</b></div>
             </div>
           </div>
+          <p class="hint warn" id="g-note" hidden></p>
           <p class="hint" data-i18n="status.gaze.hint">
             左眼 / 右眼分行显示，单眼失效时该行为 —。方向是 HMD 局部方向，不含世界坐标。
           </p>
