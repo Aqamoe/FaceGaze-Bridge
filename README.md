@@ -48,15 +48,20 @@ VRCFT 解决的是「我的面捕硬件怎么驱动 VRChat 头像」。FGB 解�
 | VRSS 注视点抗锯齿 | NVIDIA VRSS2 驱动级 gaze provider：逐眼视口点经 44 字节 UDP 交给独立提权进程，驱动在注视中心做更高倍率超采样。**是中央抗锯齿，不是注视点渲染，也不承诺帧率收益**；需要 NVIDIA + SteamVR + VRChat MSAA x4，见 [ADR-0040](docs/adr/0040-vrss-provider-component.md) |
 | 头像发现 | OSCQuery（mDNS）自动读取当前头像参数表，换头像自动重绑；可回退本地配置 |
 | 校准与滤波 | 88 个形状的 lo/hi、视线 gain/center、3D 预览、One Euro 滤波、命名输出预设 |
-| 桌面体验 | 单入口 exe、托盘常驻、关窗继续追踪、可选随 SteamVR 启动、三语界面 |
+| 桌面体验 | 单入口 exe、托盘常驻、关窗继续追踪、可选随 SteamVR 启动、可选 SteamVR 退出后随之退出、三语界面 |
 | 诊断 | tick 延迟/CPU/内存/句柄、日志、崩溃转储、一键诊断包、手动检查更新 |
 
 ## 当前状态
 
-最新版本 **1.1.0**。Windows 10/11 x64 上已完成构建、单测、端到端探针、
+最新版本 **1.2.0**。Windows 10/11 x64 上已完成构建、单测、端到端探针、
 安装/卸载和真机 PICO 链路验证；VRSS 已在 PICO + MSAA x4 真机上验收（注视点校准后
 直接从 Steam 启动游戏即可，不需要本软件代起）。发布门禁与未完成项记录在
 [docs/11-regression-2026-10-30.md](docs/11-regression-2026-10-30.md)。
+
+1.2.0 新增「SteamVR 退出后自动退出」：设置页 SteamVR 卡片里的第二个开关，默认关；
+把「随 SteamVR 启动 FGB」从关打到开时会同步打开（之后可以单独关掉，下次再同步打开）。
+判定要求先看见过 `vrserver.exe`、并连续消失 5 秒才算退出，所以 SteamVR 自己重启
+vrserver 不会把 FGB 踢掉（[ADR-0047](docs/adr/0047-exit-with-steamvr.md)）。
 
 已知限制：
 
@@ -72,7 +77,9 @@ VRCFT 解决的是「我的面捕硬件怎么驱动 VRChat 头像」。FGB 解�
 - **无 EDID 头显（PICO/串流）的持久身份是用户级环境变量**（`TEST_VENDOR_ID` /
   `TEST_PRODUCT_ID`，`HKCU\Environment`）：写完要重启 Steam 才生效，且会影响该用户下
   所有 OpenVR 应用；换回自带 EDID 的头显会自动清除，也可在页面手动清除
-- SteamVR 自启动的注册分支已实现，真实 SteamVR 环境验收待补
+- SteamVR 自启动的注册分支已实现，真实 SteamVR 环境验收待补；「SteamVR 退出后自动退出」
+  只在冒充 `vrserver.exe` 的端到端用例里验证过，真机（SteamVR 正常关停 / 崩溃 / 重启 vrserver）
+  验收同样待补
 - 8 小时长跑、休眠唤醒、设备热插拔仍属于发布前门禁
 
 ## 安装
