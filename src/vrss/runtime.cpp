@@ -626,6 +626,22 @@ bool Runtime::set_area(float percent, std::string& error) {
 #endif
 }
 
+bool Runtime::read_area_record(float& percent, bool& found) const {
+    percent = 0.0f;
+    found   = false;
+#ifdef _WIN32
+    const AreaResult result = read_area_result();
+    if (!result.ok) {
+        return false;
+    }
+    percent = result.percent;
+    found   = result.found;
+    return true;
+#else
+    return false;
+#endif
+}
+
 bool Runtime::get_area(float& percent, bool& found, std::string& error) {
 #ifdef _WIN32
     error.clear();

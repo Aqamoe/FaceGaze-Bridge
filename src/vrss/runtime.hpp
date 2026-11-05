@@ -55,6 +55,10 @@ public:
     // 写入 NVIDIA VRChat profile 的 VRSS 中央超采样区域（1..100%）。
     bool set_area(float percent, std::string& error);
     bool get_area(float& percent, bool& found, std::string& error);
+    // 上一次写入结果的落盘记录（run/vrss-area.txt，provider 成功时写）。
+    // 不起进程、不碰硬件，用来在重启后回填"已应用"状态——range 是写进
+    // NVIDIA profile 的持久设置，不该因为 FGB 重启就变成"未应用"。
+    bool read_area_record(float& percent, bool& found) const;
 
     bool provider_alive() const;
     bool read_status(ProviderStatus& out) const;

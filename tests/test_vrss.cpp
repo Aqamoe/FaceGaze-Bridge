@@ -2,10 +2,16 @@
 #include "sinks/vrss_gaze_sink.hpp"
 #include "vrss/geometry.hpp"
 #include "vrss/identity.hpp"
+#include "vrss/workflow.hpp"
 
 #include "test_framework.hpp"
 
+#include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <string>
 
 using namespace fgb;
 
@@ -352,4 +358,93 @@ FGB_TEST(vrss_display_trim_applies_after_calibration) {
     FGB_CHECK(VrssGazeSink::build_ndc(gaze, kNow, config, ndc2));
     FGB_CHECK_NEAR(ndc2[0], ndc[0], 1e-6);
     FGB_CHECK_NEAR(ndc2[1], ndc[1], 1e-6);
+}
+
+// ---------------------------------------------------------------------------
+// 抗锯齿范围状态：范围写进 NVIDIA profile，是跨进程持久的设置；
+// area_state 却只活在内存里，重启后必须从"上次写入记录"回填，否则一律显示"未应用"。
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// 把 LOCALAPPDATA 指到临时目录，让 vrss::data_dir() 落到可写的沙箱里
+class AreaRecordScope {
+public:
+    explicit AreaRecordScope(const std::string& tag) {
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        root_ = std::filesystem::temp_directory_path() /
+                ("fgb-vrss-area-" + tag + "-" + std::to_string(stamp));
+        std::filesystem::create_directories(run_dir());
+#ifdef _WIN32
+        const char* old = std::getenv("LOCALAPPDATA");
+        had_old_ = old != nullptr;
+        if (had_old_) {
+            old_value_ = old;
+        }
+        _putenv_s("LOCALAPPDATA", root_.string().c_str());
+#endif
+    }
+
+    ~AreaRecordScope() {
+#ifdef _WIN32
+        if (had_old_) {
+            _putenv_s("LOCALAPPDATA", old_value_.c_str());
+        } else {
+            _putenv_s("LOCALAPPDATA", "");
+        }
+#endif
+        std::error_code ignored;
+        std::filesystem::remove_all(root_, ignored);
+    }
+
+    void write_record(float area) const {
+        std::ofstream file{run_dir() / "vrss-area.txt"};
+        file << "ok=1\nfound=1\narea=" << area << "\nerror=\n";
+    }
+
+private:
+    std::filesystem::path run_dir() const { return root_ / "FaceGazeBridge" / "vrss" / "run"; }
+
+    std::filesystem::path root_;
+    std::string old_value_;
+    bool had_old_ = false;
+};
+
+} // namespace
+
+FGB_TEST(vrss_area_state_restores_from_last_write) {
+    AreaRecordScope scope{"restore"};
+    scope.write_record(3.0f);
+
+    vrss::Workflow workflow;
+    workflow.configure(true, 5556, false, 3.0f, false, true);
+
+    const vrss::WorkflowSnapshot snapshot = workflow.snapshot();
+    FGB_CHECK(snapshot.area_state == "applied");
+    FGB_CHECK(!snapshot.area_detail.empty()); // 界面上要说明"为什么算已应用"
+}
+
+FGB_TEST(vrss_area_state_follows_the_configured_value) {
+    AreaRecordScope scope{"follow"};
+    scope.write_record(3.0f);
+
+    vrss::Workflow workflow;
+    // 记录与设置不一致：确实没应用，保持"未应用"并说明原因
+    workflow.configure(true, 5556, false, 5.0f, false, true);
+    FGB_CHECK(workflow.snapshot().area_state == "idle");
+
+    // 改回记录里的值：又是已应用，不需要用户再点一次
+    workflow.configure(true, 5556, false, 3.0f, false, true);
+    FGB_CHECK(workflow.snapshot().area_state == "applied");
+
+    // 再改走：立刻回到"未应用"
+    workflow.configure(true, 5556, false, 9.0f, false, true);
+    FGB_CHECK(workflow.snapshot().area_state == "idle");
+}
+
+FGB_TEST(vrss_area_state_stays_idle_without_record) {
+    AreaRecordScope scope{"norecord"};
+    vrss::Workflow workflow;
+    workflow.configure(true, 5556, false, 10.0f, false, true);
+    FGB_CHECK(workflow.snapshot().area_state == "idle");
 }

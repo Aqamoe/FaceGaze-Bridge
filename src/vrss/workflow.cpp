@@ -5,10 +5,21 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstdio>
 #include <exception>
 
 namespace fgb::vrss {
 namespace {
+
+// 范围是 1..50 的整数百分比，半个百分点以内的差算同一个值
+constexpr float kAreaTolerance = 0.5f;
+
+std::string percent_text(float percent) {
+    char buffer[16]{};
+    std::snprintf(buffer, sizeof(buffer), "%g", static_cast<double>(percent));
+    return buffer;
+}
 
 StepStatus* find_step(WorkflowSnapshot& snapshot, StepId id) {
     const std::size_t index = static_cast<std::size_t>(id);
@@ -71,9 +82,48 @@ void Workflow::configure(bool enabled, int port, bool auto_launch_vrchat, float 
         } else if (snap_.state == "off") {
             snap_.state = "blocked";
         }
+        remember_area_state(area_percent);
     }
     if (!enabled) {
         cancel_ = true;
+    }
+}
+
+// area_state 只在内存里，重启必然回到 idle；但 VRSS 范围是写进 NVIDIA profile 的
+// 持久设置，不会跟着进程走。不回填的话每次启动都显示"未应用"，用户会以为设置丢了。
+//
+// 判定只用两条本地事实：上一次写入成功的记录（run/vrss-area.txt）和当前设置值。
+// 不去主动读驱动：那要起一个 provider 进程，失败时反而会把"已应用"降级成"未应用"。
+void Workflow::remember_area_state(float configured) {
+    // applying / failed 是本次会话的现场，不能被设置回填覆盖
+    if (snap_.area_state != "idle" && snap_.area_state != "applied") {
+        return;
+    }
+    if (area_applied_percent_ > 0.0f) {
+        if (std::fabs(area_applied_percent_ - configured) <= kAreaTolerance) {
+            snap_.area_state  = "applied";
+            snap_.area_detail =
+                "NVIDIA profile 已是 " + percent_text(area_applied_percent_) + "%";
+        } else {
+            snap_.area_state  = "idle";
+            snap_.area_detail = "设置已改为 " + percent_text(configured) + "%，需要重新应用";
+        }
+        return;
+    }
+
+    float recorded = 0.0f;
+    bool found     = false;
+    if (!runtime_.read_area_record(recorded, found) || !found) {
+        return;
+    }
+    area_applied_percent_ = recorded;
+    if (std::fabs(recorded - configured) <= kAreaTolerance) {
+        snap_.area_state  = "applied";
+        snap_.area_detail = "沿用上次写入的记录";
+    } else {
+        snap_.area_state  = "idle";
+        snap_.area_detail =
+            "NVIDIA profile 记录为 " + percent_text(recorded) + "%，与当前设置不一致";
     }
 }
 
@@ -145,6 +195,9 @@ void Workflow::apply_area(float percent) {
         snap_.area_state  = ok ? "applied" : "failed";
         snap_.area_detail = ok ? "范围已写入；重启 VRChat 后生效"
                                : ("写入失败：" + error);
+        if (ok) {
+            area_applied_percent_ = percent;
+        }
     });
 }
 

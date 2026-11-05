@@ -83,6 +83,8 @@ private:
     bool step_passed(StepId id) const;
     void finish_state();
     void join_worker();
+    // 用"上次写入成功的记录 + 当前设置值"回填 area_state（重启后不再一律显示未应用）
+    void remember_area_state(float configured);
 
     mutable std::mutex mutex_;
     WorkflowSnapshot snap_;
@@ -97,6 +99,9 @@ private:
     int port_               = 5556;
     bool auto_launch_       = false;
     float area_percent_     = 10.0f;
+    // 已知"已经写进 NVIDIA profile"的范围；0 = 还没写过/不知道。
+    // 只在内存里，重启后由 remember_area_state() 从磁盘记录恢复。
+    float area_applied_percent_ = 0.0f;
     bool msaa_confirmed_    = false;
     bool vrchat_requested_  = false;
     // 跟随 SteamVR 自动注册：只在"这一轮 SteamVR 会话"里自动跑一次，避免
