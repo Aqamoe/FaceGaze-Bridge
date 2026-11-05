@@ -3100,20 +3100,33 @@ function shape_info(name) {
   return (table && table[name]) || null;
 }
 
-function shape_label(name) {
-  const info = shape_info(name);
+// shapes.json / param_desc.json 里每个条目都带 zh / en / ja 三个字段，
+// 字段名就是语言代号。缺某一种语言时按 ja → en → zh 依次回落：
+// 宁可显示另一种语言，也不要让整张卡片变成空白。
+function localized(info, fallback = "") {
   if (!info) {
-    return name;
+    return fallback;
   }
-  return (lang === "zh" ? info.zh : info.en) || name;
+  return info[lang] || info.ja || info.en || info.zh || fallback;
+}
+
+function shape_label(name) {
+  return localized(shape_info(name), name);
 }
 
 function shape_tip(name) {
   const info = shape_info(name);
-  if (!info || lang !== "zh") {
+  if (!info) {
     return "";
   }
-  return info.tip || "";
+  // 提示句只有中文和日语两版；英文界面不显示（数据里本来就没有英文 tip）
+  if (lang === "ja") {
+    return info.tip_ja || "";
+  }
+  if (lang === "zh") {
+    return info.tip || "";
+  }
+  return "";
 }
 
 // 参数页卡片的一句话说明。基础 88 个形状的名字在 shapes.json（校准页共用），
@@ -3121,11 +3134,7 @@ function shape_tip(name) {
 function param_desc(name) {
   const key = name.startsWith("v2/") ? name.slice(3) : name;
   const params = state.param_desc && state.param_desc.params;
-  const info = (params && params[key]) || shape_info(key);
-  if (!info) {
-    return "";
-  }
-  return (lang === "zh" ? info.zh : info.en) || info.zh || "";
+  return localized((params && params[key]) || shape_info(key), "");
 }
 
 // 说明表是异步到的，也可能因为切语言而变：把已建好的格子刷一遍，不重建 DOM
@@ -3357,14 +3366,16 @@ function pair_base(name) {
 }
 
 function paired_label(name) {
-  const zh = shape_label(name);
+  const label = shape_label(name);
   if (lang === "zh") {
     // "右眼 眯眼" → "双眼 眯眼"；"右嘴角 上提" → "双嘴角 上提"
-    return zh.replace(/^[左右]/, "双");
+    return label.replace(/^[左右]/, "双");
   }
-  const info = shape_info(name);
-  const en = (info && info.en) || name;
-  return `${en.replace(/\b(right|left)\b/gi, "").replace(/\s+/g, " ").trim()} (L/R)`;
+  if (lang === "ja") {
+    // "右目 細目" → "両目 細目"
+    return label.replace(/^[左右]/, "両");
+  }
+  return `${label.replace(/\bright\b|\bleft\b/gi, "").replace(/\s+/g, " ").trim()} (L/R)`;
 }
 
 // 名字像一对不代表是镜像。"JawRight / JawLeft" 是"下颌向右 / 向左"两个相反动作，
@@ -3424,7 +3435,7 @@ function build_cal_rows(shapes) {
     details.open = true;
     const summary = document.createElement("summary");
     const count = el("span", "cal-group-count", "0");
-    summary.append(el("b", "", (lang === "zh" ? group.zh : group.en) || group.id), count);
+    summary.append(el("b", "", localized(group, group.id)), count);
     details.append(summary);
     const body = el("div", "cal-group-body");
     details.append(body);

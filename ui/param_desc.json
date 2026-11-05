@@ -1,878 +1,1096 @@
 {
   "version": 1,
-  "note": "参数页卡片的一句话说明。键是逻辑参数名（不带 v2/ 前缀），由 tools/gen_param_desc.py 生成，不要手改。基础 88 个形状不在这里——它们的名字与说明在 shapes.json（校准页共用），参数页查不到时会回落过去。",
+  "note": "参数页卡片的一句话说明（zh / en / ja）。键是逻辑参数名（不带 v2/ 前缀），由 tools/gen_param_desc.py 生成，不要手改。基础 88 个形状不在这里——它们的名字与说明在 shapes.json（校准页共用），参数页查不到时会回落过去。",
   "params": {
     "BrowUpLeft": {
       "zh": "左眉 上抬",
-      "en": "Left brow up"
+      "en": "Left brow up",
+      "ja": "左眉 上げ"
     },
     "BrowUpRight": {
       "zh": "右眉 上抬",
-      "en": "Right brow up"
+      "en": "Right brow up",
+      "ja": "右眉 上げ"
     },
     "BrowDownLeft": {
       "zh": "左眉 下压",
-      "en": "Left brow down"
+      "en": "Left brow down",
+      "ja": "左眉 下げ"
     },
     "BrowDownRight": {
       "zh": "右眉 下压",
-      "en": "Right brow down"
+      "en": "Right brow down",
+      "ja": "右眉 下げ"
     },
     "MouthSmileLeft": {
       "zh": "左嘴角 微笑",
-      "en": "Left mouth corner smile"
+      "en": "Left mouth corner smile",
+      "ja": "左口角 笑み"
     },
     "MouthSmileRight": {
       "zh": "右嘴角 微笑",
-      "en": "Right mouth corner smile"
+      "en": "Right mouth corner smile",
+      "ja": "右口角 笑み"
     },
     "MouthSadLeft": {
       "zh": "左嘴角 下垂",
-      "en": "Left mouth corner sad"
+      "en": "Left mouth corner sad",
+      "ja": "左口角 下げ"
     },
     "MouthSadRight": {
       "zh": "右嘴角 下垂",
-      "en": "Right mouth corner sad"
+      "en": "Right mouth corner sad",
+      "ja": "右口角 下げ"
     },
     "EyeX": {
       "zh": "双眼 水平注视",
-      "en": "Both eyes horizontal gaze"
+      "en": "Both eyes horizontal gaze",
+      "ja": "両目 水平視線"
     },
     "EyeY": {
       "zh": "双眼 垂直注视",
-      "en": "Both eyes vertical gaze"
+      "en": "Both eyes vertical gaze",
+      "ja": "両目 垂直視線"
     },
     "EyeLeftX": {
       "zh": "左眼 水平注视",
-      "en": "Left eye horizontal gaze"
+      "en": "Left eye horizontal gaze",
+      "ja": "左目 水平視線"
     },
     "EyeLeftY": {
       "zh": "左眼 垂直注视",
-      "en": "Left eye vertical gaze"
+      "en": "Left eye vertical gaze",
+      "ja": "左目 垂直視線"
     },
     "EyeRightX": {
       "zh": "右眼 水平注视",
-      "en": "Right eye horizontal gaze"
+      "en": "Right eye horizontal gaze",
+      "ja": "右目 水平視線"
     },
     "EyeRightY": {
       "zh": "右眼 垂直注视",
-      "en": "Right eye vertical gaze"
+      "en": "Right eye vertical gaze",
+      "ja": "右目 垂直視線"
     },
     "PupilDilation": {
       "zh": "瞳孔 放大（毫米）",
-      "en": "Pupil dilation (mm)"
+      "en": "Pupil dilation (mm)",
+      "ja": "瞳孔 拡大（mm）"
     },
     "PupilDiameterLeft": {
       "zh": "左眼 瞳孔直径",
-      "en": "Left pupil diameter"
+      "en": "Left pupil diameter",
+      "ja": "左目 瞳孔径"
     },
     "PupilDiameterRight": {
       "zh": "右眼 瞳孔直径",
-      "en": "Right pupil diameter"
+      "en": "Right pupil diameter",
+      "ja": "右目 瞳孔径"
     },
     "PupilDiameter": {
       "zh": "双眼 瞳孔直径",
-      "en": "Both pupils diameter"
+      "en": "Both pupils diameter",
+      "ja": "両目 瞳孔径"
     },
     "EyeOpenLeft": {
       "zh": "左眼 睁开度",
-      "en": "Left eye openness"
+      "en": "Left eye openness",
+      "ja": "左目 開き"
     },
     "EyeOpenRight": {
       "zh": "右眼 睁开度",
-      "en": "Right eye openness"
+      "en": "Right eye openness",
+      "ja": "右目 開き"
     },
     "EyeOpen": {
       "zh": "双眼 睁开度",
-      "en": "Both eyes openness"
+      "en": "Both eyes openness",
+      "ja": "両目 開き"
     },
     "EyeClosedLeft": {
       "zh": "左眼 闭合度",
-      "en": "Left eye closed"
+      "en": "Left eye closed",
+      "ja": "左目 閉じ"
     },
     "EyeClosedRight": {
       "zh": "右眼 闭合度",
-      "en": "Right eye closed"
+      "en": "Right eye closed",
+      "ja": "右目 閉じ"
     },
     "EyeClosed": {
       "zh": "双眼 闭合度",
-      "en": "Both eyes closed"
+      "en": "Both eyes closed",
+      "ja": "両目 閉じ"
     },
     "EyeLidLeft": {
       "zh": "左眼 眼睑（含睁大）",
-      "en": "Left eyelid (with wide)"
+      "en": "Left eyelid (with wide)",
+      "ja": "左目 まぶた（見開き込み）"
     },
     "EyeLidRight": {
       "zh": "右眼 眼睑（含睁大）",
-      "en": "Right eyelid (with wide)"
+      "en": "Right eyelid (with wide)",
+      "ja": "右目 まぶた（見開き込み）"
     },
     "EyeLid": {
       "zh": "双眼 眼睑（含睁大）",
-      "en": "Both eyelids (with wide)"
+      "en": "Both eyelids (with wide)",
+      "ja": "両目 まぶた（見開き込み）"
     },
     "EyeWide": {
       "zh": "双眼 睁大",
-      "en": "Both eyes wide"
+      "en": "Both eyes wide",
+      "ja": "両目 見開き"
     },
     "EyeSquint": {
       "zh": "双眼 眯眼",
-      "en": "Both eyes squint"
+      "en": "Both eyes squint",
+      "ja": "両目 細目"
     },
     "EyesSquint": {
       "zh": "双眼 眯眼（旧名）",
-      "en": "Both eyes squint (legacy alias)"
+      "en": "Both eyes squint (legacy alias)",
+      "ja": "両目 細目（旧名）"
     },
     "BrowUp": {
       "zh": "双眉 上抬",
-      "en": "Both brows up"
+      "en": "Both brows up",
+      "ja": "両眉 上げ"
     },
     "BrowDown": {
       "zh": "双眉 下压",
-      "en": "Both brows down"
+      "en": "Both brows down",
+      "ja": "両眉 下げ"
     },
     "BrowInnerUp": {
       "zh": "双眉 内侧上抬",
-      "en": "Both brows inner up"
+      "en": "Both brows inner up",
+      "ja": "両眉 内側上げ"
     },
     "BrowOuterUp": {
       "zh": "双眉 外侧上抬",
-      "en": "Both brows outer up"
+      "en": "Both brows outer up",
+      "ja": "両眉 外側上げ"
     },
     "BrowExpressionRight": {
       "zh": "右眉 表情强弱",
-      "en": "Right brow expression"
+      "en": "Right brow expression",
+      "ja": "右眉 表情の強さ"
     },
     "BrowExpressionLeft": {
       "zh": "左眉 表情强弱",
-      "en": "Left brow expression"
+      "en": "Left brow expression",
+      "ja": "左眉 表情の強さ"
     },
     "BrowExpression": {
       "zh": "双眉 表情强弱",
-      "en": "Both brows expression"
+      "en": "Both brows expression",
+      "ja": "両眉 表情の強さ"
     },
     "JawX": {
       "zh": "下颌 左右",
-      "en": "Jaw left and right"
+      "en": "Jaw left and right",
+      "ja": "顎 左右"
     },
     "JawZ": {
       "zh": "下颌 前后",
-      "en": "Jaw forward and back"
+      "en": "Jaw forward and back",
+      "ja": "顎 前後"
     },
     "CheekSquint": {
       "zh": "双颊 眯起",
-      "en": "Both cheeks squint"
+      "en": "Both cheeks squint",
+      "ja": "両頬 上がり"
     },
     "CheekPuffSuckLeft": {
       "zh": "左颊 鼓与吸",
-      "en": "Left cheek puff and suck"
+      "en": "Left cheek puff and suck",
+      "ja": "左頬 膨らませ・吸い込み"
     },
     "CheekPuffSuckRight": {
       "zh": "右颊 鼓与吸",
-      "en": "Right cheek puff and suck"
+      "en": "Right cheek puff and suck",
+      "ja": "右頬 膨らませ・吸い込み"
     },
     "CheekPuffSuck": {
       "zh": "双颊 鼓与吸",
-      "en": "Both cheeks puff and suck"
+      "en": "Both cheeks puff and suck",
+      "ja": "両頬 膨らませ・吸い込み"
     },
     "CheekSuck": {
       "zh": "双颊 内吸",
-      "en": "Both cheeks suck"
+      "en": "Both cheeks suck",
+      "ja": "両頬 吸い込み"
     },
     "MouthUpperX": {
       "zh": "上唇 左右",
-      "en": "Upper lip left and right"
+      "en": "Upper lip left and right",
+      "ja": "上唇 左右"
     },
     "MouthLowerX": {
       "zh": "下唇 左右",
-      "en": "Lower lip left and right"
+      "en": "Lower lip left and right",
+      "ja": "下唇 左右"
     },
     "MouthX": {
       "zh": "嘴唇 左右",
-      "en": "Mouth left and right"
+      "en": "Mouth left and right",
+      "ja": "唇 左右"
     },
     "LipSuckUpper": {
       "zh": "上唇 内吸",
-      "en": "Upper lip suck"
+      "en": "Upper lip suck",
+      "ja": "上唇 吸い込み"
     },
     "LipSuckLower": {
       "zh": "下唇 内吸",
-      "en": "Lower lip suck"
+      "en": "Lower lip suck",
+      "ja": "下唇 吸い込み"
     },
     "LipSuck": {
       "zh": "双唇 内吸",
-      "en": "Both lips suck"
+      "en": "Both lips suck",
+      "ja": "両唇 吸い込み"
     },
     "LipFunnelUpper": {
       "zh": "上唇 漏斗",
-      "en": "Upper lip funnel"
+      "en": "Upper lip funnel",
+      "ja": "上唇 漏斗"
     },
     "LipFunnelLower": {
       "zh": "下唇 漏斗",
-      "en": "Lower lip funnel"
+      "en": "Lower lip funnel",
+      "ja": "下唇 漏斗"
     },
     "LipFunnel": {
       "zh": "双唇 漏斗",
-      "en": "Both lips funnel"
+      "en": "Both lips funnel",
+      "ja": "両唇 漏斗"
     },
     "LipPuckerUpper": {
       "zh": "上唇 撅起",
-      "en": "Upper lip pucker"
+      "en": "Upper lip pucker",
+      "ja": "上唇 すぼめ"
     },
     "LipPuckerLower": {
       "zh": "下唇 撅起",
-      "en": "Lower lip pucker"
+      "en": "Lower lip pucker",
+      "ja": "下唇 すぼめ"
     },
     "LipPuckerRight": {
       "zh": "右嘴角 撅起",
-      "en": "Right mouth corner pucker"
+      "en": "Right mouth corner pucker",
+      "ja": "右口角 すぼめ"
     },
     "LipPuckerLeft": {
       "zh": "左嘴角 撅起",
-      "en": "Left mouth corner pucker"
+      "en": "Left mouth corner pucker",
+      "ja": "左口角 すぼめ"
     },
     "LipPucker": {
       "zh": "双唇 撅起",
-      "en": "Both lips pucker"
+      "en": "Both lips pucker",
+      "ja": "両唇 すぼめ"
     },
     "LipSuckFunnelUpper": {
       "zh": "上唇 吸与漏斗",
-      "en": "Upper lip suck vs funnel"
+      "en": "Upper lip suck vs funnel",
+      "ja": "上唇 吸い込み・漏斗"
     },
     "LipSuckFunnelLower": {
       "zh": "下唇 吸与漏斗",
-      "en": "Lower lip suck vs funnel"
+      "en": "Lower lip suck vs funnel",
+      "ja": "下唇 吸い込み・漏斗"
     },
     "LipSuckFunnelLowerLeft": {
       "zh": "左下唇 吸与漏斗",
-      "en": "Lower left lip suck vs funnel"
+      "en": "Lower left lip suck vs funnel",
+      "ja": "左下唇 吸い込み・漏斗"
     },
     "LipSuckFunnelLowerRight": {
       "zh": "右下唇 吸与漏斗",
-      "en": "Lower right lip suck vs funnel"
+      "en": "Lower right lip suck vs funnel",
+      "ja": "右下唇 吸い込み・漏斗"
     },
     "LipSuckFunnelUpperLeft": {
       "zh": "左上唇 吸与漏斗",
-      "en": "Upper left lip suck vs funnel"
+      "en": "Upper left lip suck vs funnel",
+      "ja": "左上唇 吸い込み・漏斗"
     },
     "LipSuckFunnelUpperRight": {
       "zh": "右上唇 吸与漏斗",
-      "en": "Upper right lip suck vs funnel"
+      "en": "Upper right lip suck vs funnel",
+      "ja": "右上唇 吸い込み・漏斗"
     },
     "MouthUpperUp": {
       "zh": "上唇 上抬",
-      "en": "Upper lip up"
+      "en": "Upper lip up",
+      "ja": "上唇 上げ"
     },
     "MouthLowerDown": {
       "zh": "下唇 下拉",
-      "en": "Lower lip down"
+      "en": "Lower lip down",
+      "ja": "下唇 下げ"
     },
     "MouthOpen": {
       "zh": "嘴唇 张开",
-      "en": "Mouth open"
+      "en": "Mouth open",
+      "ja": "唇 開き"
     },
     "MouthStretch": {
       "zh": "嘴唇 横拉",
-      "en": "Mouth stretch"
+      "en": "Mouth stretch",
+      "ja": "唇 横引き"
     },
     "MouthTightener": {
       "zh": "嘴唇 收紧",
-      "en": "Mouth tightener"
+      "en": "Mouth tightener",
+      "ja": "唇 引き締め"
     },
     "MouthPress": {
       "zh": "嘴唇 压紧",
-      "en": "Mouth press"
+      "en": "Mouth press",
+      "ja": "唇 押さえ"
     },
     "MouthDimple": {
       "zh": "嘴角 酒窝",
-      "en": "Mouth dimple"
+      "en": "Mouth dimple",
+      "ja": "口角 えくぼ"
     },
     "NoseSneer": {
       "zh": "鼻子 皱起",
-      "en": "Nose sneer"
+      "en": "Nose sneer",
+      "ja": "鼻 しわ寄せ"
     },
     "MouthTightenerStretch": {
       "zh": "嘴唇 收紧与横拉",
-      "en": "Mouth tightener vs stretch"
+      "en": "Mouth tightener vs stretch",
+      "ja": "唇 引き締め・横引き"
     },
     "MouthTightenerStretchLeft": {
       "zh": "左嘴角 收紧与横拉",
-      "en": "Left mouth tightener vs stretch"
+      "en": "Left mouth tightener vs stretch",
+      "ja": "左口角 引き締め・横引き"
     },
     "MouthTightenerStretchRight": {
       "zh": "右嘴角 收紧与横拉",
-      "en": "Right mouth tightener vs stretch"
+      "en": "Right mouth tightener vs stretch",
+      "ja": "右口角 引き締め・横引き"
     },
     "MouthCornerYLeft": {
       "zh": "左嘴角 上下",
-      "en": "Left mouth corner up and down"
+      "en": "Left mouth corner up and down",
+      "ja": "左口角 上下"
     },
     "MouthCornerYRight": {
       "zh": "右嘴角 上下",
-      "en": "Right mouth corner up and down"
+      "en": "Right mouth corner up and down",
+      "ja": "右口角 上下"
     },
     "MouthCornerY": {
       "zh": "双嘴角 上下",
-      "en": "Both mouth corners up and down"
+      "en": "Both mouth corners up and down",
+      "ja": "両口角 上下"
     },
     "SmileFrownRight": {
       "zh": "右嘴角 笑与皱眉",
-      "en": "Right corner smile vs frown"
+      "en": "Right corner smile vs frown",
+      "ja": "右口角 笑み・しかめ"
     },
     "SmileFrownLeft": {
       "zh": "左嘴角 笑与皱眉",
-      "en": "Left corner smile vs frown"
+      "en": "Left corner smile vs frown",
+      "ja": "左口角 笑み・しかめ"
     },
     "SmileFrown": {
       "zh": "双嘴角 笑与皱眉",
-      "en": "Both corners smile vs frown"
+      "en": "Both corners smile vs frown",
+      "ja": "両口角 笑み・しかめ"
     },
     "SmileSadRight": {
       "zh": "右嘴角 笑与难过",
-      "en": "Right corner smile vs sad"
+      "en": "Right corner smile vs sad",
+      "ja": "右口角 笑み・悲しみ"
     },
     "SmileSadLeft": {
       "zh": "左嘴角 笑与难过",
-      "en": "Left corner smile vs sad"
+      "en": "Left corner smile vs sad",
+      "ja": "左口角 笑み・悲しみ"
     },
     "SmileSad": {
       "zh": "双嘴角 笑与难过",
-      "en": "Both corners smile vs sad"
+      "en": "Both corners smile vs sad",
+      "ja": "両口角 笑み・悲しみ"
     },
     "TongueX": {
       "zh": "舌头 左右",
-      "en": "Tongue left and right"
+      "en": "Tongue left and right",
+      "ja": "舌 左右"
     },
     "TongueY": {
       "zh": "舌头 上下",
-      "en": "Tongue up and down"
+      "en": "Tongue up and down",
+      "ja": "舌 上下"
     },
     "TongueArchY": {
       "zh": "舌头 卷曲",
-      "en": "Tongue arch"
+      "en": "Tongue arch",
+      "ja": "舌 反り"
     },
     "TongueShape": {
       "zh": "舌头 平与窄",
-      "en": "Tongue flat vs squish"
+      "en": "Tongue flat vs squish",
+      "ja": "舌 平ら・細め"
     },
     "MouthApeShape": {
       "zh": "嘴 猿形",
-      "en": "Mouth ape shape"
+      "en": "Mouth ape shape",
+      "ja": "口 猿口"
     },
     "MouthUpperOverturn": {
       "zh": "上唇 外翻",
-      "en": "Upper lip overturn"
+      "en": "Upper lip overturn",
+      "ja": "上唇 外反"
     },
     "MouthLowerOverturn": {
       "zh": "下唇 外翻",
-      "en": "Lower lip overturn"
+      "en": "Lower lip overturn",
+      "ja": "下唇 外反"
     },
     "MouthPout": {
       "zh": "嘴 撅起",
-      "en": "Mouth pout"
+      "en": "Mouth pout",
+      "ja": "口 すぼめ"
     },
     "MouthUpperInside": {
       "zh": "上唇 内侧",
-      "en": "Upper lip inside"
+      "en": "Upper lip inside",
+      "ja": "上唇 内側"
     },
     "MouthLowerInside": {
       "zh": "下唇 内侧",
-      "en": "Lower lip inside"
+      "en": "Lower lip inside",
+      "ja": "下唇 内側"
     },
     "MouthLowerOverlay": {
       "zh": "下唇 覆盖",
-      "en": "Lower lip overlay"
+      "en": "Lower lip overlay",
+      "ja": "下唇 オーバーレイ"
     },
     "TongueLongStep1": {
       "zh": "舌头 伸出（第一段）",
-      "en": "Tongue out (step 1)"
+      "en": "Tongue out (step 1)",
+      "ja": "舌 突出（1段目）"
     },
     "TongueLongStep2": {
       "zh": "舌头 伸出（第二段）",
-      "en": "Tongue out (step 2)"
+      "en": "Tongue out (step 2)",
+      "ja": "舌 突出（2段目）"
     },
     "TongueUpRightMorph": {
       "zh": "舌尖 右上",
-      "en": "Tongue tip up right"
+      "en": "Tongue tip up right",
+      "ja": "舌尖 右上"
     },
     "TongueUpLeftMorph": {
       "zh": "舌尖 左上",
-      "en": "Tongue tip up left"
+      "en": "Tongue tip up left",
+      "ja": "舌尖 左上"
     },
     "TongueDownRightMorph": {
       "zh": "舌尖 右下",
-      "en": "Tongue tip down right"
+      "en": "Tongue tip down right",
+      "ja": "舌尖 右下"
     },
     "TongueDownLeftMorph": {
       "zh": "舌尖 左下",
-      "en": "Tongue tip down left"
+      "en": "Tongue tip down left",
+      "ja": "舌尖 左下"
     },
     "MouthUpper": {
       "zh": "上唇",
-      "en": "Upper lip"
+      "en": "Upper lip",
+      "ja": "上唇"
     },
     "MouthLower": {
       "zh": "下唇",
-      "en": "Lower lip"
+      "en": "Lower lip",
+      "ja": "下唇"
     },
     "PuffSuckRight": {
       "zh": "右颊 鼓与吸（旧版）",
-      "en": "Right cheek puff and suck (legacy)"
+      "en": "Right cheek puff and suck (legacy)",
+      "ja": "右頬 膨らませ・吸い込み（旧）"
     },
     "PuffSuckLeft": {
       "zh": "左颊 鼓与吸（旧版）",
-      "en": "Left cheek puff and suck (legacy)"
+      "en": "Left cheek puff and suck (legacy)",
+      "ja": "左頬 膨らませ・吸い込み（旧）"
     },
     "PuffSuck": {
       "zh": "双颊 鼓与吸（旧版）",
-      "en": "Both cheeks puff and suck (legacy)"
+      "en": "Both cheeks puff and suck (legacy)",
+      "ja": "両頬 膨らませ・吸い込み（旧）"
     },
     "JawOpenApe": {
       "zh": "下颌 猿形",
-      "en": "jaw ape"
+      "en": "jaw ape",
+      "ja": "顎 猿口"
     },
     "JawOpenPuff": {
       "zh": "下颌 鼓起",
-      "en": "jaw puff"
+      "en": "jaw puff",
+      "ja": "顎 膨らませ"
     },
     "JawOpenPuffRight": {
       "zh": "下颌 右颊鼓起",
-      "en": "jaw right cheek puff"
+      "en": "jaw right cheek puff",
+      "ja": "顎 右頬 膨らませ"
     },
     "JawOpenPuffLeft": {
       "zh": "下颌 左颊鼓起",
-      "en": "jaw left cheek puff"
+      "en": "jaw left cheek puff",
+      "ja": "顎 左頬 膨らませ"
     },
     "JawOpenSuck": {
       "zh": "下颌 内吸",
-      "en": "jaw suck"
+      "en": "jaw suck",
+      "ja": "顎 吸い込み"
     },
     "JawOpenForward": {
       "zh": "下颌 前伸张开",
-      "en": "Jaw open and forward"
+      "en": "Jaw open and forward",
+      "ja": "顎 前突して開く"
     },
     "JawOpenOverlay": {
       "zh": "下颌 覆盖",
-      "en": "jaw overlay"
+      "en": "jaw overlay",
+      "ja": "顎 オーバーレイ"
     },
     "MouthUpperUpRightUpperInside": {
       "zh": "右上唇 上缘内侧",
-      "en": "upper right lip upper inner edge"
+      "en": "upper right lip upper inner edge",
+      "ja": "右上唇 上縁内側"
     },
     "MouthUpperUpRightPuffRight": {
       "zh": "右上唇 右颊鼓起",
-      "en": "upper right lip right cheek puff"
+      "en": "upper right lip right cheek puff",
+      "ja": "右上唇 右頬 膨らませ"
     },
     "MouthUpperUpRightApe": {
       "zh": "右上唇 猿形",
-      "en": "upper right lip ape"
+      "en": "upper right lip ape",
+      "ja": "右上唇 猿口"
     },
     "MouthUpperUpRightPout": {
       "zh": "右上唇 撅起",
-      "en": "upper right lip pout"
+      "en": "upper right lip pout",
+      "ja": "右上唇 すぼめ"
     },
     "MouthUpperUpRightOverlay": {
       "zh": "右上唇 覆盖",
-      "en": "upper right lip overlay"
+      "en": "upper right lip overlay",
+      "ja": "右上唇 オーバーレイ"
     },
     "MouthUpperUpRightSuck": {
       "zh": "右上唇 内吸",
-      "en": "upper right lip suck"
+      "en": "upper right lip suck",
+      "ja": "右上唇 吸い込み"
     },
     "MouthUpperUpLeftUpperInside": {
       "zh": "左上唇 上缘内侧",
-      "en": "upper left lip upper inner edge"
+      "en": "upper left lip upper inner edge",
+      "ja": "左上唇 上縁内側"
     },
     "MouthUpperUpLeftPuffLeft": {
       "zh": "左上唇 左颊鼓起",
-      "en": "upper left lip left cheek puff"
+      "en": "upper left lip left cheek puff",
+      "ja": "左上唇 左頬 膨らませ"
     },
     "MouthUpperUpLeftApe": {
       "zh": "左上唇 猿形",
-      "en": "upper left lip ape"
+      "en": "upper left lip ape",
+      "ja": "左上唇 猿口"
     },
     "MouthUpperUpLeftPout": {
       "zh": "左上唇 撅起",
-      "en": "upper left lip pout"
+      "en": "upper left lip pout",
+      "ja": "左上唇 すぼめ"
     },
     "MouthUpperUpLeftOverlay": {
       "zh": "左上唇 覆盖",
-      "en": "upper left lip overlay"
+      "en": "upper left lip overlay",
+      "ja": "左上唇 オーバーレイ"
     },
     "MouthUpperUpLeftSuck": {
       "zh": "左上唇 内吸",
-      "en": "upper left lip suck"
+      "en": "upper left lip suck",
+      "ja": "左上唇 吸い込み"
     },
     "MouthUpperUpUpperInside": {
       "zh": "上唇 上缘内侧",
-      "en": "upper lip upper inner edge"
+      "en": "upper lip upper inner edge",
+      "ja": "上唇 上縁内側"
     },
     "MouthUpperUpInside": {
       "zh": "上唇 内侧",
-      "en": "upper lip inside"
+      "en": "upper lip inside",
+      "ja": "上唇 内側"
     },
     "MouthUpperUpPuff": {
       "zh": "上唇 鼓起",
-      "en": "upper lip puff"
+      "en": "upper lip puff",
+      "ja": "上唇 膨らませ"
     },
     "MouthUpperUpPuffLeft": {
       "zh": "上唇 左颊鼓起",
-      "en": "upper lip left cheek puff"
+      "en": "upper lip left cheek puff",
+      "ja": "上唇 左頬 膨らませ"
     },
     "MouthUpperUpPuffRight": {
       "zh": "上唇 右颊鼓起",
-      "en": "upper lip right cheek puff"
+      "en": "upper lip right cheek puff",
+      "ja": "上唇 右頬 膨らませ"
     },
     "MouthUpperUpApe": {
       "zh": "上唇 猿形",
-      "en": "upper lip ape"
+      "en": "upper lip ape",
+      "ja": "上唇 猿口"
     },
     "MouthUpperUpPout": {
       "zh": "上唇 撅起",
-      "en": "upper lip pout"
+      "en": "upper lip pout",
+      "ja": "上唇 すぼめ"
     },
     "MouthUpperUpOverlay": {
       "zh": "上唇 覆盖",
-      "en": "upper lip overlay"
+      "en": "upper lip overlay",
+      "ja": "上唇 オーバーレイ"
     },
     "MouthUpperUpSuck": {
       "zh": "上唇 内吸",
-      "en": "upper lip suck"
+      "en": "upper lip suck",
+      "ja": "上唇 吸い込み"
     },
     "MouthLowerDownRightLowerInside": {
       "zh": "右下唇 下缘内侧",
-      "en": "lower right lip lower inner edge"
+      "en": "lower right lip lower inner edge",
+      "ja": "右下唇 下縁内側"
     },
     "MouthLowerDownRightPuffRight": {
       "zh": "右下唇 右颊鼓起",
-      "en": "lower right lip right cheek puff"
+      "en": "lower right lip right cheek puff",
+      "ja": "右下唇 右頬 膨らませ"
     },
     "MouthLowerDownRightApe": {
       "zh": "右下唇 猿形",
-      "en": "lower right lip ape"
+      "en": "lower right lip ape",
+      "ja": "右下唇 猿口"
     },
     "MouthLowerDownRightPout": {
       "zh": "右下唇 撅起",
-      "en": "lower right lip pout"
+      "en": "lower right lip pout",
+      "ja": "右下唇 すぼめ"
     },
     "MouthLowerDownRightOverlay": {
       "zh": "右下唇 覆盖",
-      "en": "lower right lip overlay"
+      "en": "lower right lip overlay",
+      "ja": "右下唇 オーバーレイ"
     },
     "MouthLowerDownRightSuck": {
       "zh": "右下唇 内吸",
-      "en": "lower right lip suck"
+      "en": "lower right lip suck",
+      "ja": "右下唇 吸い込み"
     },
     "MouthLowerDownLeftLowerInside": {
       "zh": "左下唇 下缘内侧",
-      "en": "lower left lip lower inner edge"
+      "en": "lower left lip lower inner edge",
+      "ja": "左下唇 下縁内側"
     },
     "MouthLowerDownLeftPuffLeft": {
       "zh": "左下唇 左颊鼓起",
-      "en": "lower left lip left cheek puff"
+      "en": "lower left lip left cheek puff",
+      "ja": "左下唇 左頬 膨らませ"
     },
     "MouthLowerDownLeftApe": {
       "zh": "左下唇 猿形",
-      "en": "lower left lip ape"
+      "en": "lower left lip ape",
+      "ja": "左下唇 猿口"
     },
     "MouthLowerDownLeftPout": {
       "zh": "左下唇 撅起",
-      "en": "lower left lip pout"
+      "en": "lower left lip pout",
+      "ja": "左下唇 すぼめ"
     },
     "MouthLowerDownLeftOverlay": {
       "zh": "左下唇 覆盖",
-      "en": "lower left lip overlay"
+      "en": "lower left lip overlay",
+      "ja": "左下唇 オーバーレイ"
     },
     "MouthLowerDownLeftSuck": {
       "zh": "左下唇 内吸",
-      "en": "lower left lip suck"
+      "en": "lower left lip suck",
+      "ja": "左下唇 吸い込み"
     },
     "MouthLowerDownLowerInside": {
       "zh": "下唇 下缘内侧",
-      "en": "lower lip lower inner edge"
+      "en": "lower lip lower inner edge",
+      "ja": "下唇 下縁内側"
     },
     "MouthLowerDownInside": {
       "zh": "下唇 内侧",
-      "en": "lower lip inside"
+      "en": "lower lip inside",
+      "ja": "下唇 内側"
     },
     "MouthLowerDownPuff": {
       "zh": "下唇 鼓起",
-      "en": "lower lip puff"
+      "en": "lower lip puff",
+      "ja": "下唇 膨らませ"
     },
     "MouthLowerDownPuffLeft": {
       "zh": "下唇 左颊鼓起",
-      "en": "lower lip left cheek puff"
+      "en": "lower lip left cheek puff",
+      "ja": "下唇 左頬 膨らませ"
     },
     "MouthLowerDownPuffRight": {
       "zh": "下唇 右颊鼓起",
-      "en": "lower lip right cheek puff"
+      "en": "lower lip right cheek puff",
+      "ja": "下唇 右頬 膨らませ"
     },
     "MouthLowerDownApe": {
       "zh": "下唇 猿形",
-      "en": "lower lip ape"
+      "en": "lower lip ape",
+      "ja": "下唇 猿口"
     },
     "MouthLowerDownPout": {
       "zh": "下唇 撅起",
-      "en": "lower lip pout"
+      "en": "lower lip pout",
+      "ja": "下唇 すぼめ"
     },
     "MouthLowerDownOverlay": {
       "zh": "下唇 覆盖",
-      "en": "lower lip overlay"
+      "en": "lower lip overlay",
+      "ja": "下唇 オーバーレイ"
     },
     "MouthLowerDownSuck": {
       "zh": "下唇 内吸",
-      "en": "lower lip suck"
+      "en": "lower lip suck",
+      "ja": "下唇 吸い込み"
     },
     "MouthUpperInsideOverturn": {
       "zh": "上唇内侧 外翻",
-      "en": "Upper lip inside overturn"
+      "en": "Upper lip inside overturn",
+      "ja": "上唇内側 外反"
     },
     "MouthLowerInsideOverturn": {
       "zh": "下唇内侧 外翻",
-      "en": "Lower lip inside overturn"
+      "en": "Lower lip inside overturn",
+      "ja": "下唇内側 外反"
     },
     "SmileRightUpperOverturn": {
       "zh": "右嘴角 上唇外翻",
-      "en": "right mouth corner upper overturn"
+      "en": "right mouth corner upper overturn",
+      "ja": "右口角 上唇外反"
     },
     "SmileRightLowerOverturn": {
       "zh": "右嘴角 下唇外翻",
-      "en": "right mouth corner lower overturn"
+      "en": "right mouth corner lower overturn",
+      "ja": "右口角 下唇外反"
     },
     "SmileRightOverturn": {
       "zh": "右嘴角 外翻",
-      "en": "right mouth corner overturn"
+      "en": "right mouth corner overturn",
+      "ja": "右口角 外反"
     },
     "SmileRightApe": {
       "zh": "右嘴角 猿形",
-      "en": "right mouth corner ape"
+      "en": "right mouth corner ape",
+      "ja": "右口角 猿口"
     },
     "SmileRightOverlay": {
       "zh": "右嘴角 覆盖",
-      "en": "right mouth corner overlay"
+      "en": "right mouth corner overlay",
+      "ja": "右口角 オーバーレイ"
     },
     "SmileRightPout": {
       "zh": "右嘴角 撅起",
-      "en": "right mouth corner pout"
+      "en": "right mouth corner pout",
+      "ja": "右口角 すぼめ"
     },
     "SmileLeftUpperOverturn": {
       "zh": "左嘴角 上唇外翻",
-      "en": "left mouth corner upper overturn"
+      "en": "left mouth corner upper overturn",
+      "ja": "左口角 上唇外反"
     },
     "SmileLeftLowerOverturn": {
       "zh": "左嘴角 下唇外翻",
-      "en": "left mouth corner lower overturn"
+      "en": "left mouth corner lower overturn",
+      "ja": "左口角 下唇外反"
     },
     "SmileLeftOverturn": {
       "zh": "左嘴角 外翻",
-      "en": "left mouth corner overturn"
+      "en": "left mouth corner overturn",
+      "ja": "左口角 外反"
     },
     "SmileLeftApe": {
       "zh": "左嘴角 猿形",
-      "en": "left mouth corner ape"
+      "en": "left mouth corner ape",
+      "ja": "左口角 猿口"
     },
     "SmileLeftOverlay": {
       "zh": "左嘴角 覆盖",
-      "en": "left mouth corner overlay"
+      "en": "left mouth corner overlay",
+      "ja": "左口角 オーバーレイ"
     },
     "SmileLeftPout": {
       "zh": "左嘴角 撅起",
-      "en": "left mouth corner pout"
+      "en": "left mouth corner pout",
+      "ja": "左口角 すぼめ"
     },
     "SmileUpperOverturn": {
       "zh": "嘴角 上唇外翻",
-      "en": "mouth corner upper overturn"
+      "en": "mouth corner upper overturn",
+      "ja": "口角 上唇外反"
     },
     "SmileLowerOverturn": {
       "zh": "嘴角 下唇外翻",
-      "en": "mouth corner lower overturn"
+      "en": "mouth corner lower overturn",
+      "ja": "口角 下唇外反"
     },
     "SmileOverturn": {
       "zh": "嘴角 外翻",
-      "en": "mouth corner overturn"
+      "en": "mouth corner overturn",
+      "ja": "口角 外反"
     },
     "SmileApe": {
       "zh": "嘴角 猿形",
-      "en": "mouth corner ape"
+      "en": "mouth corner ape",
+      "ja": "口角 猿口"
     },
     "SmileOverlay": {
       "zh": "嘴角 覆盖",
-      "en": "mouth corner overlay"
+      "en": "mouth corner overlay",
+      "ja": "口角 オーバーレイ"
     },
     "SmilePout": {
       "zh": "嘴角 撅起",
-      "en": "mouth corner pout"
+      "en": "mouth corner pout",
+      "ja": "口角 すぼめ"
     },
     "PuffRightUpperOverturn": {
       "zh": "右颊 上唇外翻",
-      "en": "right cheek upper overturn"
+      "en": "right cheek upper overturn",
+      "ja": "右頬 上唇外反"
     },
     "PuffRightLowerOverturn": {
       "zh": "右颊 下唇外翻",
-      "en": "right cheek lower overturn"
+      "en": "right cheek lower overturn",
+      "ja": "右頬 下唇外反"
     },
     "PuffRightOverturn": {
       "zh": "右颊 外翻",
-      "en": "right cheek overturn"
+      "en": "right cheek overturn",
+      "ja": "右頬 外反"
     },
     "PuffLeftUpperOverturn": {
       "zh": "左颊 上唇外翻",
-      "en": "left cheek upper overturn"
+      "en": "left cheek upper overturn",
+      "ja": "左頬 上唇外反"
     },
     "PuffLeftLowerOverturn": {
       "zh": "左颊 下唇外翻",
-      "en": "left cheek lower overturn"
+      "en": "left cheek lower overturn",
+      "ja": "左頬 下唇外反"
     },
     "PuffLeftOverturn": {
       "zh": "左颊 外翻",
-      "en": "left cheek overturn"
+      "en": "left cheek overturn",
+      "ja": "左頬 外反"
     },
     "PuffUpperOverturn": {
       "zh": "脸颊 上唇外翻",
-      "en": "cheek upper overturn"
+      "en": "cheek upper overturn",
+      "ja": "頬 上唇外反"
     },
     "PuffLowerOverturn": {
       "zh": "脸颊 下唇外翻",
-      "en": "cheek lower overturn"
+      "en": "cheek lower overturn",
+      "ja": "頬 下唇外反"
     },
     "PuffOverturn": {
       "zh": "脸颊 外翻",
-      "en": "cheek overturn"
+      "en": "cheek overturn",
+      "ja": "頬 外反"
     },
     "TongueSteps": {
       "zh": "舌头 伸出级数",
-      "en": "Tongue out steps"
+      "en": "Tongue out steps",
+      "ja": "舌 突出段数"
     },
     "EyesX": {
       "zh": "双眼 水平注视（旧版）",
-      "en": "Both eyes horizontal gaze (legacy)"
+      "en": "Both eyes horizontal gaze (legacy)",
+      "ja": "両目 水平視線（旧）"
     },
     "EyesY": {
       "zh": "双眼 垂直注视（旧版）",
-      "en": "Both eyes vertical gaze (legacy)"
+      "en": "Both eyes vertical gaze (legacy)",
+      "ja": "両目 垂直視線（旧）"
     },
     "LeftEyeX": {
       "zh": "左眼 水平注视（旧版）",
-      "en": "Left eye horizontal gaze (legacy)"
+      "en": "Left eye horizontal gaze (legacy)",
+      "ja": "左目 水平視線（旧）"
     },
     "LeftEyeY": {
       "zh": "左眼 垂直注视（旧版）",
-      "en": "Left eye vertical gaze (legacy)"
+      "en": "Left eye vertical gaze (legacy)",
+      "ja": "左目 垂直視線（旧）"
     },
     "RightEyeX": {
       "zh": "右眼 水平注视（旧版）",
-      "en": "Right eye horizontal gaze (legacy)"
+      "en": "Right eye horizontal gaze (legacy)",
+      "ja": "右目 水平視線（旧）"
     },
     "RightEyeY": {
       "zh": "右眼 垂直注视（旧版）",
-      "en": "Right eye vertical gaze (legacy)"
+      "en": "Right eye vertical gaze (legacy)",
+      "ja": "右目 垂直視線（旧）"
     },
     "LeftEyeWiden": {
       "zh": "左眼 睁大（旧版）",
-      "en": "Left eye widen (legacy)"
+      "en": "Left eye widen (legacy)",
+      "ja": "左目 見開き（旧）"
     },
     "RightEyeWiden": {
       "zh": "右眼 睁大（旧版）",
-      "en": "Right eye widen (legacy)"
+      "en": "Right eye widen (legacy)",
+      "ja": "右目 見開き（旧）"
     },
     "EyeWiden": {
       "zh": "双眼 睁大（旧版）",
-      "en": "Both eyes widen (legacy)"
+      "en": "Both eyes widen (legacy)",
+      "ja": "両目 見開き（旧）"
     },
     "LeftEyeSqueeze": {
       "zh": "左眼 眯紧",
-      "en": "Left eye squeeze"
+      "en": "Left eye squeeze",
+      "ja": "左目 細め"
     },
     "RightEyeSqueeze": {
       "zh": "右眼 眯紧",
-      "en": "Right eye squeeze"
+      "en": "Right eye squeeze",
+      "ja": "右目 細め"
     },
     "EyesSqueeze": {
       "zh": "双眼 眯紧",
-      "en": "Both eyes squeeze"
+      "en": "Both eyes squeeze",
+      "ja": "両目 細め"
     },
     "EyesDilation": {
       "zh": "瞳孔 放大（旧版）",
-      "en": "Pupil dilation (legacy)"
+      "en": "Pupil dilation (legacy)",
+      "ja": "瞳孔 拡大（旧）"
     },
     "EyesPupilDiameter": {
       "zh": "双眼 瞳孔直径（旧版）",
-      "en": "Both pupils diameter (legacy)"
+      "en": "Both pupils diameter (legacy)",
+      "ja": "両目 瞳孔径（旧）"
     },
     "LeftEyeLid": {
       "zh": "左眼 睑开度",
-      "en": "Left eyelid openness"
+      "en": "Left eyelid openness",
+      "ja": "左目 まぶた開き"
     },
     "RightEyeLid": {
       "zh": "右眼 睑开度",
-      "en": "Right eyelid openness"
+      "en": "Right eyelid openness",
+      "ja": "右目 まぶた開き"
     },
     "CombinedEyeLid": {
       "zh": "双眼 睑开度",
-      "en": "Both eyelids openness"
+      "en": "Both eyelids openness",
+      "ja": "両目 まぶた開き"
     },
     "LeftEyeLidExpanded": {
       "zh": "左眼 睑开度（含睁大）",
-      "en": "Left eyelid openness (with wide)"
+      "en": "Left eyelid openness (with wide)",
+      "ja": "左目 まぶた開き（見開き込み）"
     },
     "RightEyeLidExpanded": {
       "zh": "右眼 睑开度（含睁大）",
-      "en": "Right eyelid openness (with wide)"
+      "en": "Right eyelid openness (with wide)",
+      "ja": "右目 まぶた開き（見開き込み）"
     },
     "EyeLidExpanded": {
       "zh": "双眼 睑开度（含睁大）",
-      "en": "Both eyelids openness (with wide)"
+      "en": "Both eyelids openness (with wide)",
+      "ja": "両目 まぶた開き（見開き込み）"
     },
     "LeftEyeLidExpandedSqueeze": {
       "zh": "左眼 睑开度（含眯紧）",
-      "en": "Left eyelid (with squeeze)"
+      "en": "Left eyelid (with squeeze)",
+      "ja": "左目 まぶた（細め込み）"
     },
     "RightEyeLidExpandedSqueeze": {
       "zh": "右眼 睑开度（含眯紧）",
-      "en": "Right eyelid (with squeeze)"
+      "en": "Right eyelid (with squeeze)",
+      "ja": "右目 まぶた（細め込み）"
     },
     "EyeLidExpandedSqueeze": {
       "zh": "双眼 睑开度（含眯紧）",
-      "en": "Both eyelids (with squeeze)"
+      "en": "Both eyelids (with squeeze)",
+      "ja": "両目 まぶた（細め込み）"
     },
     "BrowsInnerUp": {
       "zh": "双眉 内侧上抬（旧版）",
-      "en": "Both brows inner up (legacy)"
+      "en": "Both brows inner up (legacy)",
+      "ja": "両眉 内側上げ（旧）"
     },
     "BrowsOuterUp": {
       "zh": "双眉 外侧上抬（旧版）",
-      "en": "Both brows outer up (legacy)"
+      "en": "Both brows outer up (legacy)",
+      "ja": "両眉 外側上げ（旧）"
     },
     "BrowsDown": {
       "zh": "双眉 下压（旧版）",
-      "en": "Both brows down (legacy)"
+      "en": "Both brows down (legacy)",
+      "ja": "両眉 下げ（旧）"
     },
     "CheeksSquint": {
       "zh": "双颊 眯起（旧版）",
-      "en": "Both cheeks squint (legacy)"
+      "en": "Both cheeks squint (legacy)",
+      "ja": "両頬 上がり（旧）"
     },
     "LeftEyeWidenToggle": {
       "zh": "左眼 睁大开关",
-      "en": "Left eye widen toggle"
+      "en": "Left eye widen toggle",
+      "ja": "左目 見開きスイッチ"
     },
     "RightEyeWidenToggle": {
       "zh": "右眼 睁大开关",
-      "en": "Right eye widen toggle"
+      "en": "Right eye widen toggle",
+      "ja": "右目 見開きスイッチ"
     },
     "EyesWidenToggle": {
       "zh": "双眼 睁大开关",
-      "en": "Both eyes widen toggle"
+      "en": "Both eyes widen toggle",
+      "ja": "両目 見開きスイッチ"
     },
     "LeftEyeSqueezeToggle": {
       "zh": "左眼 眯紧开关",
-      "en": "Left eye squeeze toggle"
+      "en": "Left eye squeeze toggle",
+      "ja": "左目 細めスイッチ"
     },
     "RightEyeSqueezeToggle": {
       "zh": "右眼 眯紧开关",
-      "en": "Right eye squeeze toggle"
+      "en": "Right eye squeeze toggle",
+      "ja": "右目 細めスイッチ"
     },
     "EyesSqueezeToggle": {
       "zh": "双眼 眯紧开关",
-      "en": "Both eyes squeeze toggle"
+      "en": "Both eyes squeeze toggle",
+      "ja": "両目 細めスイッチ"
     }
   }
 }

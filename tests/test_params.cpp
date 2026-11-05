@@ -8,7 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <set>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -161,48 +161,62 @@ FGB_TEST(params_eye_scale_is_configurable) {
 
 namespace {
 
-// 读 ui/*.json 里某个对象段的键集合
-std::set<std::string> json_keys(const std::filesystem::path& path, std::string_view section) {
-    std::set<std::string> keys;
+// 读 ui/*.json 里某个对象段：键 → 该条目（用于检查三语字段是否齐全）
+std::map<std::string, json::Value> json_entries(const std::filesystem::path& path,
+                                                std::string_view section) {
+    std::map<std::string, json::Value> entries;
     std::ifstream file{path, std::ios::binary};
     if (!file) {
-        return keys;
+        return entries;
     }
     const std::string text{std::istreambuf_iterator<char>(file),
                            std::istreambuf_iterator<char>()};
     json::Value root;
     std::string error;
     if (!json::parse(text, root, error)) {
-        return keys;
+        return entries;
     }
     const json::Value* node = root.find(section);
     if (node == nullptr || !node->is_object()) {
-        return keys;
+        return entries;
     }
     for (const auto& entry : node->object) {
-        keys.insert(entry.first);
+        entries.emplace(entry.first, entry.second);
     }
-    return keys;
+    return entries;
 }
 
 } // namespace
 
-// 每张参数卡片都要有"人话"说明，否则用户只能看到 JawZ、LipSuckFunnelUpperRight 这种名字。
-// 基础 88 个形状的名字在 shapes.json（校准页共用），其余由 tools/gen_param_desc.py 生成。
-// 新增参数忘了配说明时这里会红——比等用户发现卡片是空的要早。
+// 每张参数卡片都要有"人话"说明，而且三种语言都得齐——界面切到日语却显示英文，
+// 比只显示协议名更让人困惑。基础 88 个形状的名字在 shapes.json（校准页共用），
+// 其余由 tools/gen_param_desc.py 生成。新增参数忘了配说明时这里会红。
 FGB_TEST(params_every_card_has_a_description) {
     const std::filesystem::path ui = std::filesystem::path{FGB_SOURCE_DIR} / "ui";
-    const std::set<std::string> shapes = json_keys(ui / "shapes.json", "shapes");
-    const std::set<std::string> desc   = json_keys(ui / "param_desc.json", "params");
+    const auto shapes = json_entries(ui / "shapes.json", "shapes");
+    const auto desc   = json_entries(ui / "param_desc.json", "params");
     FGB_CHECK(shapes.size() == 88);
     FGB_CHECK(!desc.empty());
 
+    const char* kLangs[] = {"zh", "en", "ja"};
     std::vector<std::string> missing;
     for (const params::Group& group : params::groups()) {
         for (const params::ParamEntry& entry : group.entries) {
             const std::string name{entry.name};
-            if (shapes.count(name) == 0 && desc.count(name) == 0) {
+            const json::Value* info = nullptr;
+            if (const auto base_it = shapes.find(name); base_it != shapes.end()) {
+                info = &base_it->second;
+            } else if (const auto desc_it = desc.find(name); desc_it != desc.end()) {
+                info = &desc_it->second;
+            }
+            if (info == nullptr) {
                 missing.emplace_back(name);
+                continue;
+            }
+            for (const char* lang_code : kLangs) {
+                if (info->string_at(lang_code).empty()) {
+                    missing.emplace_back(name + "." + lang_code);
+                }
             }
         }
     }

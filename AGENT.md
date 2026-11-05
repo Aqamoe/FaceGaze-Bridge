@@ -79,7 +79,7 @@
 | 失败文案 | 显示可操作的具体原因（端口占用、缺 DLL、校验失败），不要只给红点或"失败" |
 | 状态一致性 | 服务端消息是唯一事实来源；UI 只做展示与命令发送，不在页面里猜状态。库/模块同步后必须重算"已安装/可更新" |
 | 源名显示 | 引擎里的源名是 `native:xxx` / `vrcft:xxx`（`--eye-source`、`start_instance` 按它匹配，不能改）。界面一律用 `display_source()` 显示成 `FGB:xxx` / `VRCFT:xxx`，tooltip 里留引擎真名 |
-| 参数说明 | 参数卡片除了协议名还要有一句人话说明：基础 88 个形状在 `ui/shapes.json`（校准页共用），其余在 `ui/param_desc.json`（由 `tools/gen_param_desc.py` 生成，别手改）；新增参数忘了配说明时 `fgb-tests` 会红 |
+| 参数说明 | 参数卡片除了协议名还要有一句人话说明，**三种语言（zh/en/ja）齐全**：基础 88 个形状在 `ui/shapes.json`（校准页共用，含 `tip`/`tip_ja`），其余在 `ui/param_desc.json`（由 `tools/gen_param_desc.py` 生成，别手改）；缺说明或缺某种语言时 `fgb-tests` 会红 |
 | 版本比较 | 已安装/有新版本用**语义版本比较**，不要字符串相等；包内版本可能比库条目新 |
 | 边界 | 最小窗口 1100×700 DIP 下布局可用；窄窗口侧栏只留图标；窗口尺寸按 DIP 缩放 |
 | 验证 | 界面改动必须用 `tools/probe_ui.py`（CDP）验证真实数据与交互，不能只靠截图或"看起来对" |
