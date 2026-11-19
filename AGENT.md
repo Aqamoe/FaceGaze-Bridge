@@ -28,6 +28,7 @@
 6. **打 tag 就等于"本地也必须有 dist"**：建 tag 之后必须本地 Release 构建 +
    `cmake --install … --prefix dist` + 补 runtime，并真的启动一次 `dist/FaceGaze Bridge.exe`；
    tag 指向的提交与 dist 里的版本号必须一致。等 CI 出包或者只推 tag 不建 dist 都不算完成。
+   SDK 包版本另算：`dist/fgb-cli.exe version` 等于 tag，SDK 压缩包用 `sdk/fgb_sdk_version.h` 的版本。
 7. **一个计划点一次提交**，提交信息说清"为什么"，不要堆一大坨混合改动。
 8. **不做没要求的重构**。大文件不要整份重写，用精确替换。
 9. **注释只写"为什么"**，中文；不写"这行在干什么"。
@@ -52,6 +53,10 @@
 - **原生模块只有一套 ABI**（`sdk/fgb_module_api.h`，导出 `fgb_module_query_v2`，属性帧）。
   v1 已于 2026-10-31 移除（[ADR-0034](docs/adr/0034-native-module-v2-only.md)）：
   不要再加"第二套并行 ABI/兼容分支"，扩展只能在结构末尾追加字段并升 `abi_version`。
+- **SDK 包版本独立于软件版本**（`sdk/fgb_sdk_version.h`，[ADR-0048](docs/adr/0048-sdk-independent-version.md)）：
+  改了 `sdk/` 下的 ABI 头、文档或示例就 bump 它（CI 会拦"改了却没 bump"），只改软件代码不要动它。
+  `FaceGazeBridge-SDK-<SDK 版本>.zip` 与 tag `v<软件版本>` 是两套版本号，不要互换；
+  模块清单的 `MinHostVersion` 比较的是宿主版本，不是 SDK 版本。
 - **两个在线库不许合并**：VRCFT 老注册表（`vrcft/module_library.*`，扁平数组 + MD5）与
   原生库（`vrcft/native_library.*`，registry schema v2 + sha256）各有一份解析器与缓存。
   原生库安装必须走"size/sha256 → 解压 → 包内 `fgb-native.json` 的 ModuleId/AbiVersion/DLL
@@ -184,7 +189,9 @@ python tools/build_vrcft_runtime.py --dest dist/runtime/vrcft
 ```
 
 发布时 `packaging/pack_sdk.ps1` 会把 `dist/sdk/` 打成
-`dist-installer/FaceGazeBridge-SDK-<version>.zip`（`release.ps1` 与 CI 自动调用）；
+`dist-installer/FaceGazeBridge-SDK-<SDK 版本>.zip`（`release.ps1` 与 CI 自动调用）；
+SDK 版本取自 `sdk/fgb_sdk_version.h`，与软件版本各自独立（ADR-0048），
+软件只更新功能时这个压缩包保持不变。
 解压后根目录就是 SDK，可直接作为模块工程的 submodule/FetchContent 目录。
 
 入口只有一个（[ADR-0016](docs/adr/0016-single-entry-desktop-app.md)）：
@@ -361,7 +368,8 @@ src/openvr/    SteamVR 启动项：运行库定位、openvr_api.dll 动态加载
 src/web/       控制面 IPC（WS 消息 + 静态页面）
 src/ui/        FaceGaze Bridge.exe：WebView2 窗口 + 托盘 + 拉起/回收引擎（无业务逻辑）
 sdk/           原生模块 SDK：ABI 头（模块 / 共享内存 / UDP / 宿主共享内存）、
-               docs/（集成文档）、samples/（无硬件示例与 Unity 包）
+               fgb_sdk_version.h（SDK 独立版本）、docs/（集成文档）、
+               samples/（无硬件示例与 Unity 包）
 ui/            页面资源（无构建步骤；face.js 是 WebGL2 渲染器，face/ 是模型与映射表）
 tools/         抓包、冒烟、探针，以及 build_vrcft_runtime.py（出精简运行时）、
                bake_gnm_head.py / face_contract.py / check_face_model.py（3D 资产烘焙与校验）、

@@ -13,6 +13,8 @@
 [`samples/native-gaze`](../samples/native-gaze)（仅独立注视，含 2D-only 模式）、
 [`samples/native-openness`](../samples/native-openness)（只给睁眼度/瞳孔）。
 都不需要硬件。头文件：[`fgb_module_api.h`](../fgb_module_api.h)。
+SDK 包版本在 [`fgb_sdk_version.h`](../fgb_sdk_version.h)，**独立于宿主软件版本**；
+模块清单里的 `MinHostVersion` 写的是宿主版本，不是 SDK 包版本。
 
 > **ABI v1 已移除**（[ADR-0034](https://github.com/Aqamoe/FaceGaze-Bridge/blob/main/docs/adr/0034-native-module-v2-only.md)）。
 > `FgbFrameSlotV1` / `FgbEyeV1` / `FgbGazeV1` / `fgb_module_query` / `FGB_CAP_EYE` /
@@ -68,7 +70,7 @@ my-module/
 | `AbiVersion` | 建议 | 只接受 `2`。写 1 或更低的模块在列表里直接标成不兼容 |
 | `Capabilities` | 建议 | `expression` / `eyes` / `gaze` / `head`；运行时以模块自报为准 |
 | `RoleHint` | 可选 | 界面默认建议的角色，不改变实际加载 |
-| `MinHostVersion` | 可选 | 高于当前宿主版本时标记为不兼容 |
+| `MinHostVersion` | 可选 | 高于当前宿主版本时标记为不兼容。这里写的是软件/宿主版本，不是 SDK 包版本（见 [`fgb_sdk_version.h`](../fgb_sdk_version.h)） |
 
 宿主只在加载前用清单做列表/兼容性提示；加载后一律以 `fgb_module_query_v2`
 返回的 `capabilities` 为准，两者不一致会告警。

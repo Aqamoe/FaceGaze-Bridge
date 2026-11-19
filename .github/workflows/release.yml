@@ -35,7 +35,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Check version matches tag
+      - name: Check versions
         shell: pwsh
         run: |
           $text = Get-Content CMakeLists.txt -Raw
@@ -47,7 +47,30 @@ jobs:
             throw "tag $env:TAG 与 CMakeLists.txt 的版本 $version 不一致"
           }
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "版本：$version"
+
+          # SDK 包版本独立于软件版本（ADR-0048），只随 sdk/ 的内容变化。
+          # 这里不要求它等于 tag，否则软件每次发版都会把 SDK 包名一起改掉。
+          $sdkText = Get-Content sdk/fgb_sdk_version.h -Raw
+          if ($sdkText -notmatch '#define\s+FGB_SDK_VERSION\s+"([0-9]+\.[0-9]+\.[0-9]+)"') {
+            throw "无法从 sdk/fgb_sdk_version.h 读取 SDK 版本"
+          }
+          $sdkVersion = $Matches[1]
+          "SDK_VERSION=$sdkVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "软件版本：$version；SDK 版本：$sdkVersion"
+
+          # sdk/ 改了却没 bump SDK 版本，等于让用户拿到"同版本不同内容"的包。
+          $prev = & git describe --tags --abbrev=0 "$env:TAG^" 2>$null
+          if ($LASTEXITCODE -eq 0 -and $prev) {
+            $oldHeader = & git show "${prev}:sdk/fgb_sdk_version.h" 2>$null
+            if ($LASTEXITCODE -eq 0 -and $oldHeader -match 'FGB_SDK_VERSION\s+"([0-9]+\.[0-9]+\.[0-9]+)"') {
+              $prevSdkVersion = $Matches[1]
+              $changed = @(& git diff --name-only "$prev" "$env:TAG" -- sdk/ |
+                Where-Object { $_ -and $_ -ne "sdk/fgb_sdk_version.h" })
+              if ($changed.Count -gt 0 -and $sdkVersion -eq $prevSdkVersion) {
+                throw "sdk/ 有 $($changed.Count) 个文件改动，但 SDK 版本仍是 $sdkVersion；请先 bump sdk/fgb_sdk_version.h"
+              }
+            }
+          }
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
@@ -66,8 +89,28 @@ jobs:
 
       - name: Package SDK
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          & .\packaging\pack_sdk.ps1 -Version $env:VERSION -DistDir dist -OutputDir dist-installer
+          New-Item -ItemType Directory -Force -Path dist-installer | Out-Null
+          $name = "FaceGazeBridge-SDK-$env:SDK_VERSION.zip"
+          $target = Join-Path "dist-installer" $name
+          # SDK 版本没变就复用上一版资产：重新压缩会换哈希，用户会以为 SDK 变了。
+          $prev = & git describe --tags --abbrev=0 "$env:TAG^" 2>$null
+          if ($LASTEXITCODE -eq 0 -and $prev) {
+            Remove-Item $target -Force -ErrorAction SilentlyContinue
+            & gh release download $prev --pattern $name --output $target --clobber 2>$null
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path $target)) {
+              Remove-Item $target -Force -ErrorAction SilentlyContinue
+              Write-Host "$prev 没有 $name，重新打包"
+            } else {
+              Write-Host "复用 $prev 的 $name（SDK 版本未变）"
+            }
+          }
+          if (-not (Test-Path $target)) {
+            & .\packaging\pack_sdk.ps1 -SdkVersion $env:SDK_VERSION -DistDir dist -OutputDir dist-installer
+            if ($LASTEXITCODE -ne 0) { throw "打包 SDK 失败" }
+          }
 
       - name: Fetch VRCFT runtime
         shell: pwsh
@@ -121,7 +164,7 @@ jobs:
           Copy-Item vrcft-runtime.zip dist-installer/vrcft-runtime.zip -Force
           $files = @(
             "dist-installer/FaceGazeBridge-Setup-$env:VERSION.exe",
-            "dist-installer/FaceGazeBridge-SDK-$env:VERSION.zip",
+            "dist-installer/FaceGazeBridge-SDK-$env:SDK_VERSION.zip",
             "dist-installer/vrcft-runtime.zip"
           )
           $lines = foreach ($file in $files) {
@@ -166,7 +209,7 @@ jobs:
             "## 安装说明",
             "",
             "- 用户级安装（不需要管理员），内置 VRCFT 模块宿主运行时与 VC++ 运行库",
-            "- FaceGazeBridge-SDK-$env:VERSION.zip 是原生模块开发包（ABI 头、文档、示例）",
+            "- FaceGazeBridge-SDK-$env:SDK_VERSION.zip 是原生模块开发包（ABI 头、文档、示例；SDK 版本与软件版本独立）",
             "- 安装包未签名，首次运行可能被 SmartScreen 拦截；请用 SHA256SUMS.txt 核对文件",
             "- 模块、校准、输出设置保存在 %LOCALAPPDATA%\FaceGazeBridge"
           )
@@ -174,7 +217,7 @@ jobs:
             (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding($false)))
           $assets = @(
             "dist-installer/FaceGazeBridge-Setup-$env:VERSION.exe",
-            "dist-installer/FaceGazeBridge-SDK-$env:VERSION.zip",
+            "dist-installer/FaceGazeBridge-SDK-$env:SDK_VERSION.zip",
             "dist-installer/vrcft-runtime.zip",
             "dist-installer/SHA256SUMS.txt"
           )

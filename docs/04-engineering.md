@@ -268,8 +268,10 @@ jobs:
   更新 **draft** Release，不自动公开。
 - **CI**：`.github/workflows/release.yml` 由 tag `v*` 触发，先校验 tag 与
   `CMakeLists.txt` 版本一致，再执行同样的构建/测试/打包（含
-  `packaging/pack_sdk.ps1` 产出的 `FaceGazeBridge-SDK-<version>.zip`），上传 workflow
-  artifact 并创建 draft Release。
+  `packaging/pack_sdk.ps1` 产出的 `FaceGazeBridge-SDK-<SDK 版本>.zip`；SDK 版本
+  取自 `sdk/fgb_sdk_version.h`，不跟随软件版本，见
+  [ADR-0048](adr/0048-sdk-independent-version.md)），上传 workflow artifact 并创建
+  draft Release。
 - **CI 的 VRCFT 运行时**：runner 上没有 VRCFT。工作流优先读仓库变量
   `VRCFT_RUNTIME_URL`，否则从最近一个**已发布** Release 下载同名资产。仓库是私有的，
   该变量要填 Release 资产的 **API 地址**

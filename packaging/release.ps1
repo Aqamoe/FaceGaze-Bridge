@@ -1,6 +1,9 @@
 ﻿# 一键发布：构建 → 单测 → dist → VRCFT 运行时 → 安装包 → SDK 包 → 校验和
 # （可选 draft release）。
 #
+# 安装包跟软件版本（CMakeLists.txt）走，SDK 包跟 sdk/fgb_sdk_version.h 的
+# SDK 版本走；SDK 没更新时它不随软件发版变化（ADR-0048）。
+#
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File packaging\release.ps1
 #   powershell -ExecutionPolicy Bypass -File packaging\release.ps1 -Publish
@@ -12,6 +15,7 @@
 # -Publish 需要 gh 已登录，会创建/更新 **draft** release，不会自动公开。
 param(
     [string]$Version = "",
+    [string]$SdkVersion = "",
     [string]$BuildDir = "build/windows-vs2022",
     [string]$DistDir = "dist",
     [string]$OutputDir = "dist-installer",
@@ -37,6 +41,19 @@ if (-not $Version) {
 }
 $tag = "v$Version"
 
+# SDK 版本来自 sdk/fgb_sdk_version.h，与软件版本各自独立（ADR-0048）。
+# 这里只读版本；宏之间的一致性由 pack_sdk.ps1 校验。
+if (-not $SdkVersion) {
+    $sdkHeader = Join-Path $root "sdk/fgb_sdk_version.h"
+    if (-not (Test-Path $sdkHeader)) { throw "找不到 $sdkHeader" }
+    $sdkText = Get-Content $sdkHeader -Raw
+    if ($sdkText -match '#define\s+FGB_SDK_VERSION\s+"([0-9]+\.[0-9]+\.[0-9]+)"') {
+        $SdkVersion = $Matches[1]
+    } else {
+        throw "无法从 sdk/fgb_sdk_version.h 读取 SDK 版本"
+    }
+}
+
 if ($Publish) {
     $dirty = & git status --porcelain
     if ($dirty) {
@@ -47,7 +64,7 @@ if ($Publish) {
     }
 }
 
-Write-Host "FaceGaze Bridge $Version"
+Write-Host "FaceGaze Bridge $Version（SDK $SdkVersion）"
 Write-Host "  build  : $BuildDir"
 Write-Host "  dist   : $DistDir"
 Write-Host "  output : $OutputDir"
@@ -91,8 +108,8 @@ $setup = Join-Path $OutputDir "FaceGazeBridge-Setup-$Version.exe"
 if (-not (Test-Path $setup)) { throw "找不到安装包：$setup" }
 
 & (Join-Path $PSScriptRoot "pack_sdk.ps1") `
-    -Version $Version -DistDir $DistDir -OutputDir $OutputDir
-$sdkZip = Join-Path $OutputDir "FaceGazeBridge-SDK-$Version.zip"
+    -SdkVersion $SdkVersion -DistDir $DistDir -OutputDir $OutputDir
+$sdkZip = Join-Path $OutputDir "FaceGazeBridge-SDK-$SdkVersion.zip"
 if (-not (Test-Path $sdkZip)) { throw "找不到 SDK 包：$sdkZip" }
 
 # CI 没有 VRCFT 安装目录，把运行时压缩包作为 release 资产带出去，后续 tag
@@ -140,7 +157,7 @@ if ($Publish) {
             "## 安装说明",
             "",
             "- 用户级安装（不需要管理员），内置 VRCFT 模块宿主运行时与 VC++ 运行库",
-            "- FaceGazeBridge-SDK-$Version.zip 是原生模块开发包（ABI 头、文档、示例）",
+            "- FaceGazeBridge-SDK-$SdkVersion.zip 是原生模块开发包（ABI 头、文档、示例；SDK 版本与软件版本独立）",
             "- 安装包未签名，首次运行可能被 SmartScreen 拦截；请用 SHA256SUMS.txt 核对文件",
             "- 模块、校准、输出设置保存在 %LOCALAPPDATA%\FaceGazeBridge"
         )
