@@ -53,15 +53,16 @@ VRCFT 解决的是「我的面捕硬件怎么驱动 VRChat 头像」。FGB 解�
 
 ## 当前状态
 
-最新版本 **1.2.0**。Windows 10/11 x64 上已完成构建、单测、端到端探针、
+最新版本 **1.2.1**。Windows 10/11 x64 上已完成构建、单测、端到端探针、
 安装/卸载和真机 PICO 链路验证；VRSS 已在 PICO + MSAA x4 真机上验收（注视点校准后
 直接从 Steam 启动游戏即可，不需要本软件代起）。发布门禁与未完成项记录在
 [docs/11-regression-2026-10-30.md](docs/11-regression-2026-10-30.md)。
 
-1.2.0 新增「SteamVR 退出后自动退出」：设置页 SteamVR 卡片里的第二个开关，默认关；
-把「随 SteamVR 启动 FGB」从关打到开时会同步打开（之后可以单独关掉，下次再同步打开）。
-判定要求先看见过 `vrserver.exe`、并连续消失 5 秒才算退出，所以 SteamVR 自己重启
-vrserver 不会把 FGB 踢掉（[ADR-0047](docs/adr/0047-exit-with-steamvr.md)）。
+1.2.1 修复眨眼瞬间注视点跟着眼皮跳动的问题；同时把原生模块 SDK 的版本从软件版本里
+拆出来（[ADR-0048](docs/adr/0048-sdk-independent-version.md)）：软件升级不再改
+`FaceGazeBridge-SDK-<SDK 版本>.zip` 的文件名，SDK 只在 ABI 头、文档或示例真正变化时
+才升版本。1.2.0 的「SteamVR 退出后自动退出」见
+[ADR-0047](docs/adr/0047-exit-with-steamvr.md)。
 
 已知限制：
 
@@ -130,8 +131,8 @@ NOTICE, LICENSE        许可证与第三方声明
    「一键启用」（需要 NVIDIA 显卡 + SteamVR + 游戏内 MSAA x4）
 5. 关窗只是收进托盘，追踪继续；托盘菜单「退出」才停止引擎
 
-安装包与 SDK 包（`FaceGazeBridge-SDK-<版本>.zip`）的 SHA256 在 Release 的
-`SHA256SUMS.txt` 中。
+安装包与 SDK 包（`FaceGazeBridge-SDK-<SDK 版本>.zip`，版本见 `sdk/fgb_sdk_version.h`，
+与软件版本各自独立）的 SHA256 在 Release 的 `SHA256SUMS.txt` 中。
 
 ## 快速开始
 
