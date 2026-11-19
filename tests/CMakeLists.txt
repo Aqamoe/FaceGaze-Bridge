@@ -33,6 +33,7 @@ add_executable(fgb-tests
     test_steamvr.cpp
     test_vrss.cpp
     test_gaze_pipeline.cpp
+    test_gaze_stabilizer.cpp
     test_gaze_calib.cpp
     test_log_gate.cpp)
 

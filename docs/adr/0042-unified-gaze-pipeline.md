@@ -2,6 +2,8 @@
 
 - 状态：**实施中**——P0（角度/方向同源）、P1a（规范化 + 标定骨架、`gaze.ini`、`/api/gaze` 三态）
   与 P2（圆盘标定：点位/采集/拟合/overlay/会话/页面，待真机验证）已落地 2026-11-02；
+  `GazeStabilizer` 的第一项策略（眨眼保持）2026-11-20 落地，见
+  [13 · §9](../13-gaze-pipeline-plan.md#2026-11-20--gazestabilizer眨眼保持)；
   P1.7 参数收敛与 P3 契约收敛未做
 - 日期：2026-11-02
 - 影响：`src/core/model/gaze.hpp`、`src/core/process/`（新增 normalizer / calibrator）、

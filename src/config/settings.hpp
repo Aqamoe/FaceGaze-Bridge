@@ -26,6 +26,18 @@ struct EngineSettings {
     // 空 = 没设置过，用 wide。看不清边缘的用户可以选 narrow。
     std::string gaze_calib_span;
 
+    // 眨眼保持（GazeStabilizer）：闭眼期间冻结注视点，避免眼动向量在眨眼时
+    // 把点顶得上下跳。默认开——人眨眼时注视本来就不该动。
+    bool gaze_blink_hold = true;
+    // 判闭眼的 openness 阈值。眼睑校准（eyelid_lo/gain）改过之后，来源的
+    // "全睁"可能明显低于 1.0，这时把阈值一起调高才判得出来。
+    float gaze_blink_enter = 0.25f;
+    // 睁开后最多再等多久（来源回弹"先低一点再回来"时，等它回到原处再交接）。
+    // 还看到往下沉一点就把这个值加大（300–400），太迟钝就减小。
+    float gaze_blink_tail_ms = 250.0f;
+    // 与保持值差多少（度）以内算"已经回到原处"。残余下沉幅度小时可以调小到 1.5。
+    float gaze_blink_handoff_deg = 2.5f;
+
     bool operator==(const EngineSettings&) const = default;
 };
 

@@ -162,10 +162,13 @@ void Engine::stop() noexcept {
 
 GazeState Engine::compute_gaze(const FaceFrame& frame, std::uint64_t now_ns) {
     GazeState gaze = assemble_gaze(frame);
-    // 顺序固定：先统一结构/有效性，再统一口径（视口点）。平滑与 fixation 在估计器里，
-    // 它们吃的是已经落到视口坐标的数据（ADR-0042 §1 不变量）。
+    // 顺序固定：先统一结构/有效性，再统一口径（视口点），最后才做稳定化。
+    // 平滑与 fixation 在估计器里，它们吃的是已经落到视口坐标的数据（ADR-0042 §1 不变量）。
     normalizer_.apply(gaze, now_ns);
     calibrator_.apply(gaze);
+    // 眨眼保持放在最后一段：闭眼时眼动向量被 Bell 现象顶上去，会把点顶得上下跳
+    // （GazeStabilizer 头注释里有完整动机）。放在标定之后，阈值才是"视口比例/角度"。
+    stabilizer_.apply(gaze, frame, now_ns);
     // 兼容字段跟着 space 走：老 sink 还在读 point_viewport，两处不一致就会出现
     // "标定说能用、消费端说不能用"。等 P1b 把 sink 全切到 space 之后可以删掉。
     gaze.point_viewport = gaze.space != GazeSpace::source;

@@ -14,6 +14,7 @@
 #include "core/process/gaze_calibrator.hpp"
 #include "core/process/gaze_estimator.hpp"
 #include "core/process/gaze_normalizer.hpp"
+#include "core/process/gaze_stabilizer.hpp"
 #include "engine/source_merger.hpp"
 #include "engine/tick_stats.hpp"
 #include "sinks/sink.hpp"
@@ -85,6 +86,13 @@ public:
     }
     GazeProfile gaze_profile() const noexcept { return calibrator_.profile(); }
     GazeProjection gaze_projection() const noexcept { return calibrator_.projection(); }
+    // 稳定化策略（眨眼保持）：只在管线最后一段生效，不影响 FaceFrame 里的眼动参数。
+    void set_gaze_stabilizer(const GazeStabilizerConfig& config) noexcept {
+        stabilizer_.set_config(config);
+    }
+    const GazeStabilizerConfig& gaze_stabilizer_config() const noexcept {
+        return stabilizer_.config();
+    }
     TickStats::Snapshot tick_stats() const noexcept { return tick_stats_.snapshot(); }
     EngineStats stats() const noexcept {
         // frames_in 由合并器统计（它是真正 poll 每个源的地方）
@@ -107,6 +115,7 @@ private:
     GazeEstimator gaze_estimator_;
     GazeNormalizer normalizer_;
     GazeCalibrator calibrator_;
+    GazeStabilizer stabilizer_;
     TickStats tick_stats_;
     std::uint64_t last_tick_ns_ = 0;
 

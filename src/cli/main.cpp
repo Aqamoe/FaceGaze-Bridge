@@ -898,6 +898,26 @@ int cmd_run(int argc, char** argv) {
     engine_cfg.tick_hz = tick_hz;
     fgb::Engine engine{engine_cfg};
 
+    // 眨眼保持（GazeStabilizer）：闭眼期间冻结注视点。眼睛反算的注视点会在眨眼时
+    // 被 Bell 现象顶得上下跳，这是唯一能治它的地方——来源数据本身改不了。
+    {
+        fgb::GazeStabilizerConfig stabilizer_cfg;
+        stabilizer_cfg.blink_hold  = settings.gaze_blink_hold;
+        stabilizer_cfg.blink_enter = settings.gaze_blink_enter;
+        stabilizer_cfg.tail_ms     = settings.gaze_blink_tail_ms;
+        stabilizer_cfg.handoff_deg = settings.gaze_blink_handoff_deg;
+        engine.set_gaze_stabilizer(stabilizer_cfg);
+        if (stabilizer_cfg.blink_hold) {
+            FGB_INFO("gaze",
+                     "眨眼保持开启：openness < %.2f 判为闭眼，期间冻结注视点；"
+                     "睁开后等回到 %.1f° 内交接（最多 %.0f ms）",
+                     stabilizer_cfg.blink_enter, stabilizer_cfg.handoff_deg,
+                     stabilizer_cfg.tail_ms);
+        } else {
+            FGB_INFO("gaze", "眨眼保持关闭（settings.ini [gaze] blink_hold）");
+        }
+    }
+
     if (source_kinds.empty()) {
         source_kinds.emplace_back("vmc"); // 没写 --source 时的默认行为，与之前一致
     }
@@ -1361,11 +1381,15 @@ int cmd_run(int argc, char** argv) {
     filter_cfg.beta       = filter_beta;
     auto filter           = std::make_unique<fgb::FaceFilter>(filter_cfg);
     filter->set_enabled(filter_enabled);
+    // 眨眼期间冻结眼动角度的滤波：Bell 现象那段上翻一旦进了滤波器状态，
+    // 会在睁开后用几百毫秒"回味"，表现为注视点先往下沉一点再回来。
+    // 阈值与眨眼保持共用 blink_enter；关掉眨眼保持时这一层也一起关。
+    filter->set_blink_gate(settings.gaze_blink_hold ? settings.gaze_blink_enter : 0.0f);
     fgb::FaceFilter* filter_raw = filter.get();
     engine.add_processor(std::move(filter));
     if (filter_enabled) {
-        FGB_INFO("cli", "滤波开启：minCutoff=%.2f beta=%.2f", filter_cfg.min_cutoff,
-                 filter_cfg.beta);
+        FGB_INFO("cli", "滤波开启：minCutoff=%.2f beta=%.2f（眨眼期间冻结眼动角度）",
+                 filter_cfg.min_cutoff, filter_cfg.beta);
     }
 
     auto sink        = std::make_unique<fgb::VrchatSink>(vrchat_cfg);

@@ -36,6 +36,11 @@ public:
     void set_config(const OneEuroConfig& cfg) noexcept { config_ = cfg; }
     float filter(float x) noexcept;
 
+    // 上一次输出（不推进状态）。眨眼期间用它把眼动角度冻住：让滤波器既不吃进
+    // Bell 现象那段上翻，也不把这段污染留在状态里"回味"几秒（见 FaceFilter::process）。
+    float held() const noexcept { return x_prev_; }
+    bool primed() const noexcept { return primed_; }
+
 private:
     static float alpha(float hz, float cutoff) noexcept;
     OneEuroConfig config_{};
@@ -63,6 +68,11 @@ public:
     float min_cutoff() const noexcept { return live_min_cutoff_.load(std::memory_order_relaxed); }
     float beta() const noexcept { return live_beta_.load(std::memory_order_relaxed); }
 
+    // 眨眼闸门：来源 openness 低于它时冻结该眼的眼动角度滤波（0 = 关闭这一层）。
+    // 与 GazeStabilizer 共用 settings 里的 blink_enter，不引入第二套口径。
+    void set_blink_gate(float openness) noexcept { blink_gate_ = openness; }
+    float blink_gate() const noexcept { return blink_gate_; }
+
 private:
     OneEuroConfig config_{};
     std::array<OneEuroFilter, kShapeCount> shapes_{};
@@ -74,6 +84,7 @@ private:
     std::atomic<bool> enabled_{true};
     std::atomic<float> live_min_cutoff_{1.0f};
     std::atomic<float> live_beta_{0.5f};
+    float blink_gate_ = 0.25f; // 与 GazeStabilizerConfig::blink_enter 默认值一致
 };
 
 } // namespace fgb

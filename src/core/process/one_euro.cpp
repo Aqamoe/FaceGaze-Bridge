@@ -108,10 +108,31 @@ void FaceFilter::process(FaceFrame& frame) noexcept {
     EyeState& l = frame.eyes.left;
     EyeState& r = frame.eyes.right;
 
-    l.gazePitchYawDeg.y = gaze_left_x_.filter(l.gazePitchYawDeg.y);
-    l.gazePitchYawDeg.x = gaze_left_y_.filter(l.gazePitchYawDeg.x);
-    r.gazePitchYawDeg.y = gaze_right_x_.filter(r.gazePitchYawDeg.y);
-    r.gazePitchYawDeg.x = gaze_right_y_.filter(r.gazePitchYawDeg.x);
+    // 眼动角度：眨眼期间冻结，i.e. 既不推进滤波器状态，也不让原始角度透传出去。
+    //
+    // 为什么：闭眼过程里眼球按 Bell 现象上翻，来源把这段上翻照实报出来。一欧元滤波
+    // 一旦吃进这段角速度，会在睁开后用几百毫秒"回味"它——表现就是注视点先往下沉一点
+    // 再回到原处，min_cutoff 越小（用户为了稳会往小调）越明显。冻住状态比事后在输出
+    // 端补偿要干净：污染根本没进过状态。
+    //
+    // 顺带的效果：这段时间头像的 eye look 也不动。眼睑是闭着的，眼睛本身看不见，
+    // 所以这比"眼睛在闭着的眼皮底下乱窜"更接近真实。
+    const auto filter_eye = [this](OneEuroFilter& fx, OneEuroFilter& fy, EyeState& eye) {
+        const bool blinking = blink_gate_ > 0.0f && eye.opennessValid &&
+                              eye.openness < blink_gate_;
+        if (blinking && fx.primed() && fy.primed()) {
+            eye.gazePitchYawDeg.y = fx.held();
+            eye.gazePitchYawDeg.x = fy.held();
+            // 方向必须跟着角度走：同一只眼不能有两套值（ADR-0042 P0）
+            eye.gazeDirLocal = pitch_yaw_deg_to_dir(eye.gazePitchYawDeg.x, eye.gazePitchYawDeg.y);
+            return;
+        }
+        eye.gazePitchYawDeg.y = fx.filter(eye.gazePitchYawDeg.y);
+        eye.gazePitchYawDeg.x = fy.filter(eye.gazePitchYawDeg.x);
+    };
+
+    filter_eye(gaze_left_x_, gaze_left_y_, l);
+    filter_eye(gaze_right_x_, gaze_right_y_, r);
 
     l.openness = openness_left_.filter(l.openness);
     r.openness = openness_right_.filter(r.openness);

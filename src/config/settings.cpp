@@ -12,6 +12,9 @@ namespace {
 constexpr char kFilterSection[]    = "filter";
 constexpr char kLogSection[]       = "log";
 constexpr char kGazeCalibSection[] = "gaze_calib";
+// 注视管线行为（不是标定参数）：眨眼保持。与 [gaze_calib] 分开，因为前者是
+// "怎么处理数据"，后者是"标定怎么采点"。
+constexpr char kGazeSection[] = "gaze";
 
 // 与 ipc 的 set_filter 钳制一致：界面限制是 UI 的事，落盘这一层要能挡住手改。
 constexpr float kMinCutoffLo = 0.01f;
@@ -86,6 +89,19 @@ bool load_settings(const std::filesystem::path& path, EngineSettings& out, std::
             if (entry.key == "span" && (value == "wide" || value == "narrow")) {
                 out.gaze_calib_span = value;
             }
+        } else if (entry.section == kGazeSection) {
+            if (entry.key == "blink_hold") {
+                out.gaze_blink_hold = parse_bool(value, out.gaze_blink_hold);
+            } else if (entry.key == "blink_enter") {
+                out.gaze_blink_enter =
+                    std::clamp(parse_float(value, out.gaze_blink_enter), 0.0f, 0.9f);
+            } else if (entry.key == "blink_tail_ms") {
+                out.gaze_blink_tail_ms =
+                    std::clamp(parse_float(value, out.gaze_blink_tail_ms), 0.0f, 2000.0f);
+            } else if (entry.key == "blink_handoff_deg") {
+                out.gaze_blink_handoff_deg = std::clamp(
+                    parse_float(value, out.gaze_blink_handoff_deg), 0.0f, 30.0f);
+            }
         }
         // 未知节/键直接忽略：旧版本读新文件不该整份失败
     });
@@ -136,6 +152,12 @@ bool save_settings(const std::filesystem::path& path, const EngineSettings& sett
         writer.section(kGazeCalibSection);
         writer.kv("span", std::string_view{settings.gaze_calib_span});
     }
+    // 总是写：这几项有明确默认值，写出来用户才知道可以调
+    writer.section(kGazeSection);
+    writer.kv_bool("blink_hold", settings.gaze_blink_hold);
+    writer.kv("blink_enter", static_cast<double>(settings.gaze_blink_enter), 3);
+    writer.kv("blink_tail_ms", static_cast<double>(settings.gaze_blink_tail_ms), 1);
+    writer.kv("blink_handoff_deg", static_cast<double>(settings.gaze_blink_handoff_deg), 2);
     writer.close();
 
     if (std::filesystem::is_regular_file(path, ec)) {

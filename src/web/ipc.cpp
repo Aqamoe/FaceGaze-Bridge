@@ -1089,6 +1089,8 @@ void IpcServer::build_gaze(std::string& out) {
     writer.num(gaze.raw_right_point_2d.y, 4);
     writer.arr_end();
     writer.key("saturated").boolean(gaze.saturated);
+    // 闭眼期间这一帧的位置是保持值：点不动时能分清"卡住"和"在眨眼"
+    writer.key("blink_hold").boolean(gaze.blink_hold);
     writer.key("profile_version")
         .integer(static_cast<long long>(gaze.profile_version));
     writer.key("residual").num(static_cast<double>(gaze.residual), 4);

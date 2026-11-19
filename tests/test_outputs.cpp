@@ -337,6 +337,10 @@ FGB_TEST(settings_roundtrip_keeps_ui_values) {
     settings.filter_beta        = 0.85f;
     settings.log_level          = "warn";
     settings.gaze_calib_span    = "narrow";
+    settings.gaze_blink_hold    = false;
+    settings.gaze_blink_enter   = 0.40f;
+    settings.gaze_blink_tail_ms = 320.0f;
+    settings.gaze_blink_handoff_deg = 1.5f;
 
     std::string error;
     FGB_CHECK(config::save_settings(path, settings, error));
@@ -349,6 +353,11 @@ FGB_TEST(settings_roundtrip_keeps_ui_values) {
     FGB_CHECK_NEAR(loaded.filter_beta, 0.85f, 1e-6f);
     FGB_CHECK(loaded.log_level == "warn");
     FGB_CHECK(loaded.gaze_calib_span == "narrow");
+    // 眨眼保持：关掉之后重启仍然关着（否则用户为了排障关掉的保护会自己回来）
+    FGB_CHECK(!loaded.gaze_blink_hold);
+    FGB_CHECK_NEAR(loaded.gaze_blink_enter, 0.40f, 1e-5f);
+    FGB_CHECK_NEAR(loaded.gaze_blink_tail_ms, 320.0f, 1e-4f);
+    FGB_CHECK_NEAR(loaded.gaze_blink_handoff_deg, 1.5f, 1e-5f);
 }
 
 // 手改坏的文件不能把程序带崩：数值钳到合法区间，未知名字当"没设置"。
@@ -360,6 +369,7 @@ FGB_TEST(settings_load_sanitizes_hand_edited_file) {
         out << "[filter]\nenabled = 1\nmin_cutoff = 999\nbeta = -3\n"
             << "[log]\nlevel = whatever\n"
             << "[gaze_calib]\nspan = diagonal\n"
+            << "[gaze]\nblink_hold = 0\nblink_enter = 1.7\n"
             << "[unknown]\nkey = value\n";
     }
 
@@ -371,6 +381,8 @@ FGB_TEST(settings_load_sanitizes_hand_edited_file) {
     FGB_CHECK_NEAR(loaded.filter_beta, 0.0f, 1e-6f);        // 下限
     FGB_CHECK(loaded.log_level.empty());                    // 认不出 → 不覆盖命令行
     FGB_CHECK(loaded.gaze_calib_span.empty());              // 认不出 → 用默认 wide
+    FGB_CHECK(!loaded.gaze_blink_hold);                     // 手改也能关
+    FGB_CHECK_NEAR(loaded.gaze_blink_enter, 0.9f, 1e-6f);   // 越界钳到 0.9
 }
 
 FGB_TEST(settings_missing_file_is_not_an_error) {

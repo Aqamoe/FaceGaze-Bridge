@@ -87,6 +87,9 @@ struct GazeState {
     bool raw_point_valid   = false;
     // 原始值贴到输入范围边界：传感器已经到极限，再往外看也不会有新数据
     bool saturated         = false;
+    // 闭眼期间这一帧的位置是"闭眼前"的保持值（GazeStabilizer）。
+    // 给诊断用：点不动时用户能分清"卡住了"和"在眨眼"。
+    bool blink_hold        = false;
     std::uint32_t profile_version = 0;  // 0 = 未用档案（模块声明或几何投影）
     float residual         = -1.0f;     // 拟合残差（视口宽比例）；< 0 = 未知
     bool geometry_missing  = false;     // 有方向但没有头显几何，投影不出来

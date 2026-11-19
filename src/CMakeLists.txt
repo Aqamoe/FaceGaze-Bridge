@@ -100,6 +100,7 @@ add_library(fgb_process STATIC
     core/process/gaze_estimator.cpp
     core/process/gaze_normalizer.cpp
     core/process/gaze_calibrator.cpp
+    core/process/gaze_stabilizer.cpp
     gaze_calib/plan.cpp
     gaze_calib/collector.cpp
     gaze_calib/fit.cpp)
