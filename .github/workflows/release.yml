@@ -71,6 +71,9 @@ jobs:
               }
             }
           }
+          # GitHub 的 pwsh 包装在脚本末尾 exit $LASTEXITCODE；上一版没有版本头时
+          # git show 失败（128），逻辑上已跳过校验，不能让它把步骤带成失败。
+          exit 0
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
@@ -126,6 +129,8 @@ jobs:
             & .\packaging\pack_sdk.ps1 -SdkVersion $env:SDK_VERSION -DistDir dist -OutputDir dist-installer
             if ($LASTEXITCODE -ne 0) { throw "打包 SDK 失败" }
           }
+          # 同理：下载旧资产的失败退出码不能留给 GitHub 的 pwsh 包装。
+          exit 0
 
       - name: Fetch VRCFT runtime
         shell: pwsh
