@@ -100,11 +100,26 @@ jobs:
           if ($LASTEXITCODE -eq 0 -and $prev) {
             Remove-Item $target -Force -ErrorAction SilentlyContinue
             & gh release download $prev --pattern $name --output $target --clobber 2>$null
-            if ($LASTEXITCODE -ne 0 -or -not (Test-Path $target)) {
-              Remove-Item $target -Force -ErrorAction SilentlyContinue
-              Write-Host "$prev 没有 $name，重新打包"
-            } else {
+            $reusable = $false
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $target)) {
+              # 拆版本前发的同名包没有版本头，内容与当前 sdk/ 对不上，不能复用。
+              Add-Type -AssemblyName System.IO.Compression.FileSystem
+              $expected = "FaceGazeBridge-SDK-$env:SDK_VERSION/fgb_sdk_version.h"
+              try {
+                $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $target).Path)
+                # Compress-Archive 在 Windows PowerShell 里用反斜杠做条目分隔符。
+                $reusable = [bool]($archive.Entries | Where-Object {
+                  ($_.FullName -replace '\\', '/') -eq $expected })
+                $archive.Dispose()
+              } catch {
+                $reusable = $false
+              }
+            }
+            if ($reusable) {
               Write-Host "复用 $prev 的 $name（SDK 版本未变）"
+            } else {
+              Remove-Item $target -Force -ErrorAction SilentlyContinue
+              Write-Host "$prev 没有可复用的 $name，重新打包"
             }
           }
           if (-not (Test-Path $target)) {
