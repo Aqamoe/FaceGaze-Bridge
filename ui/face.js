@@ -195,9 +195,12 @@ layout(location=2) in uint a_region;
 layout(location=3) in uint a_mat;
 layout(location=4) in vec3 a_color;
 uniform mat4 u_mvp;
+uniform float u_mat_spec[${MAX_MATERIALS}];
 out vec3 v_normal;
 out vec3 v_world;
 out vec3 v_color;
+out float v_spec;
+out float v_cavity;
 flat out uint v_region;
 flat out uint v_mat;
 void main() {
@@ -205,8 +208,10 @@ void main() {
   v_mat = a_mat;
   v_normal = a_normal;
   v_world = a_pos;
-  // 基色逐顶点插值：眉毛、唇线在网格上没有几何分界，只有这样才能平滑过渡
+  // 基色与高光/腔体权重逐顶点插值，避免嘴唇、口腔边缘沿三角形产生硬锯齿跳变
   v_color = a_color;
+  v_spec = u_mat_spec[int(a_mat)];
+  v_cavity = (a_mat == 6u) ? 1.0 : 0.0;
   gl_Position = u_mvp * vec4(a_pos, 1.0);
 }`;
 
@@ -215,12 +220,13 @@ precision highp float;
 in vec3 v_normal;
 in vec3 v_world;
 in vec3 v_color;
+in float v_spec;
+in float v_cavity;
 flat in uint v_region;
 flat in uint v_mat;
 uniform uint u_highlight;
 uniform float u_highlight_amt;
 uniform vec3 u_eye;
-uniform float u_mat_spec[${MAX_MATERIALS}];
 out vec4 fragColor;
 
 void main() {
@@ -228,25 +234,46 @@ void main() {
   vec3 view_dir = normalize(u_eye - v_world);
   int mat = int(v_mat);
 
-  vec3 key_dir = normalize(vec3(0.42, 0.58, 0.78));
-  vec3 fill_dir = normalize(vec3(-0.72, 0.12, 0.42));
-  vec3 rim_dir = normalize(vec3(-0.15, -0.32, -0.86));
+  vec3 key_dir = normalize(vec3(0.38, 0.54, 0.75));
+  vec3 fill_dir = normalize(vec3(-0.72, 0.15, 0.45));
+  vec3 rim_dir = normalize(vec3(-0.18, 0.22, -0.92));
 
-  float key = clamp(dot(n, key_dir) * 0.5 + 0.5, 0.0, 1.0);
+  float ndl = dot(n, key_dir);
+  float wrap = clamp((ndl + 0.35) / 1.35, 0.0, 1.0);
+  float lambert = max(ndl, 0.0);
   float fill = clamp(dot(n, fill_dir) * 0.5 + 0.5, 0.0, 1.0);
-  float rim = clamp(dot(n, rim_dir) * 0.5 + 0.5, 0.0, 1.0);
+  float rim = pow(clamp(dot(n, rim_dir), 0.0, 1.0), 1.5);
 
-  vec3 color = v_color;
-  color *= 0.30 + 0.78 * key;
-  color += vec3(0.16, 0.10, 0.09) * fill * 0.40;
-  color += vec3(0.20, 0.12, 0.10) * rim * 0.26;
+  bool is_eye = (mat == 3 || mat == 4 || mat == 5);
+  bool is_oral_tissue = (mat == 7 || mat == 8 || mat == 9);
+  float cav = clamp(v_cavity, 0.0, 1.0);
+  float base_amb = is_oral_tissue ? 0.40 : 0.26;
+  float ambient = mix(base_amb, 0.14, cav);
+  // 补光与轮廓光统一乘在基色上，防止深色口腔、瞳孔、眉毛被直接加亮泛灰
+  float front_bounce = is_oral_tissue ? clamp(dot(n, view_dir) * 0.5 + 0.5, 0.0, 1.0) * 0.36 : 0.0;
+  float base_diff = is_oral_tissue ? clamp((ndl + 0.65) / 1.65, 0.0, 1.0) * 0.48 + front_bounce : wrap * 0.76;
+  float diff_term = mix(base_diff, lambert * 0.70, cav);
 
-  // 很轻的次表面红晕 + 一点高光：扫描头的皮肤不至于像塑料，眼睛也有湿润感
-  float fres = pow(1.0 - max(dot(n, view_dir), 0.0), 3.0);
-  color += vec3(0.20, 0.05, 0.03) * fres * 0.26;
+  vec3 light = vec3(ambient) + vec3(1.00, 0.97, 0.94) * diff_term;
+  light += vec3(0.18, 0.16, 0.17) * fill * mix(is_oral_tissue ? 0.35 : 0.45, 0.16, cav);
+  if (!is_oral_tissue) {
+    light += vec3(0.24, 0.20, 0.19) * rim * 0.30 * (1.0 - cav);
+  }
+
+  vec3 color = v_color * light;
+
+  // 仅皮肤/唇部掠射角叠加轻量表皮次表面红晕，口内腔与眼球保持干净
+  float fres = pow(1.0 - max(dot(n, view_dir), 0.0), 3.2);
+  if (!is_oral_tissue && !is_eye) {
+    color += v_color * vec3(0.32, 0.08, 0.05) * fres * (0.28 * (0.4 + 0.6 * wrap)) * (1.0 - cav);
+  }
+
   vec3 half_dir = normalize(key_dir + view_dir);
-  float spec = pow(max(dot(n, half_dir), 0.0), 42.0);
-  color += vec3(1.0, 0.97, 0.94) * spec * u_mat_spec[mat];
+  float shininess = is_eye ? 110.0 : (mat == 7 ? 48.0 : mix(16.0, 28.0, clamp((v_spec - 0.10) / 0.20, 0.0, 1.0)));
+  float base_spec = is_eye ? (mat == 5 ? 0.85 : 0.65) : (is_oral_tissue ? (mat == 7 ? 0.26 : 0.12) : v_spec * 0.45);
+  float spec_strength = mix(base_spec, 0.04, cav);
+  float spec = pow(max(dot(n, half_dir), 0.0), shininess);
+  color += vec3(1.0, 0.98, 0.95) * spec * spec_strength;
 
   if ((v_region & u_highlight) != 0u) {
     color = mix(color, vec3(0.20, 0.56, 0.96), 0.42 * u_highlight_amt);
