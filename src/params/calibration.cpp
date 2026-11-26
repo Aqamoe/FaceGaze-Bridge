@@ -26,6 +26,13 @@ namespace {
 
 constexpr char kTag[] = "calib";
 
+// Windows 上 path::string() 按 ANSI 解释：文件名里有中文时在非中文系统会抛
+// filesystem_error。凡是"把路径拼进日志/错误文案"都走这里（ADR-0027 踩过）。
+std::string path_to_utf8(const std::filesystem::path& path) {
+    const std::u8string text = path.u8string();
+    return std::string{reinterpret_cast<const char*>(text.data()), text.size()};
+}
+
 // 曲线 id 的字符串形式：档案要能手改，"custom:1" 比数字 9 好读得多。
 // 认不出来的一律退回线性——手改档案写错一个字母，不该让整个校准失效。
 constexpr const char* kCurveNames[] = {"linear", "ease_in", "ease_out", "smooth", "step"};
@@ -577,7 +584,7 @@ bool save_profile_atomic(const std::filesystem::path& target, const CalibrationP
     if (target.has_parent_path()) {
         fs::create_directories(target.parent_path(), ec); // 目录不在就建，不能因为目录缺失保存失败
         if (ec) {
-            error = "创建目录失败：" + target.parent_path().string();
+            error = "创建目录失败：" + path_to_utf8(target.parent_path());
             return false;
         }
     }
@@ -585,7 +592,7 @@ bool save_profile_atomic(const std::filesystem::path& target, const CalibrationP
     fs::path temp = target;
     temp += ".tmp";
     if (!save_profile(temp, profile, name)) {
-        error = "写入临时档案失败：" + temp.string();
+        error = "写入临时档案失败：" + path_to_utf8(temp);
         return false;
     }
 
@@ -600,13 +607,13 @@ bool save_profile_atomic(const std::filesystem::path& target, const CalibrationP
 #ifdef _WIN32
     if (::MoveFileExW(temp.wstring().c_str(), target.wstring().c_str(),
                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) == 0) {
-        error = "替换档案失败（目标文件是否只读/被占用）：" + target.string();
+        error = "替换档案失败（目标文件是否只读/被占用）：" + path_to_utf8(target);
         return false;
     }
 #else
     fs::rename(temp, target, ec);
     if (ec) {
-        error = "替换档案失败：" + target.string();
+        error = "替换档案失败：" + path_to_utf8(target);
         return false;
     }
 #endif
@@ -614,11 +621,6 @@ bool save_profile_atomic(const std::filesystem::path& target, const CalibrationP
 }
 
 namespace {
-
-std::string path_to_utf8(const std::filesystem::path& path) {
-    const std::u8string text = path.u8string();
-    return std::string{reinterpret_cast<const char*>(text.data()), text.size()};
-}
 
 // 文件名清洗：Windows 不允许的字符换成下划线，末尾的点和空格一并去掉
 // （"abc." 在资源管理器里会变成 "abc"，展示名不能跟着文件系统改）。

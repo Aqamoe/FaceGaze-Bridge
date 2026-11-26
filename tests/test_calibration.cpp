@@ -358,7 +358,11 @@ FGB_TEST(calibration_archive_roundtrip_lists_and_overwrites) {
         std::string loaded_name;
         FGB_CHECK(load_calibration_archive(archives[0].path, loaded, loaded_name, error));
         FGB_CHECK_NEAR(loaded.shapes[index_of(Shape::JawOpen)].hi, 0.70f, 1e-3f);
-        FGB_CHECK(std::filesystem::exists(archives[0].path.string() + ".bak"));
+        // 不能用 path::string()：CI runner 的 ANSI 代码页表示不了中文文件名，会抛
+        // filesystem_error（ADR-0027）。路径拼接一律留在 path 类型上。
+        std::filesystem::path backup = archives[0].path;
+        backup += ".bak";
+        FGB_CHECK(std::filesystem::exists(backup));
     }
 
     FGB_CHECK(delete_calibration_archive(dir, name, error));
