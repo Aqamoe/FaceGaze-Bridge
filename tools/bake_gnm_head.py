@@ -74,6 +74,11 @@ class Gnm:
         self.names = [str(n) for n in data["expression_names"]]
         groups = data["vertex_groups"].astype(np.float64)
         self.G = {str(n): groups[i] for i, n in enumerate(data["vertex_group_names"])}
+        self.SW = data["skinning_weights"].astype(np.float64)
+        self.joints = {
+            str(n): data["template_joint_positions"][i].astype(np.float64)
+            for i, n in enumerate(data["joint_names"])
+        }
         # 仅剔除眼球外层角膜壳：真实渲染里角膜是透明的，不透明着色会盖住虹膜；
         # 牙齿/牙龈/舌头保留下来，配合刚性下颌随动与牙弓安全余量避免穿模。
         drop = self.G["eye_exteriors"] > 0.5
@@ -86,6 +91,7 @@ class Gnm:
             self.P = self.P[keep]
             self.E = self.E[:, keep, :]
             self.G = {name: values[keep] for name, values in self.G.items()}
+            self.SW = self.SW[:, keep]
         self.blocks = {
             "lower": [i for i, n in enumerate(self.names) if n.startswith("lower_face")],
             "left_eye": [i for i, n in enumerate(self.names) if n.startswith("left_eye")],
@@ -215,6 +221,15 @@ class Fields:
         self.ut = G["upper_teeth_and_gums"] > 0.5
         self.lt = G["lower_teeth_and_gums"] > 0.5
         self.tng = G["tongue"] > 0.5
+        # GNM 的 tongue 组同时包含可活动舌体（叶片+舌尖）与固定舌下口底粘膜层；
+        # 直接按 GNM 舌体表情基位移幅值分离两层，避免张嘴/伸舌时舌底粘膜形成“双层舌”。
+        E_t = g.E[g.blocks["tongue"]]
+        t_mag = np.linalg.norm(E_t, axis=2).max(axis=0)
+        mob = np.zeros(len(P), dtype=np.float64)
+        mob[self.tng] = smoothstep(0.0004, 0.0022, t_mag[self.tng])
+        mob = g.smooth(mob, 1, mix=0.35)
+        mob[~self.tng] = 0.0
+        self.tng_mob = np.clip(mob, 0.0, 1.0)
         self.inner = np.clip(G["mouth_sock"], 0, 1)
         self.forehead = np.clip(G["forehead_region"], 0, 1)
         self.cheek = {"L": np.clip(G["left_cheek_region"], 0, 1),
@@ -296,7 +311,7 @@ def fit(g, target, weights, blocks, lam=4e-4, max_scale=1.6, min_scale=0.65, lam
 
 
 def build_morphs(g, a, f):
-    """生成并投影 32 个 morph 的稀疏位移场（米，GNM 原始坐标）。"""
+    """生成并投影 62 个 morph 的稀疏位移场（米，GNM 原始坐标）。"""
     x, y, z = f.x, f.y, f.z
     n = len(g.P)
     hinge = np.array([0.0, a.ear_y + 0.008, 0.012])
@@ -328,12 +343,13 @@ def build_morphs(g, a, f):
     d_lt[:, 2] += jaw_slide * 0.85
     d_tng = rot_axis(g.P, 0.16, hinge, 0) - g.P
     d_tng[:, 2] += jaw_slide * 0.65
+    mob_t = f.tng_mob[f.tng, None]
     fitted[f.lt] = d_lt[f.lt]
-    fitted[f.tng] = d_tng[f.tng]
+    fitted[f.tng] = mob_t * d_tng[f.tng] + (1.0 - mob_t) * d_lt[f.tng]
     fitted[f.ut] = 0.0
     deltas["jawOpen"] = fitted
 
-    # 2. 下颌左右/前伸
+    # 2. 下颌左右/前伸/后缩
     for name, s in (("jawLeft", 1.0), ("jawRight", -1.0)):
         d = np.stack([s * 0.0065 * jaw_w, -0.0005 * jaw_w, np.zeros_like(x)], axis=1)
         w = base_w.copy()
@@ -341,29 +357,36 @@ def build_morphs(g, a, f):
         w[a.lip_up_mask | (g.G["nose_region"] > 0.5)] = 2.5
         w[~a.skin_ext_mask] = 0.0
         fitted = fit(g, d, w, "lower", lam=2e-4, max_scale=1.3)
-        fitted[f.lt] = np.array([s * 0.0052, -0.0004, 0.0])
-        fitted[f.tng] = np.array([s * 0.0040, -0.0003, 0.0])
+        d_lt_lat = np.array([s * 0.0052, -0.0004, 0.0])
+        d_tng_lat = np.array([s * 0.0040, -0.0003, 0.0])
+        fitted[f.lt] = d_lt_lat
+        fitted[f.tng] = mob_t * d_tng_lat + (1.0 - mob_t) * d_lt_lat
         fitted[f.ut] = 0.0
         deltas[name] = fitted
 
-    d = np.stack([np.zeros_like(x), np.zeros_like(x), 0.0055 * jaw_w], axis=1)
-    w = base_w.copy()
-    w[a.lip_lo_mask | a.chin_mask] = 2.0
-    w[a.lip_up_mask | (g.G["nose_region"] > 0.5)] = 2.5
-    w[~a.skin_ext_mask] = 0.0
-    fitted = fit(g, d, w, "lower", lam=2e-4, max_scale=1.3)
-    fitted[f.lt] = np.array([0.0, 0.0, 0.0045])
-    fitted[f.tng] = np.array([0.0, 0.0, 0.0035])
-    fitted[f.ut] = 0.0
-    deltas["jawForward"] = fitted
+    for name, shift_z, lt_z, tng_z in (
+        ("jawForward", 0.0055, 0.0045, 0.0035),
+        ("jawBackward", -0.0045, -0.0038, -0.0028),
+    ):
+        d = np.stack([np.zeros_like(x), np.zeros_like(x), shift_z * jaw_w], axis=1)
+        w = base_w.copy()
+        w[a.lip_lo_mask | a.chin_mask] = 2.0
+        w[a.lip_up_mask | (g.G["nose_region"] > 0.5)] = 2.5
+        w[~a.skin_ext_mask] = 0.0
+        fitted = fit(g, d, w, "lower", lam=2e-4, max_scale=1.3)
+        d_lt_z = np.array([0.0, 0.0, lt_z])
+        d_tng_z = np.array([0.0, 0.0, tng_z])
+        fitted[f.lt] = d_lt_z
+        fitted[f.tng] = mob_t * d_tng_z + (1.0 - mob_t) * d_lt_z
+        fitted[f.ut] = 0.0
+        deltas[name] = fitted
 
-    # 3. 微笑与撇嘴：使用尺度自适应正则（lam_diag）避免低频整体抬升基盖掉真实嘴角弧度，
-    # 并让牵引场平滑延伸到嘴角外侧颊面，消除嘴角竖沟与中线露缝。
+    # 3. 微笑、撇嘴与横向嘴角拉伸
     for name, s in (("smileL", 1.0), ("smileR", -1.0),
-                    ("frownL", 1.0), ("frownR", -1.0)):
-        is_smile = name.startswith("smile")
+                    ("frownL", 1.0), ("frownR", -1.0),
+                    ("mouthStretchL", 1.0), ("mouthStretchR", -1.0)):
         ramp = smoothstep(0.004, a.corner_x, s * x)
-        if is_smile:
+        if name.startswith("smile"):
             corner_gauss = np.exp(-((x - s * (a.corner_x + 0.003)) / 0.020) ** 2 - ((y - (a.corner_y + 0.002)) / 0.016) ** 2)
             smile_field = g.smooth(corner_gauss * smoothstep(14.0, 2.0, a.lip_ring.astype(np.float64)), 2)
             dx = s * 0.0092 * smile_field * (0.25 + 0.75 * ramp)
@@ -386,7 +409,7 @@ def build_morphs(g, a, f):
             w[g.G["nose_region"] > 0.5] = 2.0
             w[~a.skin_ext_mask] = 0.0
             fitted = fit(g, d, w, "lower", lam=4.5e-5, lam_diag=2e-3, max_scale=1.35)
-        else:
+        elif name.startswith("frown"):
             near_corner = np.exp(-((x - s * a.corner_x) / 0.015) ** 2 - ((y - a.corner_y) / 0.012) ** 2)
             lip_field = g.smooth(near_corner * smoothstep(10.0, 1.0, a.lip_ring.astype(np.float64)), 2)
             dx = -s * 0.0014 * lip_field * ramp
@@ -405,10 +428,24 @@ def build_morphs(g, a, f):
             w[g.G["nose_region"] > 0.5] = 1.8
             w[~a.skin_ext_mask] = 0.0
             fitted = fit(g, d, w, "lower", lam=5.0e-5, lam_diag=2e-3, max_scale=1.35)
+        else:
+            near_corner = np.exp(-((x - s * (a.corner_x + 0.004)) / 0.022) ** 2 - ((y - (a.corner_y - 0.002)) / 0.015) ** 2)
+            stretch_field = g.smooth(near_corner * smoothstep(14.0, 2.0, a.lip_ring.astype(np.float64)), 2)
+            dx = s * 0.0095 * stretch_field * (0.30 + 0.70 * ramp)
+            dy = -0.0024 * stretch_field * ramp
+            dz = -0.0038 * stretch_field * ramp
+            d = np.stack([dx, dy, dz], axis=1)
+            w = base_w.copy()
+            w[a.lip_mask & (x * s >= 0.004)] = 3.0
+            w[(a.lip_ring <= 11) & (x * s >= 0.010) & a.skin_ext_mask] = 2.2
+            w[(x * s < -0.008) & a.skin_ext_mask] = 1.8
+            w[g.G["nose_region"] > 0.5] = 2.0
+            w[~a.skin_ext_mask] = 0.0
+            fitted = fit(g, d, w, "lower", lam=5.0e-5, lam_diag=2e-3, max_scale=1.35)
         fitted[f.ut | f.lt | f.tng] = 0.0
         deltas[name] = fitted
 
-    # 4. 嘟嘴与抿唇
+    # 4. 嘟嘴、抿唇、外翻漏斗(O 形)与内吸卷唇
     lip_band = smoothstep(6.5, 2.0, a.lip_ring.astype(np.float64)) * f.skin_ext
     cx = gauss(x, 0.022)
     inner_seal = np.where(a.lip_ring <= 2, -0.0014 * f.lip_up + 0.0014 * f.lip_lo, 0.0)
@@ -431,8 +468,8 @@ def build_morphs(g, a, f):
 
     d = np.stack([
         np.zeros_like(x),
-        (-0.0018 * f.lip_up + 0.0020 * f.lip_lo) * smoothstep(6.0, 2.0, a.lip_ring.astype(np.float64)),
-        -0.0015 * f.lip_all,
+        (-0.0020 * f.lip_up + 0.0022 * f.lip_lo) * smoothstep(6.0, 2.0, a.lip_ring.astype(np.float64)),
+        -0.0016 * f.lip_all,
     ], axis=1)
     w = base_w.copy()
     w[a.lip_mask] = 3.0
@@ -442,7 +479,67 @@ def build_morphs(g, a, f):
     fitted[f.ut | f.lt | f.tng] = 0.0
     deltas["lipPress"] = fitted
 
-    # 5. 单侧提上唇与降下唇（暴露真牙，左右分离）
+    # 外翻漏斗 O 形（与闭拢 pucker 相反，中段上下展开并前突外翻；靠 PCA 自然带动 mouth_sock，避免内衬穿透下唇）
+    cx_f = gauss(x, 0.026)
+    d_fu = np.stack([
+        -x * 0.22 * lip_band * f.lip_up,
+        0.0050 * smoothstep(6.0, 1.5, a.lip_ring.astype(np.float64)) * f.lip_up * cx_f,
+        0.0085 * lip_band * f.lip_up * cx_f,
+    ], axis=1)
+    w = base_w.copy()
+    w[a.lip_up_mask] = 3.8
+    w[a.lip_lo_mask] = 2.0
+    w[(a.lip_ring <= 6) & a.skin_ext_mask] = 1.6
+    w[~a.skin_ext_mask] = 0.0
+    fitted = fit(g, d_fu, w, "lower", lam=5.0e-5, lam_diag=2e-3, max_scale=1.45)
+    fitted[f.ut | f.lt | f.tng] = 0.0
+    deltas["lipFunnelUpper"] = fitted
+
+    d_fl = np.stack([
+        -x * 0.22 * lip_band * f.lip_lo,
+        -0.0052 * smoothstep(6.0, 1.5, a.lip_ring.astype(np.float64)) * f.lip_lo * cx_f,
+        0.0088 * lip_band * f.lip_lo * cx_f,
+    ], axis=1)
+    w = base_w.copy()
+    w[a.lip_lo_mask] = 3.8
+    w[a.lip_up_mask] = 2.0
+    w[(a.lip_ring <= 6) & a.skin_ext_mask] = 1.6
+    w[~a.skin_ext_mask] = 0.0
+    fitted = fit(g, d_fl, w, "lower", lam=5.0e-5, lam_diag=2e-3, max_scale=1.45)
+    fitted[f.ut | f.lt | f.tng] = 0.0
+    deltas["lipFunnelLower"] = fitted
+
+    # 内吸卷唇：红唇外缘向口缝合拢，内缘向口腔内后卷并包向牙齿
+    suck_band = smoothstep(5.5, 1.0, a.lip_ring.astype(np.float64)) * gauss(x, 0.026)
+    roll_up = np.where(a.lip_ring <= 2, 0.0018, -0.0028) * f.lip_up * suck_band
+    d_su = np.stack([
+        np.zeros_like(x),
+        roll_up,
+        -0.0082 * f.lip_up * suck_band,
+    ], axis=1)
+    w = base_w.copy()
+    w[a.lip_up_mask] = 3.8
+    w[a.lip_lo_mask] = 2.4
+    w[~a.skin_ext_mask] = 0.0
+    fitted = fit(g, d_su, w, "lower", lam=4.5e-5, lam_diag=2e-3, max_scale=1.4)
+    fitted[f.ut | f.lt | f.tng] = 0.0
+    deltas["lipSuckUpper"] = fitted
+
+    roll_lo = np.where(a.lip_ring <= 2, -0.0018, 0.0030) * f.lip_lo * suck_band
+    d_sl = np.stack([
+        np.zeros_like(x),
+        roll_lo,
+        -0.0085 * f.lip_lo * suck_band,
+    ], axis=1)
+    w = base_w.copy()
+    w[a.lip_lo_mask] = 3.8
+    w[a.lip_up_mask] = 2.4
+    w[~a.skin_ext_mask] = 0.0
+    fitted = fit(g, d_sl, w, "lower", lam=4.5e-5, lam_diag=2e-3, max_scale=1.4)
+    fitted[f.ut | f.lt | f.tng] = 0.0
+    deltas["lipSuckLower"] = fitted
+
+    # 5. 单侧提上唇/降下唇、下唇中部上顶（MouthRaiserLower）与唇左右平移
     for name, s in (("upperLipUpL", 1.0), ("upperLipUpR", -1.0)):
         arch = gauss(x - s * 0.011, 0.011)
         uw = g.smooth(f.lip_up * f.side(s, 0.006) * (0.45 + 0.55 * arch), 2)
@@ -469,6 +566,40 @@ def build_morphs(g, a, f):
         fitted[f.ut | f.lt | f.tng] = 0.0
         deltas[name] = fitted
 
+    # 下唇中部上顶（颏肌收缩推下唇与下巴软组织上顶）
+    chin_push = g.smooth(gauss(x, 0.018) * (f.lip_lo + 0.55 * (G_chin := (g.G["chin_region"] > 0.5).astype(np.float64))), 2)
+    d = np.stack([np.zeros_like(x), 0.0052 * chin_push, 0.0020 * chin_push], axis=1)
+    w = base_w.copy()
+    w[a.lip_lo_mask | a.chin_mask] = 3.2
+    w[a.lip_up_mask] = 2.6
+    w[~a.skin_ext_mask] = 0.0
+    fitted = fit(g, d, w, "lower", lam=1.5e-4, max_scale=1.4)
+    fitted[f.ut | f.lt | f.tng] = 0.0
+    deltas["lowerLipUp"] = fitted
+
+    # 上/下唇左右平移（MouthUpper/LowerLeft/Right，单侧独立平移）
+    for name, s in (("mouthUpperShiftL", 1.0), ("mouthUpperShiftR", -1.0)):
+        uw = g.smooth(f.lip_up * gauss(x, 0.025), 2)
+        d = np.stack([s * 0.0070 * uw, np.zeros_like(x), np.zeros_like(x)], axis=1)
+        w = base_w.copy()
+        w[a.lip_up_mask] = 3.5
+        w[a.lip_lo_mask] = 3.0
+        w[~a.skin_ext_mask] = 0.0
+        fitted = fit(g, d, w, "lower", lam=1.2e-4, max_scale=1.4)
+        fitted[f.ut | f.lt | f.tng] = 0.0
+        deltas[name] = fitted
+
+    for name, s in (("mouthLowerShiftL", 1.0), ("mouthLowerShiftR", -1.0)):
+        lw = g.smooth(f.lip_lo * gauss(x, 0.025), 2)
+        d = np.stack([s * 0.0070 * lw, np.zeros_like(x), np.zeros_like(x)], axis=1)
+        w = base_w.copy()
+        w[a.lip_lo_mask] = 3.5
+        w[a.lip_up_mask] = 3.0
+        w[~a.skin_ext_mask] = 0.0
+        fitted = fit(g, d, w, "lower", lam=1.2e-4, max_scale=1.4)
+        fitted[f.ut | f.lt | f.tng] = 0.0
+        deltas[name] = fitted
+
     # 6. 眉眼脸颊鼻翼
     for side, s in (("L", 1.0), ("R", -1.0)):
         block = "left_eye" if s > 0 else "right_eye"
@@ -491,6 +622,9 @@ def build_morphs(g, a, f):
         deltas["browDown" + side] = fit(
             g, np.stack([-s * 0.0012 * whole, -0.0055 * whole, 0.0012 * whole], axis=1),
             ew, block, lam=1.5e-4, max_scale=1.45)
+        deltas["browPinch" + side] = fit(
+            g, np.stack([-s * 0.0052 * inner, -0.0022 * inner, 0.0010 * inner], axis=1),
+            ew, block, lam=1.2e-4, max_scale=1.45)
 
         c = a.eye[side]
         near_eye = (x * s > 0.005) & (a.eye_ring <= 7) & a.skin_ext_mask
@@ -549,13 +683,78 @@ def build_morphs(g, a, f):
         deltas["noseSneer" + side] = fit(
             g, np.stack([s * 0.0016 * nostril, 0.0048 * nostril, 0.0012 * nostril], axis=1),
             nw, "lower", lam=2e-4, max_scale=1.45)
+        deltas["nasalConstrict" + side] = fit(
+            g, np.stack([-s * 0.0024 * nostril, -0.0016 * nostril, -0.0006 * nostril], axis=1),
+            nw, "lower", lam=1.5e-4, max_scale=1.45)
 
-    # 上牙与眼球保持刚性静止，软组织表情不连带下牙/舌头
+    # 7. 舌头 12 个形态：仅作用于可活动舌体（f.tng_mob），固定舌下口底粘膜层保持原位不动
+    tm = f.tng
+    tx = x[tm]
+    ty = y[tm]
+    tz = z[tm]
+    tmob = f.tng_mob[tm]
+    # 从舌根(0.064)向舌尖(0.114)平滑过渡
+    sz = smoothstep(0.064, 0.114, tz)
+    tip = smoothstep(0.086, 0.116, tz)
+    ty_spine = 0.228 + 0.004 * smoothstep(0.108, 0.068, tz)
+    sy = ty - ty_spine
+
+    def set_tongue(m_name, dx_t=0.0, dy_t=0.0, dz_t=0.0):
+        dt = np.zeros((n, 3), dtype=np.float64)
+        dt[tm, 0] = dx_t * tmob
+        dt[tm, 1] = dy_t * tmob
+        dt[tm, 2] = dz_t * tmob
+        deltas[m_name] = dt
+
+    # 伸舌：仅活动舌叶前伸 33mm，微抬离下切牙后水平向前伸出
+    set_tongue(
+        "tongueOut",
+        dx_t=-0.20 * tx * smoothstep(0.55, 1.0, sz),
+        dy_t=0.0022 * sz - 0.0020 * smoothstep(0.82, 1.0, sz),
+        dz_t=0.033 * sz,
+    )
+    set_tongue("tongueUp", dy_t=0.0115 * sz, dz_t=-0.0015 * sz)
+    set_tongue("tongueDown", dy_t=-0.0075 * sz, dz_t=-0.0010 * sz)
+    set_tongue("tongueLeft", dx_t=0.0130 * sz, dy_t=0.0020 * sz, dz_t=-0.0022 * (sz * sz))
+    set_tongue("tongueRight", dx_t=-0.0130 * sz, dy_t=0.0020 * sz, dz_t=-0.0022 * (sz * sz))
+
+    # 卷筒 U 型：两侧向上向内卷，中线略凹（不压穿下唇）
+    roll_edge = smoothstep(0.004, 0.018, np.abs(tx)) * smoothstep(0.062, 0.095, tz)
+    set_tongue(
+        "tongueRoll",
+        dx_t=-0.40 * tx * roll_edge,
+        dy_t=0.0088 * roll_edge + 0.0012 * (1.0 - roll_edge) * sz,
+    )
+    # 舌面下弯 / 舌尖上勾
+    set_tongue("tongueBendDown", dy_t=-0.0095 * tip + 0.0022 * sz * (1.0 - tip), dz_t=-0.0025 * tip)
+    set_tongue("tongueCurlUp", dy_t=0.0135 * tip, dz_t=-0.0048 * tip)
+    # 舌头压窄挤厚（Squish）与摊平放宽（Flat）
+    squish_w = smoothstep(0.056, 0.095, tz)
+    set_tongue("tongueSquish", dx_t=-0.32 * tx * squish_w, dy_t=0.35 * sy * squish_w)
+    set_tongue("tongueFlat", dx_t=0.22 * tx * squish_w, dy_t=-0.45 * sy * squish_w - 0.0015 * sz)
+    # 舌体沿长轴左右扭转
+    for name, theta in (("tongueTwistRight", 0.52), ("tongueTwistLeft", -0.52)):
+        ang = theta * sz
+        c_ang, s_ang = np.cos(ang), np.sin(ang)
+        rx = tx * c_ang - sy * s_ang
+        ry = tx * s_ang + sy * c_ang
+        set_tongue(name, dx_t=rx - tx, dy_t=(ry - sy) + 0.0025 * sz)
+
+    # 8. 颈部左右侧屈：按 GNM head 蒙皮权重绕颈椎枢轴旋转皮肤，内部牙齿/舌头/眼球刚性跟随
+    neck_pivot = g.joints["neck"]
+    neck_w = g.smooth(g.SW[1], 2)
+    rigid_head = f.ut | f.lt | f.tng | (g.G["eye_interiors"] > 0.5)
+    neck_w[rigid_head] = 1.0
+    for name, angle in (("neckFlexL", -0.15), ("neckFlexR", 0.15)):
+        deltas[name] = rot_axis(g.P, angle * neck_w, neck_pivot, 2) - g.P
+
+    # 上牙与眼球保持刚性静止，软组织表情不连带下牙/舌头（颈部侧屈和舌头 morph 除外）
     static = (g.G["upper_teeth_and_gums"] > 0.5) | (g.G["eye_interiors"] > 0.5)
     for name in deltas:
+        if name.startswith("neckFlex"):
+            continue
         deltas[name][static] = 0.0
-    for name in deltas:
-        if not name.startswith("jaw"):
+        if not name.startswith("jaw") and not name.startswith("tongue"):
             deltas[name][f.lt | f.tng] = 0.0
 
     return deltas
@@ -630,6 +829,7 @@ def build_materials_and_colors(g, a, f, base_P):
     mat[G["gums"] > 0.5] = C.MATERIAL_ID["gums"]
     mat[G["teeth"] > 0.5] = C.MATERIAL_ID["teeth"]
     mat[G["tongue"] > 0.5] = C.MATERIAL_ID["tongue"]
+    mat[(G["tongue"] > 0.5) & (f.tng_mob < 0.35)] = C.MATERIAL_ID["mouth"]
     mat[G["scleras"] > 0.5] = C.MATERIAL_ID["sclera"]
     mat[G["irises"] > 0.5] = C.MATERIAL_ID["iris"]
     mat[G["pupils"] > 0.5] = C.MATERIAL_ID["pupil"]
@@ -689,13 +889,17 @@ def build_materials_and_colors(g, a, f, base_P):
 
     gums_ao = 0.58 + 0.42 * smoothstep(0.095, 0.124, z)
     teeth_ao = 0.62 + 0.38 * smoothstep(0.095, 0.125, z)
-    tongue_ao = 0.45 + 0.55 * smoothstep(0.085, 0.118, z)
+    tongue_ao = (0.45 + 0.55 * smoothstep(0.085, 0.118, z)) * (0.28 + 0.72 * f.tng_mob)
+    tongue_col = (
+        f.tng_mob[:, None] * np.array([0.66, 0.37, 0.39])
+        + (1.0 - f.tng_mob[:, None]) * np.array([0.22, 0.085, 0.095])
+    )
     gw = np.clip(G["gums"] * 1.6, 0, 1)[:, None]
     tw = np.clip(G["teeth"] * 1.6, 0, 1)[:, None]
     tnw = np.clip(G["tongue"] * 1.6, 0, 1)[:, None]
     col[:] = col * (1.0 - gw) + (np.array([0.70, 0.42, 0.43]) * gums_ao[:, None]) * gw
     col[:] = col * (1.0 - tw) + (np.array([0.90, 0.88, 0.83]) * teeth_ao[:, None]) * tw
-    col[:] = col * (1.0 - tnw) + (np.array([0.66, 0.37, 0.39]) * tongue_ao[:, None]) * tnw
+    col[:] = col * (1.0 - tnw) + (tongue_col * tongue_ao[:, None]) * tnw
 
     mix([0.745, 0.510, 0.485], lip_up_w * 0.90)
     mix([0.805, 0.555, 0.525], lip_lo_w * 0.90)
@@ -808,6 +1012,10 @@ def main():
         base_P[mask, 2] = arch_center_z + (base_P[mask, 2] - arch_center_z) * 0.958
     base_P[f.tng, 0] *= 0.95
     base_P[f.tng, 2] -= 0.0015
+    # 将不活动的舌下口底粘膜层略微沉入下齿龈后内侧，避免张嘴俯看或仰看时像“第二层舌头”
+    tng_floor = f.tng.astype(np.float64) * (1.0 - f.tng_mob) * smoothstep(0.072, 0.102, g.P[:, 2])
+    base_P[:, 1] -= 0.0032 * tng_floor
+    base_P[:, 2] -= 0.0015 * tng_floor
     sock_r12 = a.sock_mask & (a.sock_ring <= 2)
     base_P[sock_r12, 2] -= 0.0007
     deep_sock = a.sock_mask & (a.sock_ring >= 3) & (base_P[:, 2] < 0.115)
@@ -830,7 +1038,7 @@ def main():
         C.MORPH_NAMES, [deltas[name] for name in C.MORPH_NAMES])
     C.write_face_map(
         out_dir / "face_map.json", all_shapes, args.model,
-        "Google GNM Head（Apache-2.0）烘焙的中性头 + 32 个 morph；区域名与 morph 名是稳定契约",
+        f"Google GNM Head（Apache-2.0）烘焙的中性头 + {len(C.MORPH_NAMES)} 个 morph；区域名与 morph 名是稳定契约",
         "tools/bake_gnm_head.py")
 
     at_least = min(float(np.abs(d).max()) for d in deltas.values())

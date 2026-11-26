@@ -329,6 +329,13 @@ void main() {
       this.normals = new Float32Array(model.normals);
       this.normal_dirty = true;
       this.normal_frame = -100;
+      this.eye_open = null;
+      this.eye_gaze_target = { Lx: 0, Ly: 0, Rx: 0, Ry: 0 };
+      this.eye_gaze_shown = { Lx: 0, Ly: 0, Rx: 0, Ry: 0 };
+      this.pupil_target = { L: 0, R: 0 };
+      this.pupil_shown = { L: 0, R: 0 };
+      this.eye_dirty = false;
+      this.build_eye_rig();
 
       this.yaw = CAMERA.yaw;
       this.pitch = CAMERA.pitch;
@@ -413,6 +420,83 @@ void main() {
       this.resize();
     }
 
+    build_eye_rig() {
+      const reg = this.model.regions;
+      const pos = this.model.positions;
+      const count = this.model.vertex_count;
+      const sides = [
+        { key: "L", sclera: "eyeWhiteL", iris: "irisL", pupil: "pupilL" },
+        { key: "R", sclera: "eyeWhiteR", iris: "irisR", pupil: "pupilR" },
+      ];
+      this.eye_rig = {};
+      for (const s of sides) {
+        const all_mask = mask_of([s.sclera, s.iris, s.pupil], this.regions);
+        const iris_mask = mask_of([s.iris], this.regions);
+        const pupil_mask = mask_of([s.pupil], this.regions);
+        const verts = [];
+        let min_x = Infinity, max_x = -Infinity;
+        let min_y = Infinity, max_y = -Infinity;
+        let max_z = -Infinity;
+        let idx_min_x = -1, idx_max_x = -1, idx_min_y = -1, idx_max_y = -1;
+        for (let v = 0; v < count; v += 1) {
+          if ((reg[v] & all_mask) === 0) {
+            continue;
+          }
+          verts.push(v);
+          const x = pos[v * 3];
+          const y = pos[v * 3 + 1];
+          const z = pos[v * 3 + 2];
+          if (x < min_x) { min_x = x; idx_min_x = v; }
+          if (x > max_x) { max_x = x; idx_max_x = v; }
+          if (y < min_y) { min_y = y; idx_min_y = v; }
+          if (y > max_y) { max_y = y; idx_max_y = v; }
+          if (z > max_z) { max_z = z; }
+        }
+        if (verts.length === 0) {
+          continue;
+        }
+        const cx = 0.5 * (min_x + max_x);
+        const cy = 0.5 * (min_y + max_y);
+        const rx = 0.5 * (max_x - min_x);
+        // 匹配 GNM 眼球球心关节偏移（前极角膜略微扁平，z 半径约为 x 半径的 0.9165）
+        const cz = max_z - rx * 0.9165;
+        let r_pupil = 0;
+        let r_iris = 0;
+        const opt_verts = [];
+        for (const v of verts) {
+          const m = reg[v];
+          if ((m & (iris_mask | pupil_mask)) === 0) {
+            continue;
+          }
+          const r = Math.hypot(pos[v * 3] - cx, pos[v * 3 + 1] - cy);
+          if ((m & pupil_mask) !== 0 && r > r_pupil) { r_pupil = r; }
+          if ((m & iris_mask) !== 0 && r > r_iris) { r_iris = r; }
+          opt_verts.push(v);
+        }
+        const pupil_items = [];
+        const span = Math.max(1e-5, r_iris - r_pupil);
+        for (const v of opt_verts) {
+          const r = Math.hypot(pos[v * 3] - cx, pos[v * 3 + 1] - cy);
+          let w = 0;
+          if (r <= r_pupil * 1.02) {
+            w = 1;
+          } else if (r < r_iris * 0.96) {
+            const t = Math.max(0, Math.min(1, 1 - (r - r_pupil) / span));
+            w = t * t * (3 - 2 * t);
+          }
+          if (w > 0) {
+            pupil_items.push({ v, w });
+          }
+        }
+        this.eye_rig[s.key] = {
+          verts: new Uint32Array(verts),
+          pupil: pupil_items,
+          center: [cx, cy, cz],
+          refs: [idx_min_x, idx_max_x, idx_min_y, idx_max_y],
+        };
+      }
+    }
+
     build_material_table(face_map) {
       const names = face_map.materials || [];
       const specs = new Float32Array(MAX_MATERIALS);
@@ -442,14 +526,23 @@ void main() {
           this.target[entry.index] += value * entry.weight;
         }
       }
-      // 眼追的睁眼度直接驱动眨眼：即使没有形状数据，闭眼也能看到眼皮合上
-      for (const [side, morph_name] of [["L", "eyeBlinkL"], ["R", "eyeBlinkR"]]) {
-        const morph = this.morph_index.get(morph_name);
-        if (morph !== undefined) {
-          const openness = this.eye_open && this.eye_open[side];
-          if (openness !== undefined) {
-            this.target[morph] = Math.max(this.target[morph], 1 - Number(openness));
-          }
+      // 眼追的睁眼度直接驱动眨眼；闭眼时自动压低 eyeWide，避免残余张眼与闭眼打架
+      for (const [side, blink_name, wide_name] of [
+        ["L", "eyeBlinkL", "eyeWideL"],
+        ["R", "eyeBlinkR", "eyeWideR"],
+      ]) {
+        const openness = this.eye_open && this.eye_open[side];
+        if (openness === undefined) {
+          continue;
+        }
+        const clamped = Math.max(0, Math.min(1, Number(openness)));
+        const blink_morph = this.morph_index.get(blink_name);
+        if (blink_morph !== undefined) {
+          this.target[blink_morph] = Math.max(this.target[blink_morph], 1 - clamped);
+        }
+        const wide_morph = this.morph_index.get(wide_name);
+        if (wide_morph !== undefined) {
+          this.target[wide_morph] *= clamped;
         }
       }
       for (let i = 0; i < this.target.length; i += 1) {
@@ -459,7 +552,52 @@ void main() {
     }
 
     set_eye(eye) {
-      this.eye_open = eye && eye.valid ? { L: eye.open_l, R: eye.open_r } : null;
+      if (!eye) {
+        this.eye_open = null;
+        this.eye_gaze_target = { Lx: 0, Ly: 0, Rx: 0, Ry: 0 };
+        this.pupil_target = { L: 0, R: 0 };
+        this.eye_dirty = true;
+        return;
+      }
+      if (eye.out_valid) {
+        this.eye_open = {
+          L: eye.out_open_l !== undefined ? eye.out_open_l : eye.open_l,
+          R: eye.out_open_r !== undefined ? eye.out_open_r : eye.open_r,
+        };
+      } else if (eye.valid) {
+        this.eye_open = { L: eye.open_l, R: eye.open_r };
+      } else {
+        this.eye_open = null;
+      }
+      const clamp_deg = (deg, limit) => Math.max(-limit, Math.min(limit, Number(deg) || 0));
+      const use_calibrated = Boolean(eye.out_valid || eye.valid);
+      if (use_calibrated) {
+        const fx = eye.out_x !== undefined ? eye.out_x : eye.x;
+        const fy = eye.out_y !== undefined ? eye.out_y : eye.y;
+        this.eye_gaze_target = {
+          Lx: clamp_deg(eye.out_lx !== undefined ? eye.out_lx : fx, 38),
+          Ly: clamp_deg(eye.out_ly !== undefined ? eye.out_ly : fy, 28),
+          Rx: clamp_deg(eye.out_rx !== undefined ? eye.out_rx : fx, 38),
+          Ry: clamp_deg(eye.out_ry !== undefined ? eye.out_ry : fy, 28),
+        };
+        const to_dilation = (mm, raw_dil) => {
+          if (mm !== undefined && Number(mm) > 0) {
+            return Math.max(-0.55, Math.min(0.70, (Number(mm) - 5.0) / 3.0));
+          }
+          if (raw_dil !== undefined) {
+            return Math.max(-0.55, Math.min(0.70, (Number(raw_dil) || 0) * 0.55));
+          }
+          return 0;
+        };
+        this.pupil_target = {
+          L: to_dilation(eye.pupil_l, eye.pupil_dl),
+          R: to_dilation(eye.pupil_r, eye.pupil_dr),
+        };
+      } else {
+        this.eye_gaze_target = { Lx: 0, Ly: 0, Rx: 0, Ry: 0 };
+        this.pupil_target = { L: 0, R: 0 };
+      }
+      this.eye_dirty = true;
     }
 
     set_highlight(region_names) {
@@ -571,9 +709,28 @@ void main() {
           this.shown[i] = this.target[i];
         }
       }
-      if (changed || this.weights_dirty) {
+      for (const axis of ["Lx", "Ly", "Rx", "Ry"]) {
+        const delta = this.eye_gaze_target[axis] - this.eye_gaze_shown[axis];
+        if (Math.abs(delta) > 0.02) {
+          this.eye_gaze_shown[axis] += delta * k;
+          changed = true;
+        } else {
+          this.eye_gaze_shown[axis] = this.eye_gaze_target[axis];
+        }
+      }
+      for (const side of ["L", "R"]) {
+        const delta = this.pupil_target[side] - this.pupil_shown[side];
+        if (Math.abs(delta) > 0.002) {
+          this.pupil_shown[side] += delta * k;
+          changed = true;
+        } else {
+          this.pupil_shown[side] = this.pupil_target[side];
+        }
+      }
+      if (changed || this.weights_dirty || this.eye_dirty) {
         this.apply_morphs();
         this.weights_dirty = false;
+        this.eye_dirty = false;
         // 法线重算比形变本身贵：每两帧最多一次，形变停下来后再补一帧
         const counter = this.frame_counter || 0;
         if (counter - this.normal_frame >= 2 || !changed) {
@@ -597,8 +754,9 @@ void main() {
     }
 
     apply_morphs() {
+      const pos = this.model.positions;
       const out = this.morphed;
-      out.set(this.model.positions);
+      out.set(pos);
       const morphs = this.model.morph_deltas;
       for (let m = 0; m < this.shown.length; m += 1) {
         const w = this.shown[m];
@@ -617,9 +775,66 @@ void main() {
           out[v + 2] += value[q + 2] * scale;
         }
       }
+      this.apply_eye_rig(pos, out);
       const gl = this.gl;
       gl.bindBuffer(gl.ARRAY_BUFFER, this.pos_buffer);
       gl.bufferSubData(gl.ARRAY_BUFFER, 0, out);
+    }
+
+    apply_eye_rig(pos, out) {
+      const deg_to_rad = Math.PI / 180;
+      for (const side of ["L", "R"]) {
+        const rig = this.eye_rig && this.eye_rig[side];
+        if (!rig) {
+          continue;
+        }
+        // 取 4 个极值顶点随颈部侧屈产生的平均位移，作为当前眼球球心
+        let sx = 0, sy = 0, sz = 0;
+        for (const r of rig.refs) {
+          const p = r * 3;
+          sx += out[p] - pos[p];
+          sy += out[p + 1] - pos[p + 1];
+          sz += out[p + 2] - pos[p + 2];
+        }
+        const inv = 1 / rig.refs.length;
+        const cx = rig.center[0] + sx * inv;
+        const cy = rig.center[1] + sy * inv;
+        const cz = rig.center[2] + sz * inv;
+
+        const dil = this.pupil_shown[side] || 0;
+        if (Math.abs(dil) > 0.001) {
+          const k_dil = dil * 0.45;
+          for (const item of rig.pupil) {
+            const p = item.v * 3;
+            const s = k_dil * item.w;
+            out[p] += (out[p] - cx) * s;
+            out[p + 1] += (out[p + 1] - cy) * s;
+          }
+        }
+
+        const yaw_deg = side === "L" ? this.eye_gaze_shown.Lx : this.eye_gaze_shown.Rx;
+        const pitch_deg = side === "L" ? this.eye_gaze_shown.Ly : this.eye_gaze_shown.Ry;
+        if (Math.abs(yaw_deg) < 0.02 && Math.abs(pitch_deg) < 0.02) {
+          continue;
+        }
+        // GNM 朝向 +Z，-X 为角色右侧：pitch>0(抬头) 绕 +X 转 -pitch，yaw>0(右看) 绕 +Y 转 -yaw
+        const ax = -pitch_deg * deg_to_rad;
+        const ay = -yaw_deg * deg_to_rad;
+        const cx_a = Math.cos(ax), sx_a = Math.sin(ax);
+        const cy_a = Math.cos(ay), sy_a = Math.sin(ay);
+        const verts = rig.verts;
+        for (let i = 0; i < verts.length; i += 1) {
+          const p = verts[i] * 3;
+          const lx = out[p] - cx;
+          const ly = out[p + 1] - cy;
+          const lz = out[p + 2] - cz;
+          const y1 = ly * cx_a - lz * sx_a;
+          const z1 = ly * sx_a + lz * cx_a;
+          out[p] = cx + lx * cy_a + z1 * sy_a;
+          out[p + 1] = cy + y1;
+          out[p + 2] = cz - lx * sy_a + z1 * cy_a;
+        }
+      }
     }
 
     recompute_normals() {

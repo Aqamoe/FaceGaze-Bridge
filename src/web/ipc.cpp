@@ -1303,7 +1303,22 @@ void IpcServer::build_preview(std::string& out) {
     writer.key("open_r").num(static_cast<double>(have_raw ? raw.openness_r : 1.0f), 3);
     writer.key("x").num(static_cast<double>(have_raw ? raw.gaze_x_deg : 0.0f), 2);
     writer.key("y").num(static_cast<double>(have_raw ? raw.gaze_y_deg : 0.0f), 2);
-    // 校准后的角度（左右平均），和形状的 out 同一个口径：界面上「原 → 出」才说得通
+    // 校准后的角度（左右平均 + 逐眼 + 校准睁眼度 + 瞳孔），供校准数值与 3D 预览共用
+    writer.key("out_valid").boolean(frame.eyes.any_valid());
+    writer.key("out_open_l").num(static_cast<double>(frame.eyes.left.openness), 3);
+    writer.key("out_open_r").num(static_cast<double>(frame.eyes.right.openness), 3);
+    writer.key("out_lx").num(static_cast<double>(frame.eyes.left.gazePitchYawDeg.y), 2);
+    writer.key("out_ly").num(static_cast<double>(frame.eyes.left.gazePitchYawDeg.x), 2);
+    writer.key("out_rx").num(static_cast<double>(frame.eyes.right.gazePitchYawDeg.y), 2);
+    writer.key("out_ry").num(static_cast<double>(frame.eyes.right.gazePitchYawDeg.x), 2);
+    writer.key("pupil_l").num(
+        static_cast<double>(frame.eyes.left.pupilValid ? frame.eyes.left.pupilDiameterMm : 0.0f), 2);
+    writer.key("pupil_r").num(
+        static_cast<double>(frame.eyes.right.pupilValid ? frame.eyes.right.pupilDiameterMm : 0.0f), 2);
+    writer.key("pupil_dl").num(
+        static_cast<double>(frame.eyes.left.pupilValid ? frame.eyes.left.pupilDilation : 0.0f), 3);
+    writer.key("pupil_dr").num(
+        static_cast<double>(frame.eyes.right.pupilValid ? frame.eyes.right.pupilDilation : 0.0f), 3);
     writer.key("out_x").num(
         static_cast<double>(0.5f * (frame.eyes.left.gazePitchYawDeg.y +
                                     frame.eyes.right.gazePitchYawDeg.y)), 2);
