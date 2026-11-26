@@ -1,6 +1,6 @@
 # ADR-0036 · 自动更新：启动自检、静默下载、用户确认后安装
 
-- 状态：**已实施**（2026-10-31）
+- 状态：**已实施**（2026-10-31；2026-11-27 修订 §8：安装器等待与助手进程清理）
 - 日期：2026-10-31
 - 影响：`src/net/update_check.*`（assets 解析）、`src/net/update_manager.*`（新）、
   `src/web/ipc.*`、`src/cli/main.cpp`（退出码 4）、`src/ui/main.cpp`（Job 放行 breakaway）、
@@ -68,7 +68,8 @@ UI 点「立即安装」
                    CREATE_BREAKAWAY_FROM_JOB)
   → 引擎以退出码 4 结束
   → 外壳看到 4：不重启引擎、不弹"启动失败"，直接退出
-  → Inno 用 Restart Manager 关掉残留进程，覆盖安装，末页 [Run] 依次重启新版本
+  → 安装器等旧外壳窗口消失 + 结束残留助手进程（见 §8），再覆盖安装
+  → 末页 [Run] 重启新版本
 ```
 
 为什么由引擎而不是外壳启动：staged 路径、校验结果都在引擎手里；外壳保持"无业务逻辑"。
@@ -104,6 +105,25 @@ Inno 覆盖安装不是事务。安装器失败时保留已下载的 Setup 与 `
 
 `skipped_version` 同理：只对"比当前版本新"的版本有意义，装上了就失效。
 
+### 8. 安装器要等外壳真正退出，并清理后台助手（2026-11-27 实测修复）
+
+1.2.1 → 1.3.0 的自动更新实测失败：引擎按约定以退出码 4 结束、外壳也开始退出，
+但安装器的 Restart Manager 扫描发生在外壳拆 WebView2 之前，看到
+`FaceGaze Bridge` / `fgb-cli` / `fgb-host-native` 还在，判定"无法关闭"；
+`/SUPPRESSMSGBOXES` 下按 Abort 处理，用户看到的就是装到一半
+`Rolling back changes...`，版本没有变。
+
+修复放在 `packaging/facegazebridge.iss`（`PrepareToInstall`，此时 **先于** Inno 的
+Restart Manager 关闭阶段，实测日志里相差 15 秒）：
+
+- `/RELAUNCH=1` 时轮询旧外壳的窗口类 `FgbUiWindow`（最多 15 秒）。**不能只等命名互斥体**：
+  这次更新的起点 1.2.1 还没有互斥体，只等它会直接放行、照样回滚；
+- 窗口消失后再用 `taskkill /F` 结束 `fgb-host-native.exe`、`fgb-vrss-provider.exe`、
+  `fgb-cli.exe`。模块宿主比外壳晚 1–2 秒退出，且没有窗口，Restart Manager 关不掉它；
+- 最后留 500 ms 给文件句柄释放，再交给 Inno 替换。
+
+手改/交互式安装不带 `/RELAUNCH=1`，行为不变（仍由 Inno 询问是否关闭程序）。
+
 ## 后果
 
 - 用户从"发现新版→手动下载→手动安装"（约 5 步、几次跳浏览器）变成"点一次安装"。
@@ -131,3 +151,6 @@ Inno 覆盖安装不是事务。安装器失败时保留已下载的 Setup 与 `
   `--dry-run-install` 只打印将要执行的命令行，不真的启动安装器。
 - 人工（只能人工）：装 1.0.x → 发一个 draft release → 启动后自动提示 → 点安装 →
   托盘恢复、版本号变成新的。`docs/03-roadmap.md` 的 6.5 按此验收。
+- 2026-11-27 复核（§8）：本机装 1.2.1 → 把 1.3.1 包放进更新缓存并触发 `install_update` →
+  引擎退出 4、外壳消失 → 安装器等待后成功覆盖，`fgb-cli.exe` 变成 1.3.1 且自动重启。
+  修复前同一流程以 `Rolling back changes...` 结束、版本仍是 1.2.1。

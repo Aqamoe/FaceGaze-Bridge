@@ -69,11 +69,62 @@ Filename: "{app}\FaceGaze Bridge.exe"; Description: "{cm:LaunchProgram,FaceGaze 
 Filename: "{app}\fgb-cli.exe"; Parameters: "steamvr remove"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveSteamVR"
 
 [Code]
+const
+  ShellWindowClass = 'FgbUiWindow';
+
 // 自动更新走 /SILENT /RELAUNCH=1：装完必须把程序重新拉起来，
 // 否则用户看到的是"更新安装完成后什么都没发生"（ADR-0036）。
 function UpdateRelaunch: Boolean;
 begin
   Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
+
+// 自动更新时安装器是引擎拉起的。引擎退出后，外壳还要拆 WebView2 才真正结束；
+// 这之前 RestartManager 会把 FaceGaze Bridge / fgb-cli / fgb-host-native 判成
+// "无法关闭"，/SUPPRESSMSGBOXES 下按 Abort 处理，用户看到的就是装到一半
+// "Rolling back changes..."，版本没有变（ADR-0036 §9）。
+//
+// 这里在 Inno 调 RestartManager 之前等旧外壳消失。判断用窗口类而不是命名互斥体：
+// 这次更新的起点是 1.2.1，它还没有互斥体，只等互斥体会直接放行、照样回滚。
+// 窗口没了再等 1 秒，让进程退出和 Job 收尾（模块宿主）完成。
+procedure WaitForPreviousShell;
+var
+  i: Integer;
+begin
+  if not UpdateRelaunch then
+    Exit;
+  for i := 1 to 75 do
+  begin
+    if FindWindowByClassName(ShellWindowClass) = 0 then
+      Break;
+    Sleep(200);
+  end;
+end;
+
+// 模块宿主与 VRSS provider 是独立进程，不保证和外壳同一时刻消失；RestartManager
+// 又关不掉没有窗口的后台进程（实测宿主比外壳晚 1~2 秒退出，正好卡在关闭阶段）。
+// 更新路径下引擎已经退出、文件马上要被替换，直接结束这些助手进程；否则它们
+// 会一直持有 {app}\fgb-host-native.exe 之类的文件，让 Setup 回滚。
+procedure StopUpdateHelpers;
+var
+  code: Integer;
+begin
+  if not UpdateRelaunch then
+    Exit;
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM fgb-host-native.exe', '',
+       SW_HIDE, ewWaitUntilTerminated, code);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM fgb-vrss-provider.exe', '',
+       SW_HIDE, ewWaitUntilTerminated, code);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM fgb-cli.exe', '',
+       SW_HIDE, ewWaitUntilTerminated, code);
+  Sleep(500);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  WaitForPreviousShell;
+  StopUpdateHelpers;
 end;
 
 // 用户数据（校准/预设/模块/日志/崩溃转储）不自动删除：
