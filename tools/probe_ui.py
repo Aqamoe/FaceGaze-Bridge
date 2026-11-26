@@ -1118,7 +1118,8 @@ def main():
                                      or min(face.get("canvas", [0, 0])) <= 1):
         print("FAIL 3D 渲染器没有顶点/morph 权重/画布尺寸")
         ok = False
-    if face_select.get("selected") != "JawOpen" or not face_select.get("highlight"):
+    # selected 是一张卡覆盖的形状名列表（合并卡两个），单侧卡就是一个
+    if face_select.get("selected") != ["JawOpen"] or not face_select.get("highlight"):
         print("FAIL 选中 JawOpen 没有高亮区域")
         ok = False
     if face_select.get("selected_rows") != 1:

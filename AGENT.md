@@ -227,7 +227,8 @@ gb-wv --debug-port 9222
 python tools/probe_ui.py 9222 8787
 
 # 校准页离线渲染：不需要引擎和硬件。起 HTTP+WS mock 喂一份合成档案，用 Edge headless
-# 断言 88 行 / 9 组 / 176 个拇指 / 曲线浮层能开 / 自定义面板能展开 / 中文搜索命中
+# 断言 88 行 / 9 组 / 176 个拇指 / 曲线浮层能开 / 自定义面板能展开 / 中文搜索命中 /
+# 合并卡选中后两侧区域一起高亮 / 镜像默认开启且真的改变渲染 / 复位取消选中
 python tools/probe_calibration_ui.py
 
 # OSCQuery：不开 FGB，直接看 mDNS 端点、头像名/ID、可写参数计数

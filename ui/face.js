@@ -195,6 +195,7 @@ layout(location=2) in uint a_region;
 layout(location=3) in uint a_mat;
 layout(location=4) in vec3 a_color;
 uniform mat4 u_mvp;
+uniform float u_mirror;
 uniform float u_mat_spec[${MAX_MATERIALS}];
 out vec3 v_normal;
 out vec3 v_world;
@@ -206,13 +207,16 @@ flat out uint v_mat;
 void main() {
   v_region = a_region;
   v_mat = a_mat;
-  v_normal = a_normal;
-  v_world = a_pos;
+  // 镜像只翻 X：位置与法线一起翻，光照方向才不会跟着反过来。
+  // 不开背面剔除（镜像会反转三角形绕序），所以翻转不会让面消失。
+  vec3 pos = vec3(a_pos.x * u_mirror, a_pos.y, a_pos.z);
+  v_normal = vec3(a_normal.x * u_mirror, a_normal.y, a_normal.z);
+  v_world = pos;
   // 基色与高光/腔体权重逐顶点插值，避免嘴唇、口腔边缘沿三角形产生硬锯齿跳变
   v_color = a_color;
   v_spec = u_mat_spec[int(a_mat)];
   v_cavity = (a_mat == 6u) ? 1.0 : 0.0;
-  gl_Position = u_mvp * vec4(a_pos, 1.0);
+  gl_Position = u_mvp * vec4(pos, 1.0);
 }`;
 
   const FRAGMENT_SHADER = `#version 300 es
@@ -341,6 +345,7 @@ void main() {
       this.pitch = CAMERA.pitch;
       this.distance = CAMERA.distance;
       this.target_y = CAMERA.target_y;
+      this.mirror = 1;
       this.running = false;
       this.frame = 0;
       this.last_time = 0;
@@ -370,6 +375,7 @@ void main() {
       this.program = program;
       this.uniform = {
         mvp: gl.getUniformLocation(program, "u_mvp"),
+        mirror: gl.getUniformLocation(program, "u_mirror"),
         highlight: gl.getUniformLocation(program, "u_highlight"),
         highlight_amt: gl.getUniformLocation(program, "u_highlight_amt"),
         eye: gl.getUniformLocation(program, "u_eye"),
@@ -602,6 +608,10 @@ void main() {
 
     set_highlight(region_names) {
       this.highlight_target = mask_of(region_names, this.regions);
+    }
+
+    set_mirror(on) {
+      this.mirror = on ? -1 : 1;
     }
 
     set_view(name) {
@@ -894,6 +904,7 @@ void main() {
       gl.useProgram(this.program);
       gl.bindVertexArray(this.vao);
       gl.uniformMatrix4fv(this.uniform.mvp, false, mvp);
+      gl.uniform1f(this.uniform.mirror, this.mirror);
       gl.uniform1ui(this.uniform.highlight, this.highlight_mask >>> 0);
       gl.uniform1f(this.uniform.highlight_amt, this.highlight_amt);
       gl.uniform3f(this.uniform.eye, eye[0], eye[1], eye[2]);
@@ -926,6 +937,11 @@ void main() {
         }
       }
       this.target = next;
+    }
+
+    // 2D 示意图和 3D 模型用同一个镜像开关：切换时两边看到的方向必须一致
+    set_mirror(on) {
+      this.svg.classList.toggle("mirrored", !!on);
     }
   }
 

@@ -227,7 +227,8 @@ const state = {
   face_loading: false,
   face_renderer: null,
   face_fallback: null,
-  face_selected: null,
+  face_selected: null,      // 选中行的形状名列表（合并卡两个）；null = 没选
+  face_mirror: load_cal_mirror(), // 3D/2D 模型左右镜像，默认开
   import_selection: new Set(),
   expanded_modules: new Set(),
   expanded_library: new Set(),
@@ -3140,6 +3141,61 @@ function face_regions(name) {
   return state.face_map.shape_regions[name] || [];
 }
 
+// 一张合并卡代表左右两个形状：只取第一个名字会让"左右合并"的卡片在模型上只亮一边，
+// 用户看到的是"右边调了却不亮"。所以选中项一律按名字列表取并集。
+function face_regions_of(names) {
+  const list = Array.isArray(names) ? names : (names ? [names] : []);
+  const out = [];
+  for (const name of list) {
+    for (const region of face_regions(name)) {
+      if (!out.includes(region)) {
+        out.push(region);
+      }
+    }
+  }
+  return out;
+}
+
+function rows_selected(names) {
+  const selected = state.face_selected;
+  return !!selected && names.length === selected.length &&
+    names.every((name) => selected.includes(name));
+}
+
+// 镜像默认开：模型自己的右侧要出现在屏幕右侧（像照镜子），
+// 否则"调右脸"的人会看到左边在动，卡片的左右标签和模型对不上。
+// 和左右合并一样属于界面偏好，存 localStorage，不进校准档案。
+function load_cal_mirror() {
+  try {
+    const raw = localStorage.getItem("fgb.cal.mirror");
+    return raw === null ? true : raw === "1";
+  } catch (error) {
+    return true;
+  }
+}
+
+function save_cal_mirror() {
+  try {
+    localStorage.setItem("fgb.cal.mirror", state.face_mirror ? "1" : "0");
+  } catch (error) {
+    // 存不下只影响下次打开还记不记得，不影响这一屏
+  }
+}
+
+function apply_cal_mirror() {
+  const button = $("cal-mirror");
+  if (button) {
+    button.classList.toggle("mirror-on", state.face_mirror);
+    button.setAttribute("aria-pressed", state.face_mirror ? "true" : "false");
+  }
+  if (state.face_renderer) {
+    state.face_renderer.set_mirror(state.face_mirror);
+  }
+  if (state.face_fallback) {
+    state.face_fallback.set_mirror(state.face_mirror);
+  }
+}
+
 function face_shape_names() {
   return ((state.calibration && state.calibration.shapes) || []).map((shape) => shape.name);
 }
@@ -3173,7 +3229,7 @@ function update_face_ui() {
     return;
   }
   const selected = state.face_selected;
-  const regions = face_regions(selected);
+  const regions = face_regions_of(selected);
   if (selected) {
     detail.textContent = regions.length
       ? t("calibration.preview.regions", { regions: regions.join(" · ") })
@@ -3185,12 +3241,14 @@ function update_face_ui() {
     : t("calibration.preview.hint");
 }
 
-function select_face_shape(name) {
-  state.face_selected = name || null;
+// names 是这张卡覆盖的形状：合并卡是两个名字，拆开/单侧卡是一个。null 表示取消选中。
+function select_face_shape(names) {
+  const list = Array.isArray(names) ? names.filter(Boolean) : (names ? [names] : []);
+  state.face_selected = list.length ? list : null;
   for (const row of state.cal_rows) {
-    row.element.classList.toggle("selected", row.name === name);
+    row.element.classList.toggle("selected", rows_selected(row.names));
   }
-  const regions = face_regions(name);
+  const regions = face_regions_of(state.face_selected);
   if (state.face_renderer) {
     state.face_renderer.set_highlight(regions);
   }
@@ -3227,7 +3285,8 @@ async function ensure_face_loaded() {
     // 2D 降级先建好：WebGL2 初始化失败时直接切过去，校准功能不受影响
     state.face_fallback = new window.FGBFace.Fallback(
       document.querySelector("#cal-fallback svg"));
-    state.face_fallback.set_highlight(face_regions(state.face_selected));
+    state.face_fallback.set_highlight(face_regions_of(state.face_selected));
+    state.face_fallback.set_mirror(state.face_mirror);
 
     try {
       const model = window.FGBFace.parse_model(buffer);
@@ -3235,7 +3294,8 @@ async function ensure_face_loaded() {
       renderer.set_shape_indices(face_shape_names());
       renderer.set_eye(state.preview && state.preview.eye);
       renderer.set_values(state.preview ? state.preview.out : []);
-      renderer.set_highlight(face_regions(state.face_selected));
+      renderer.set_highlight(face_regions_of(state.face_selected));
+      renderer.set_mirror(state.face_mirror);
       state.face_renderer = renderer;
       state.face_mode = "3d";
       if (state.view === "calibration") {
@@ -3730,6 +3790,9 @@ function build_cal_row(names, indices, shapes) {
       state.split_pairs.delete(pair_base(names[0]));
     }
     save_split_pairs();
+    // 拆/合之后卡的形状集合变了，原来的"选中"已经不存在：一并清掉，
+    // 免得模型上留着高亮却没有任何卡片处于选中态
+    select_face_shape(null);
     $("cal-list").dataset.signature = "";
     render_calibration();
   };
@@ -3772,7 +3835,10 @@ function build_cal_row(names, indices, shapes) {
 
   row.append(head);
   row.append(build_dual_range(ui));
-  row.addEventListener("click", () => select_face_shape(names[0]));
+  // 整张卡都选中：合并卡要同时高亮左右两侧的区域
+  row.addEventListener("click", () => select_face_shape(names));
+  // 重建列表（改曲线、拆合左右）不该丢掉选中态
+  row.classList.toggle("selected", rows_selected(names));
 
   const info = shape_info(shape.name);
   ui.haystack = [
@@ -5133,7 +5199,16 @@ function wire() {
     if (state.face_renderer) {
       state.face_renderer.reset();
     }
+    // 复位是"回到默认视角"，默认状态里没有选中任何形状：
+    // 留着上一次的高亮，会让人以为复位只转了相机、没复位成功
+    select_face_shape(null);
   });
+  $("cal-mirror").addEventListener("click", () => {
+    state.face_mirror = !state.face_mirror;
+    save_cal_mirror();
+    apply_cal_mirror();
+  });
+  apply_cal_mirror();
   document.querySelectorAll(".cal-presets [data-view]").forEach((button) => {
     button.addEventListener("click", () => {
       if (state.face_renderer) {

@@ -238,6 +238,8 @@ window.FGB_I18N = {
     "calibration.view.front": "正面",
     "calibration.view.three": "45°",
     "calibration.view.side": "侧面",
+    "calibration.view.mirror": "镜像",
+    "calibration.view.mirror_title": "左右镜像显示：模型左侧对应你的左侧（默认开启）",
     "calibration.view.reset": "复位",
 
     "pill.input": "输入",
@@ -900,6 +902,8 @@ window.FGB_I18N = {
     "calibration.view.front": "Front",
     "calibration.view.three": "45°",
     "calibration.view.side": "Side",
+    "calibration.view.mirror": "Mirror",
+    "calibration.view.mirror_title": "Mirror the model left/right so its left side matches yours (on by default)",
     "calibration.view.reset": "Reset",
 
     "pill.input": "Input",
@@ -1563,6 +1567,8 @@ window.FGB_I18N = {
     "calibration.view.front": "正面",
     "calibration.view.three": "45°",
     "calibration.view.side": "側面",
+    "calibration.view.mirror": "ミラー",
+    "calibration.view.mirror_title": "左右反転表示：モデルの左側が自分の左側に対応します（既定でオン）",
     "calibration.view.reset": "リセット",
 
     "pill.input": "入力",

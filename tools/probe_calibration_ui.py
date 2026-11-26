@@ -15,6 +15,7 @@ import base64
 import hashlib
 import json
 import os
+import shutil
 import socket
 import struct
 import subprocess
@@ -31,6 +32,10 @@ CDP_PORT = 9333
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 PRESETS = ["linear", "ease_in", "ease_out", "smooth", "step"]
+
+with open(os.path.join(ROOT, "face", "face_map.json"), encoding="utf-8") as handle:
+    SHAPE_REGIONS = {name.lower(): regions
+                     for name, regions in json.load(handle)["shape_regions"].items()}
 
 
 def build_calibration():
@@ -235,7 +240,9 @@ def main():
     edge = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
     if not os.path.exists(edge):
         edge = r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
-    profile = os.path.join(tempfile.gettempdir(), "fgb-ui-probe-profile")
+    # 每次用干净的用户数据：镜像开关、左右合并这类界面偏好存在 localStorage，
+    # 复用同一个目录会让"默认开启"这类断言取决于上一次跑完留下的状态
+    profile = tempfile.mkdtemp(prefix="fgb-ui-probe-")
     process = subprocess.Popen([
         edge, "--headless=new", "--disable-gpu", "--no-first-run",
         "--disable-extensions", "--hide-scrollbars",
@@ -407,6 +414,95 @@ def main():
         if search["visible"] != 1:
             failures.append(f"中文搜索命中 {search['visible']} 条，期望 1 条（左右已合并）")
 
+        # 选中合并卡：模型上必须亮两侧。修复前只按 names[0] 取区域，另一半永远不亮
+        pick = json.loads(client.evaluate("""(() => {
+            const input = document.querySelector('#cal-search');
+            input.value = '';
+            input.dispatchEvent(new Event('input'));
+            const row = [...document.querySelectorAll('.cal-row')]
+                .find(r => r.dataset.name.split(' ').length === 2);
+            const names = row.dataset.name.split(' ');
+            row.click();
+            return JSON.stringify({
+                names,
+                selected: document.querySelectorAll('.cal-row.selected').length,
+                detail: (document.querySelector('#cal-face-detail') || {}).textContent || '',
+                canvas3d: !document.querySelector('#cal-canvas').hidden,
+                hl: [...document.querySelectorAll('.fb-region.hl')].map(n => n.dataset.region)
+            });
+        })()"""))
+        print("SELECT:", pick)
+        expected_regions = []
+        for name in pick["names"]:
+            for region in SHAPE_REGIONS.get(name, []):
+                if region not in expected_regions:
+                    expected_regions.append(region)
+        if pick["selected"] != 1:
+            failures.append(f"点合并卡后高亮行 {pick['selected']} != 1")
+        if len(expected_regions) < 2:
+            failures.append(f"合并卡 {pick['names']} 没有两侧区域可验")
+        missing = [region for region in expected_regions if region not in pick["detail"]]
+        if missing:
+            failures.append(f"合并卡只高亮了一侧，缺 {missing}（详情：{pick['detail']}）")
+        if not pick["canvas3d"] and sorted(pick["hl"]) != sorted(expected_regions):
+            failures.append(f"2D 示意图高亮 {sorted(pick['hl'])} != {sorted(expected_regions)}")
+
+        # 镜像：默认开启，点一下关、再点回开；2D 示意图要跟着翻
+        mirror = json.loads(client.evaluate("""(() => {
+            const btn = document.querySelector('#cal-mirror');
+            const svg = document.querySelector('#cal-fallback svg');
+            const read = () => ({
+                pressed: btn.getAttribute('aria-pressed'),
+                on: btn.classList.contains('mirror-on'),
+                flipped: !!svg && svg.classList.contains('mirrored'),
+                fallback: !document.querySelector('#cal-fallback').hidden
+            });
+            const initial = read();
+            btn.click();
+            const off = read();
+            btn.click();
+            return JSON.stringify({ initial, off, back: read() });
+        })()"""))
+        print("MIRROR:", mirror)
+        if not mirror["initial"]["on"] or mirror["initial"]["pressed"] != "true":
+            failures.append(f"镜像按钮默认没开启：{mirror['initial']}")
+        if mirror["off"]["on"] or mirror["off"]["pressed"] != "false":
+            failures.append(f"镜像按钮点一下没关：{mirror['off']}")
+        if mirror["back"] != mirror["initial"]:
+            failures.append(f"镜像按钮再点回来不一致：{mirror['back']}")
+        if mirror["initial"]["fallback"] and not mirror["initial"]["flipped"]:
+            failures.append("2D 示意图没有跟随镜像开关")
+
+        # 镜像必须真的改变画面：只看按钮状态的话，uniform 没上传也能过
+        client.call("Page.enable")
+        time.sleep(1.5)
+        shot_on = client.call("Page.captureScreenshot", {"format": "png"})
+        shot_on = shot_on.get("result", {}).get("data", "")
+        time.sleep(0.4)
+        shot_settle = client.call("Page.captureScreenshot", {"format": "png"})
+        shot_settle = shot_settle.get("result", {}).get("data", "")
+        client.evaluate("document.querySelector('#cal-mirror').click()")
+        time.sleep(0.4)
+        shot_off = client.call("Page.captureScreenshot", {"format": "png"})
+        shot_off = shot_off.get("result", {}).get("data", "")
+        client.evaluate("document.querySelector('#cal-mirror').click()")
+        if shot_on != shot_settle:
+            print("SKIP-MIRROR-PIXELS: 画面还在缓动，跳过像素比较")
+        elif shot_on == shot_off:
+            failures.append("切换镜像后画面没变（u_mirror 没生效）")
+
+        # 复位：回默认视角的同时取消选中，卡片与模型高亮一起清掉
+        reset = json.loads(client.evaluate("""(() => {
+            document.querySelector('#cal-view-reset').click();
+            return JSON.stringify({
+                selected: document.querySelectorAll('.cal-row.selected').length,
+                hl: document.querySelectorAll('.fb-region.hl').length
+            });
+        })()"""))
+        print("RESET:", reset)
+        if reset["selected"] != 0 or reset["hl"] != 0:
+            failures.append(f"复位没有取消选中：{reset}")
+
         # 分离一张合并卡：行数 +1，并且出现两张独立的卡
         client.evaluate("""(() => {
             const input = document.querySelector('#cal-search');
@@ -436,6 +532,7 @@ def main():
     finally:
         process.terminate()
         server.shutdown()
+        shutil.rmtree(profile, ignore_errors=True)
 
     if failures:
         print("FAIL:", "; ".join(failures))

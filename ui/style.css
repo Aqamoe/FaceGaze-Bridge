@@ -1278,6 +1278,9 @@ input[type="number"]::-webkit-outer-spin-button {
 
 .cal-fallback svg { width: 100%; height: 100%; }
 
+/* 2D 降级示意图跟随 3D 模型的镜像开关；只翻图，不翻容器，避免 inset 布局跟着偏 */
+.cal-fallback svg.mirrored { transform: scaleX(-1); }
+
 .fb-head { fill: #1a2745; stroke: #24365c; }
 .fb-region {
   fill: rgb(255 255 255 / .04);
@@ -1305,6 +1308,8 @@ input[type="number"]::-webkit-outer-spin-button {
 
 .cal-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .cal-presets .btn { margin-top: 0; }
+/* 这排按钮里镜像是开关不是动作：开着的状态必须看得出来，否则用户不知道看到的翻转是"当前设置" */
+.cal-presets .btn.mirror-on { border-color: rgb(59 130 246 / .45); color: var(--acc); }
 .cal-stage .hint { margin: 8px 0 0; font-size: 11.5px; }
 .cal-side { min-width: 0; }
 
