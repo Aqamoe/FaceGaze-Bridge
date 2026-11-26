@@ -68,6 +68,16 @@ def build_calibration():
 
 
 CALIBRATION = build_calibration()
+# 存档清单：两条中文名，验证下拉没把名字弄丢、路径跟着选择走
+CALIBRATION_PROFILES = {
+    "type": "calibration_profiles", "available": True,
+    "dir": "C:/probe/calibration-profiles",
+    "profiles": ["夜间 直播", "默认"],
+    "paths": ["C:/probe/calibration-profiles/night.ini",
+              "C:/probe/calibration-profiles/default.ini"],
+}
+# 页面发出的命令：存档下拉必须真的按选择发 apply/reload，而不是只改 UI
+RECEIVED = []
 PREVIEW = {"type": "preview", "seq": 1, "raw": [0.42] * 88, "out": [0.61] * 88,
            "eye": {"valid": True, "open_l": 0.72, "open_r": 0.06, "x": 2.4, "y": -1.1}}
 # eye_trim=stale 用来验证"标定后改了角度粗调"的提示会亮；其它字段走已完成态
@@ -165,6 +175,7 @@ class Handler(BaseHTTPRequestHandler):
             {"type": "hello", "protocol": 1, "app": "FaceGazeBridge", "version": "probe",
              "port": PORT},
             CALIBRATION,
+            CALIBRATION_PROFILES,
             GAZE_CALIB,
             {"type": "catalog", "names": [], "sent": [], "count": 0},
         ):
@@ -174,6 +185,10 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 while True:
                     text = read_frame(sock)
+                    try:
+                        RECEIVED.append(json.loads(text))
+                    except ValueError:
+                        pass
                     if '"set_preview"' in text and '"enabled":true' in text:
                         sock.sendall(ws_frame(json.dumps(PREVIEW)))
             except Exception:
@@ -286,6 +301,17 @@ def main():
                 a.classList.contains('cal-eye-card') ? 'eye'
                     : a.classList.contains('cal-dot') ? 'dot'
                         : a.classList.contains('cal-eyelid-card') ? 'eyelid' : 'other'),
+            archive: {
+                // 存档不再是独立卡片：入口就在顶部工具条里
+                cards: document.querySelectorAll('.cal-archives').length,
+                inToolbar: !!document.querySelector('.toolbar #cal-archive'),
+                options: [...document.querySelectorAll('#cal-archive option')].map(o => o.textContent),
+                deleteDisabled: [...document.querySelectorAll('#cal-archive option')]
+                    .find(o => o.value === '__delete').disabled,
+                disabled: (document.querySelector('#cal-archive') || {}).disabled,
+                path: (document.querySelector('#cal-path') || {}).textContent,
+                saveText: (document.querySelector('#cal-save') || {}).textContent
+            },
             dotProfile: (document.querySelector('#cal-dot-profile') || {}).textContent,
             // 档案一行最长（版本 + 分支 + 粗调），不许被裁到卡片外
             dotProfileFits: (() => {
@@ -347,6 +373,95 @@ def main():
             failures.append(f"卡片顺序 {stats['cardOrder']}，应为 eye → dot → eyelid")
         if stats["stepBadges"] != 2:
             failures.append(f"步骤序号 {stats['stepBadges']} != 2")
+
+        # 存档：入口在顶部工具条，一个下拉包含「当前档案 + 各存档 + 新建/删除」动作
+        archive = stats["archive"]
+        print("ARCHIVE:", archive)
+        if archive["cards"] != 0 or not archive["inToolbar"]:
+            failures.append("存档仍不是工具条里的下拉（或还留着独立卡片）")
+        for text in ("当前档案", "夜间 直播", "默认"):
+            if text not in archive["options"]:
+                failures.append(f"存档下拉缺项：{archive['options']}")
+        if sum("新建" in text for text in archive["options"]) != 2:
+            failures.append(f"下拉里应有两个新建动作：{archive['options']}")
+        if "删除" not in " ".join(archive["options"]):
+            failures.append("下拉里缺少删除动作")
+        if archive["disabled"]:
+            failures.append("存档可用时下拉仍是灰的")
+        if not archive["deleteDisabled"]:
+            failures.append("未选中命名存档时删除动作应不可用")
+        if not (archive["path"] or "").endswith("calibration.ini"):
+            failures.append(f"默认应显示当前档案路径：{archive['path']!r}")
+        if archive["saveText"] != "保存":
+            failures.append(f"保存按钮文案不对：{archive['saveText']!r}")
+
+        # 选择存档：先取消（必须退回原选择），再确认（必须真的发 apply）
+        RECEIVED.clear()
+        client.evaluate("""(() => {
+            const s = document.querySelector('#cal-archive');
+            s.value = '夜间 直播';
+            s.dispatchEvent(new Event('change'));
+        })()""")
+        time.sleep(0.4)
+        modal = json.loads(client.evaluate("""JSON.stringify({
+            open: !document.querySelector('#modal').hidden,
+            text: document.querySelector('#modal-message').textContent,
+            value: document.querySelector('#cal-archive').value
+        })"""))
+        print("SWITCH-MODAL:", modal)
+        if not modal["open"] or "夜间 直播" not in modal["text"]:
+            failures.append(f"有未保存改动时切换存档没有确认框：{modal}")
+        client.evaluate("document.querySelector('#modal-cancel').click()")
+        time.sleep(0.3)
+        back = client.evaluate("document.querySelector('#cal-archive').value")
+        if back != "":
+            failures.append(f"取消切换后下拉没有退回「当前档案」：{back!r}")
+        if any(m.get("type") == "apply_calibration_profile" for m in RECEIVED):
+            failures.append("取消切换却仍然发出了 apply_calibration_profile")
+
+        client.evaluate("""(() => {
+            const s = document.querySelector('#cal-archive');
+            s.value = '夜间 直播';
+            s.dispatchEvent(new Event('change'));
+        })()""")
+        time.sleep(0.4)
+        client.evaluate("document.querySelector('#modal-ok').click()")
+        time.sleep(0.5)
+        sent = [m for m in RECEIVED if m.get("type") == "apply_calibration_profile"]
+        if not sent or sent[-1].get("name") != "夜间 直播":
+            failures.append(f"确认切换后没有发出带名字的 apply_calibration_profile：{RECEIVED}")
+        shown_path = client.evaluate("document.querySelector('#cal-path').textContent")
+        if not (shown_path or "").endswith("night.ini"):
+            failures.append(f"选中存档后路径没有跟着切换：{shown_path!r}")
+
+        # 下拉里的「新建：当前参数」：先弹出带输入框的确认框，确认后发出 create
+        RECEIVED.clear()
+        client.evaluate("""(() => {
+            const s = document.querySelector('#cal-archive');
+            s.value = '__new_current';
+            s.dispatchEvent(new Event('change'));
+        })()""")
+        time.sleep(0.4)
+        prompt = json.loads(client.evaluate("""JSON.stringify({
+            open: !document.querySelector('#modal').hidden,
+            input: !document.querySelector('#modal-input').hidden,
+            placeholder: document.querySelector('#modal-input').placeholder,
+            value: document.querySelector('#cal-archive').value
+        })"""))
+        print("NEW-MODAL:", prompt)
+        if not prompt["open"] or not prompt["input"] or not prompt["placeholder"]:
+            failures.append(f"新建存档没有输入名称的弹窗：{prompt}")
+        if prompt["value"] != "夜间 直播":
+            failures.append(f"打开新建弹窗时下拉应停在原选择：{prompt['value']!r}")
+        client.evaluate("document.querySelector('#modal-input').value = '新建 副本'")
+        client.evaluate("document.querySelector('#modal-ok').click()")
+        time.sleep(0.4)
+        created = [m for m in RECEIVED if m.get("type") == "create_calibration_profile"]
+        if (not created or created[-1].get("name") != "新建 副本"
+                or created[-1].get("source") != "current"):
+            failures.append(f"新建当前参数没有发出正确的 create 命令：{RECEIVED}")
+        if not client.evaluate("document.querySelector('#modal-input').hidden"):
+            failures.append("新建弹窗关闭后输入框没有藏起来")
         line = stats["dotProfile"] or ""
         if "1.20" not in line or "-8.0" not in line:
             failures.append(f"档案一行没有显示标定时的粗调：{line}")

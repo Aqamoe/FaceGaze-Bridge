@@ -378,6 +378,11 @@ std::string wide_to_utf8(const wchar_t* text) {
 }
 #endif
 
+// 路径给界面显示用：Windows 上 path::string() 对中文路径会抛异常，统一走 UTF-8
+std::string path_to_utf8(const std::filesystem::path& path) {
+    const std::u8string text = path.u8string();
+    return std::string{reinterpret_cast<const char*>(text.data()), text.size()};
+}
 
 } // namespace
 
@@ -441,6 +446,8 @@ IpcServer::IpcServer(IpcContext context) : ctx_(std::move(context)) {
         build_gaze(message);
         server_.send_text(conn, message);
         build_calibration(message);
+        server_.send_text(conn, message);
+        build_calibration_profiles(message);
         server_.send_text(conn, message);
         build_steamvr(message);
         server_.send_text(conn, message);
@@ -1211,8 +1218,8 @@ void IpcServer::build_calibration(std::string& out) {
     writer.obj_begin();
     writer.key("type").str("calibration");
     writer.key("available").boolean(available);
-    writer.key("path").str(ctx_.calib_path.string());
-    writer.key("default_path").str(params::default_calibration_path().string());
+    writer.key("path").str(path_to_utf8(ctx_.calib_path));
+    writer.key("default_path").str(path_to_utf8(params::default_calibration_path()));
     // dirty 是"内存里的档案和磁盘上的不一样"：界面据此决定要不要提示未保存
     writer.key("dirty").boolean(available && profile != saved_profile_);
     writer.key("loaded").boolean(calib_loaded_);
@@ -1268,6 +1275,46 @@ void IpcServer::build_calibration(std::string& out) {
     writer.obj_end();
 
     writer.obj_end();
+}
+
+// 命名校准存档清单。刻意不给 active：校准是 88 条滑杆实时改的，任何一次拖动都会
+// 让"当前等于某个存档"失效，而为了这个字段每帧重读所有存档并不值得；界面按选中项操作即可。
+void IpcServer::build_calibration_profiles(std::string& out) const {
+    out.clear();
+    std::vector<params::CalibrationArchive> archives;
+    std::string error;
+    if (!ctx_.calib_archives_dir.empty()) {
+        params::list_calibration_archives(ctx_.calib_archives_dir, archives, error);
+    } else {
+        error = "存档目录不可用";
+    }
+
+    JsonWriter writer{out};
+    writer.obj_begin();
+    writer.key("type").str("calibration_profiles");
+    writer.key("available").boolean(!ctx_.calib_archives_dir.empty());
+    writer.key("dir").str(path_to_utf8(ctx_.calib_archives_dir));
+    if (!error.empty()) {
+        writer.key("error").str(error);
+    }
+    writer.key("profiles").arr_begin();
+    for (const params::CalibrationArchive& archive : archives) {
+        writer.str(archive.name);
+    }
+    writer.arr_end();
+    // 与 profiles 同序：界面要在路径那一行显示"当前选中的是哪个文件"
+    writer.key("paths").arr_begin();
+    for (const params::CalibrationArchive& archive : archives) {
+        writer.str(path_to_utf8(archive.path));
+    }
+    writer.arr_end();
+    writer.obj_end();
+}
+
+void IpcServer::broadcast_calibration_profiles() {
+    std::string message;
+    build_calibration_profiles(message);
+    server_.broadcast(message);
 }
 
 // 校准页的 30 Hz 预览：raw 是校准前的原始值，out 是校准+滤波之后真正发出去的值。
@@ -1960,6 +2007,7 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
     bool modules_dirty_only = false;
     bool library_touched    = false;
     bool calibration_changed = false;
+    bool calib_archives_touched = false;
     bool steamvr_touched     = false;
     bool outputs_touched     = false;
     bool vrss_touched        = false;
@@ -2290,18 +2338,155 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             error = "no calibration path";
         } else {
             const params::CalibrationProfile profile = ctx_.calib->profile();
+            // 下拉里选中了命名存档时，保存要写回那份存档：正常保存就是更新"当前这份存档"，
+            // 只写 calibration.ini 会让存档内容与界面上的选择分叉
+            std::string archive_name;
+            const bool has_archive =
+                json::field_string(text, "profile", archive_name) && !archive_name.empty();
             std::string save_error;
-            if (params::save_profile_atomic(ctx_.calib_path.string(), profile, save_error)) {
+            if (has_archive &&
+                !params::save_calibration_archive(ctx_.calib_archives_dir, archive_name, profile,
+                                                  save_error)) {
+                // 先写存档再写启动档案：存档失败就整体失败，避免两个文件内容不一致
+                error = save_error;
+            } else if (params::save_profile_atomic(ctx_.calib_path, profile, save_error)) {
                 saved_profile_      = profile;
                 calib_loaded_       = true;
                 calibration_changed = true;
                 ok                  = true;
-                ack_message         = "校准已保存：" + ctx_.calib_path.string();
-                FGB_INFO(kTag, "校准档案已保存：%s（%zu 个形状）", ctx_.calib_path.string().c_str(),
+                ack_message = has_archive
+                                  ? "校准已保存到存档：" + archive_name
+                                  : "校准已保存：" + path_to_utf8(ctx_.calib_path);
+                if (has_archive) {
+                    calib_archives_touched = true;
+                }
+                FGB_INFO(kTag, "校准档案已保存：%s（%zu 个形状）",
+                         (has_archive ? archive_name : path_to_utf8(ctx_.calib_path)).c_str(),
                          profile.active_shape_count());
             } else {
                 error = save_error;
             }
+        }
+    } else if (has_type && type == "create_calibration_profile") {
+        std::string name;
+        std::string source = "current";
+        if (ctx_.calib == nullptr) {
+            error = "calibration not available";
+        } else if (!json::field_string(text, "name", name) || name.empty()) {
+            error = "缺少存档名称";
+        } else if (ctx_.calib_archives_dir.empty()) {
+            error = "存档目录不可用";
+        } else if (ctx_.calib_path.empty()) {
+            error = "no calibration path";
+        } else if (json::field_string(text, "source", source) && source != "default" &&
+                   source != "current") {
+            error = "未知的存档来源";
+        } else {
+            // 新建不覆盖同名存档：要改内容请选中它再保存，这样不会一键抹掉旧存档
+            std::vector<params::CalibrationArchive> archives;
+            std::string list_error;
+            bool exists = false;
+            if (!params::list_calibration_archives(ctx_.calib_archives_dir, archives, list_error)) {
+                error = list_error;
+            } else {
+                for (const params::CalibrationArchive& archive : archives) {
+                    exists = exists || archive.name == name;
+                }
+            }
+            if (error.empty() && exists) {
+                error = "存档「" + name + "」已存在";
+            }
+            if (error.empty()) {
+                // default = 与「恢复默认」同一份透传档案；current = 把当前调好的这套复制一份
+                const params::CalibrationProfile profile =
+                    source == "default" ? params::CalibrationProfile{} : ctx_.calib->profile();
+                std::string save_error;
+                if (!params::save_calibration_archive(ctx_.calib_archives_dir, name, profile,
+                                                      save_error)) {
+                    error = save_error;
+                } else if (!params::save_profile_atomic(ctx_.calib_path, profile, save_error)) {
+                    // 启动档案写不进去就把刚建的存档删掉，不留"建了但没生效"的半成品
+                    std::string rollback_error;
+                    params::delete_calibration_archive(ctx_.calib_archives_dir, name,
+                                                       rollback_error);
+                    error = save_error;
+                } else {
+                    ctx_.calib->set_profile(profile);
+                    saved_profile_         = profile;
+                    calib_loaded_          = true;
+                    calibration_changed    = true;
+                    calib_archives_touched = true;
+                    ok                     = true;
+                    ack_message            = "已新建存档「" + name + "」";
+                    FGB_INFO(kTag, "校准存档已新建：%s（source=%s，%zu 个形状）", name.c_str(),
+                             source.c_str(), profile.active_shape_count());
+                }
+            }
+        }
+    } else if (has_type && (type == "save_calibration_profile" ||
+                            type == "apply_calibration_profile" ||
+                            type == "delete_calibration_profile")) {
+        std::string name;
+        if (ctx_.calib == nullptr) {
+            error = "calibration not available";
+        } else if (!json::field_string(text, "name", name) || name.empty()) {
+            error = "缺少存档名称";
+        } else if (ctx_.calib_archives_dir.empty()) {
+            error = "存档目录不可用";
+        } else if (type == "save_calibration_profile") {
+            // 存的是"现在内存里这一套"：用户可以把调好的效果另存一份，不影响当前档案
+            const params::CalibrationProfile profile = ctx_.calib->profile();
+            if (params::save_calibration_archive(ctx_.calib_archives_dir, name, profile, error)) {
+                ok                      = true;
+                calib_archives_touched  = true;
+                ack_message             = "存档已保存：" + name;
+                FGB_INFO(kTag, "校准存档已保存：%s（%zu 个形状）", name.c_str(),
+                         profile.active_shape_count());
+            }
+        } else if (type == "apply_calibration_profile") {
+            std::vector<params::CalibrationArchive> archives;
+            if (!params::list_calibration_archives(ctx_.calib_archives_dir, archives, error)) {
+                // list 已经写好 error
+            } else {
+                bool found = false;
+                bool loaded_ok = false;
+                params::CalibrationProfile loaded;
+                std::string display_name;
+                std::string load_error;
+                for (const params::CalibrationArchive& archive : archives) {
+                    if (archive.name != name) {
+                        continue;
+                    }
+                    found = true;
+                    loaded_ok =
+                        params::load_calibration_archive(archive.path, loaded, display_name, load_error);
+                    break;
+                }
+                std::string save_error;
+                if (!found) {
+                    error = "存档不存在";
+                } else if (!loaded_ok) {
+                    error = load_error;
+                } else if (ctx_.calib_path.empty()) {
+                    error = "no calibration path";
+                } else if (!params::save_profile_atomic(ctx_.calib_path, loaded, save_error)) {
+                    // 先写盘再热加载：写不进去就保持现状，不留下"界面换了、重启又回去了"
+                    error = save_error;
+                } else {
+                    ctx_.calib->set_profile(loaded);
+                    saved_profile_         = loaded;
+                    calib_loaded_          = true;
+                    calibration_changed    = true;
+                    ok                     = true;
+                    ack_message            = "已应用存档「" + name + "」";
+                    FGB_INFO(kTag, "校准存档已应用：%s → %s", name.c_str(),
+                             path_to_utf8(ctx_.calib_path).c_str());
+                }
+            }
+        } else if (params::delete_calibration_archive(ctx_.calib_archives_dir, name, error)) {
+            ok                     = true;
+            calib_archives_touched = true;
+            ack_message            = "存档「" + name + "」已删除";
         }
     } else if (has_type && type == "reload_calibration") {
         if (ctx_.calib == nullptr) {
@@ -2310,8 +2495,8 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
             error = "no calibration path";
         } else {
             params::CalibrationProfile profile;
-            if (!params::load_profile(ctx_.calib_path.string(), profile)) {
-                error = "读取失败：" + ctx_.calib_path.string();
+            if (!params::load_profile(ctx_.calib_path, profile)) {
+                error = "读取失败：" + path_to_utf8(ctx_.calib_path);
             } else {
                 ctx_.calib->set_profile(profile);
                 saved_profile_      = profile;
@@ -3317,6 +3502,9 @@ void IpcServer::handle_text(std::intptr_t conn, std::string_view text) {
         // 无论成功与否都推一次：失败时（例如跨度太小没启用）页面要看到真实状态，
         // 不能停在用户以为成功的那一版
         broadcast_calibration();
+    }
+    if (calib_archives_touched) {
+        broadcast_calibration_profiles();
     }
     if (steamvr_touched) {
         // 立刻推一次 busy 状态：多个页面同时开着时，按钮要一起禁用

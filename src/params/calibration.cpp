@@ -3,6 +3,7 @@
 #include "base/log.hpp"
 #include "capture/capture_file.hpp"
 #include "config/ini.hpp"
+#include "config/outputs.hpp" // 名字校验与 UTF-8 路径规则与命名输出预设共用一份
 #include "core/model/math.hpp"
 #include "vrcft/update_data.hpp"
 
@@ -388,6 +389,11 @@ bool derive_profile(const std::string& neutral_capture, const std::string& expre
 }
 
 bool save_profile(const std::string& path, const CalibrationProfile& profile) {
+    return save_profile(std::filesystem::path{path}, profile);
+}
+
+bool save_profile(const std::filesystem::path& path, const CalibrationProfile& profile,
+                  std::string_view name) {
     config::IniWriter writer;
     if (!writer.open(path)) {
         return false;
@@ -396,6 +402,12 @@ bool save_profile(const std::string& path, const CalibrationProfile& profile) {
     writer.comment("lo/hi 是原始数据的映射区间：lo 对应表情为 0，hi 对应表情为 1");
     writer.comment("第三个字段是映射曲线：linear / ease_in / ease_out / smooth / step / custom:N");
     writer.comment("step 的阈值写在第四个字段；自定义曲线的控制点在 [curves] 段");
+
+    // 只有存档才写展示名：calibration.ini 是"当前档案"，它叫什么由目录里的存档决定
+    if (!name.empty()) {
+        writer.section("profile");
+        writer.kv("name", name);
+    }
 
     writer.section("eye");
     writer.kv_bool("active", profile.has_eye);
@@ -450,8 +462,20 @@ bool save_profile(const std::string& path, const CalibrationProfile& profile) {
 }
 
 bool load_profile(const std::string& path, CalibrationProfile& profile) {
+    return load_profile(std::filesystem::path{path}, profile);
+}
+
+bool load_profile(const std::filesystem::path& path, CalibrationProfile& profile,
+                  std::string* name) {
     bool saw_any = false;
     const bool ok = config::ini_load(path, [&](const config::IniEntry& entry) {
+        if (entry.section == "profile") {
+            // 存档的展示名；普通 calibration.ini 没有这一段，name 留空即可
+            if (name != nullptr && entry.key == "name") {
+                *name = entry.value;
+            }
+            return;
+        }
         if (entry.section == "eye") {
             if (entry.key == "active") {
                 profile.has_eye = config::parse_bool(entry.value, false);
@@ -542,10 +566,14 @@ std::filesystem::path default_calibration_path() {
 
 bool save_profile_atomic(const std::string& path, const CalibrationProfile& profile,
                          std::string& error) {
+    return save_profile_atomic(std::filesystem::path{path}, profile, error);
+}
+
+bool save_profile_atomic(const std::filesystem::path& target, const CalibrationProfile& profile,
+                         std::string& error, std::string_view name) {
     namespace fs = std::filesystem;
     std::error_code ec;
 
-    const fs::path target{path};
     if (target.has_parent_path()) {
         fs::create_directories(target.parent_path(), ec); // 目录不在就建，不能因为目录缺失保存失败
         if (ec) {
@@ -556,7 +584,7 @@ bool save_profile_atomic(const std::string& path, const CalibrationProfile& prof
 
     fs::path temp = target;
     temp += ".tmp";
-    if (!save_profile(temp.string(), profile)) {
+    if (!save_profile(temp, profile, name)) {
         error = "写入临时档案失败：" + temp.string();
         return false;
     }
@@ -572,16 +600,213 @@ bool save_profile_atomic(const std::string& path, const CalibrationProfile& prof
 #ifdef _WIN32
     if (::MoveFileExW(temp.wstring().c_str(), target.wstring().c_str(),
                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) == 0) {
-        error = "替换档案失败（目标文件是否只读/被占用）：" + path;
+        error = "替换档案失败（目标文件是否只读/被占用）：" + target.string();
         return false;
     }
 #else
     fs::rename(temp, target, ec);
     if (ec) {
-        error = "替换档案失败：" + path;
+        error = "替换档案失败：" + target.string();
         return false;
     }
 #endif
+    return true;
+}
+
+namespace {
+
+std::string path_to_utf8(const std::filesystem::path& path) {
+    const std::u8string text = path.u8string();
+    return std::string{reinterpret_cast<const char*>(text.data()), text.size()};
+}
+
+// 文件名清洗：Windows 不允许的字符换成下划线，末尾的点和空格一并去掉
+// （"abc." 在资源管理器里会变成 "abc"，展示名不能跟着文件系统改）。
+std::string archive_stem(std::string_view name) {
+    std::string out;
+    out.reserve(name.size());
+    for (const char c : name) {
+        switch (c) {
+        case '<':
+        case '>':
+        case ':':
+        case '"':
+        case '|':
+        case '?':
+        case '*':
+        case '/':
+        case '\\':
+            out.push_back('_');
+            break;
+        default:
+            out.push_back(c);
+        }
+    }
+    while (!out.empty() && (out.back() == ' ' || out.back() == '.')) {
+        out.pop_back();
+    }
+    return out;
+}
+
+// 只认文件里的 [profile] name，不靠文件名反推：清洗会丢字符（ADR-0027）
+std::filesystem::path find_archive(const std::filesystem::path& dir, std::string_view name) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir, ec)) {
+        return {};
+    }
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        if (ec) {
+            break;
+        }
+        if (!entry.is_regular_file() || entry.path().extension() != ".ini") {
+            continue;
+        }
+        CalibrationProfile profile;
+        std::string archive_name;
+        std::string load_error;
+        if (load_calibration_archive(entry.path(), profile, archive_name, load_error) &&
+            archive_name == name) {
+            return entry.path();
+        }
+    }
+    return {};
+}
+
+} // namespace
+
+std::filesystem::path default_calibration_archive_dir() {
+#ifdef _WIN32
+    // 与默认档案用同一套宽字符规则：中文用户名下窄字符路径会变成乱码
+    if (const wchar_t* local = _wgetenv(L"LOCALAPPDATA"); local != nullptr && local[0] != L'\0') {
+        return std::filesystem::path{local} / L"FaceGazeBridge" / L"calibration-profiles";
+    }
+#endif
+    return std::filesystem::path{"calibration-profiles"};
+}
+
+bool list_calibration_archives(const std::filesystem::path& dir,
+                               std::vector<CalibrationArchive>& out, std::string& error) {
+    out.clear();
+    error.clear();
+    if (dir.empty()) {
+        error = "存档目录不可用";
+        return false;
+    }
+
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir, ec)) {
+        return true; // 还没存过档
+    }
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        if (ec) {
+            error = "读取存档目录失败：" + ec.message();
+            return false;
+        }
+        if (!entry.is_regular_file() || entry.path().extension() != ".ini") {
+            continue;
+        }
+        CalibrationProfile profile;
+        std::string name;
+        std::string load_error;
+        if (!load_calibration_archive(entry.path(), profile, name, load_error)) {
+            continue; // 坏掉的存档不显示，也不阻止其它存档
+        }
+        out.push_back(CalibrationArchive{name, entry.path()});
+    }
+    std::sort(out.begin(), out.end(),
+              [](const CalibrationArchive& a, const CalibrationArchive& b) {
+                  return a.name < b.name;
+              });
+    return true;
+}
+
+bool save_calibration_archive(const std::filesystem::path& dir, std::string_view name,
+                              const CalibrationProfile& profile, std::string& error) {
+    error.clear();
+    if (!config::validate_profile_name(name, error)) {
+        // 校验器是输出预设那一套，文案里写的是"预设"；这里是存档，换掉免得读起来对不上
+        const std::size_t at = error.find("预设");
+        if (at != std::string::npos) {
+            error.replace(at, std::string{"预设"}.size(), "存档");
+        }
+        return false;
+    }
+    if (dir.empty()) {
+        error = "存档目录不可用";
+        return false;
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) {
+        error = "无法创建存档目录：" + ec.message();
+        return false;
+    }
+
+    std::filesystem::path target = find_archive(dir, name);
+    if (target.empty()) {
+        const std::string stem = archive_stem(name);
+        if (stem.empty()) {
+            error = "存档名称不能全是无效字符";
+            return false;
+        }
+        // 清洗后可能撞名：逐个试到空位，展示名仍以文件内为准
+        for (int suffix = 0; suffix < 1000 && target.empty(); ++suffix) {
+            std::string file_name = stem;
+            if (suffix > 0) {
+                file_name += "-" + std::to_string(suffix);
+            }
+            file_name += ".ini";
+            const std::filesystem::path candidate = dir / config::path_from_utf8(file_name);
+            if (!std::filesystem::exists(candidate, ec)) {
+                target = candidate;
+            }
+        }
+        if (target.empty()) {
+            error = "无法为存档分配文件名";
+            return false;
+        }
+    }
+    // 走原子保存：存档覆盖同样会留 .bak，"存错了"这件事不分当前档案还是存档
+    return save_profile_atomic(target, profile, error, name);
+}
+
+bool load_calibration_archive(const std::filesystem::path& file, CalibrationProfile& out,
+                              std::string& name, std::string& error) {
+    out = CalibrationProfile{};
+    name.clear();
+    error.clear();
+
+    std::string file_name;
+    if (!load_profile(file, out, &file_name)) {
+        out = CalibrationProfile{};
+        error = "无法读取校准存档：" + path_to_utf8(file);
+        return false;
+    }
+    if (file_name.empty()) {
+        file_name = path_to_utf8(file.stem()); // 手写的存档没有 [profile]：用文件名兜底
+    }
+    name = std::move(file_name);
+    return true;
+}
+
+bool delete_calibration_archive(const std::filesystem::path& dir, std::string_view name,
+                                std::string& error) {
+    error.clear();
+    if (dir.empty()) {
+        error = "存档目录不可用";
+        return false;
+    }
+    const std::filesystem::path target = find_archive(dir, name);
+    if (target.empty()) {
+        error = "存档不存在";
+        return false;
+    }
+    std::error_code ec;
+    if (!std::filesystem::remove(target, ec) || ec) {
+        error = "删除存档失败：" + ec.message();
+        return false;
+    }
     return true;
 }
 

@@ -84,6 +84,8 @@ struct IpcContext {
     params::CalibrationApplier* calib   = nullptr;
     std::filesystem::path calib_path;   // 保存目标：--calibration 显式档案优先，否则默认档案
     bool calib_loaded = false;          // 启动时是否真的读到了档案（界面文案用）
+    // 命名校准存档的目录；空表示界面上的存档功能不可用
+    std::filesystem::path calib_archives_dir;
 
     std::string source_name;
     std::vector<std::string> source_names; // 逐个实例名，角色解析用
@@ -163,6 +165,7 @@ private:
     void append_native_library(json::JsonWriter& writer);
     void build_metrics(std::string& out); // status 的公共部分，HTTP 接口复用
     void build_calibration(std::string& out);
+    void build_calibration_profiles(std::string& out) const;
     void build_preview(std::string& out);
     void build_steamvr(std::string& out) const;
     void build_output_profiles(std::string& out) const;
@@ -176,6 +179,7 @@ private:
     void tick_auto_update();
     // 校准档案变了就广播：多个页面/探针连上来时各自显示一致的状态
     void broadcast_calibration();
+    void broadcast_calibration_profiles();
     // per-instance 运行态；state/error 都来自对应的 VrcftSource
     const char* module_state(const RunningModule& module) const noexcept;
 

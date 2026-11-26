@@ -138,6 +138,8 @@ OSCQuery 不可用时回退到"日志头像 ID + 本地 JSON"。状态页「参�
 - 「取当前」把一个动作的瞬时值写成 lo 或 hi；视线可以"取当前视线为中心"
 - 保存到 `%LOCALAPPDATA%\FaceGazeBridge\calibration.ini`（原子写，旧版留 `.bak`），
   下次启动自动加载；`--calibration` 显式档案优先
+- 命名存档：工具条下拉里直接切换/新建整套校准（`calibration-profiles\*.ini`），
+  「保存」写回当前选中的存档，见 [ADR-0049](adr/0049-named-calibration-archives.md)
 - 页面关闭后立即停推预览，引擎热路径回到零额外开销
 
 **规划增强（P3，[ADR-0021](adr/0021-calibration-workbench-3d-preview.md)）**：

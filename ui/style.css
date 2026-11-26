@@ -352,6 +352,9 @@ body {
 
 .toolbar input[type="search"] { flex: 1; min-width: 220px; padding-right: 11px; }
 .toolbar input[type="search"]:focus { border-color: var(--acc); }
+/* 校准页的存档下拉：名称可能很长；路径那行允许省略，不能把按钮挤出视口 */
+#cal-archive { flex: 0 1 220px; min-width: 150px; }
+#cal-path { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- 表单控件 ---------- */
 /* 原生控件放在暗底上很跳：checkbox / select / range 统一重绘。
@@ -2012,6 +2015,20 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 .modal h3 { margin: 0 0 10px; font-size: 16px; font-weight: 600; }
 .modal p { margin: 0; color: var(--dim); font-size: 13px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+/* 带输入框的确认框（新建存档命名）：外观与设置页的文本框一致 */
+.modal input[type="text"] {
+  width: 100%;
+  margin-top: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.modal input[type="text"]:focus { border-color: var(--acc); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 .modal-actions .btn { margin-top: 0; min-width: 76px; }
 @keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }

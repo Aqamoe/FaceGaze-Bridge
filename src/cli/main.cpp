@@ -133,6 +133,7 @@ void print_usage() {
                  "  --no-update-check       不自动检查更新（探针/离线环境）\n"
                  "  --update-assume-installed  更新探针用：假装当前是安装版\n"
                  "  --calibration <文件>    应用校准档案（默认读 %%LOCALAPPDATA%%\\FaceGazeBridge\\calibration.ini）\n"
+                 "  --calibration-profiles <目录>  校准存档目录（默认 %%LOCALAPPDATA%%\\FaceGazeBridge\\calibration-profiles）\n"
                  "  --filter <on|off>       一欧元滤波（默认 off，与 VRCFT 一致）\n"
                  "  --filter-cutoff <值>    滤波最小截止频率 (默认 1.0)\n"
                  "  --filter-beta <值>      滤波速度系数 (默认 0.5)\n"
@@ -391,6 +392,8 @@ int cmd_run(int argc, char** argv) {
     fgb::ReplayConfig replay_cfg;
     std::string record_path;
     std::string calibration_path;
+    std::filesystem::path calibration_profiles_dir =
+        fgb::params::default_calibration_archive_dir();
     bool filter_enabled   = settings.filter_enabled;
     bool open_ui          = false;
     std::uint16_t panel_port = 0;
@@ -630,6 +633,12 @@ int cmd_run(int argc, char** argv) {
             ui_dir = std::filesystem::path{std::string{v}};
         } else if (arg == "--calibration") {
             calibration_path = std::string{next_value(arg)};
+        } else if (arg == "--calibration-profiles") {
+            const auto v = next_value(arg);
+            if (v.empty()) {
+                return 2;
+            }
+            calibration_profiles_dir = fgb::config::path_from_utf8(v);
         } else if (arg == "--filter") {
             filter_enabled = (next_value(arg) != "off");
         } else if (arg == "--filter-cutoff") {
@@ -1522,6 +1531,7 @@ int cmd_run(int argc, char** argv) {
         ctx.calib       = calibration_raw;
         ctx.calib_path  = calibration_save_path;
         ctx.calib_loaded = calibration_loaded;
+        ctx.calib_archives_dir = calibration_profiles_dir;
         // 界面上的运行设置：写回同一个文件（界面改一次写一次），下次启动生效
         ctx.settings      = settings;
         ctx.settings_path = settings_path;

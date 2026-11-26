@@ -292,6 +292,8 @@
           <input id="cal-search" type="search" data-i18n-placeholder="calibration.search" placeholder="搜索形状，例如 Jaw / Mouth">
           <label class="switch"><input type="checkbox" id="cal-only-active"> <span data-i18n="calibration.only_active">只看已校准</span></label>
           <span class="pill warn" id="cal-dirty" hidden data-i18n="calibration.unsaved">未保存</span>
+          <select id="cal-archive" data-i18n-title="calibration.archive.title"
+                  title="校准存档" aria-label="校准存档"></select>
           <span class="muted mono" id="cal-path">—</span>
           <button class="btn" id="cal-save" data-i18n="calibration.save">保存</button>
           <button class="btn ghost" id="cal-reload" data-i18n="calibration.reload">重新加载</button>
@@ -1012,6 +1014,7 @@
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <h3 id="modal-title"></h3>
     <p id="modal-message"></p>
+    <input type="text" id="modal-input" maxlength="40" autocomplete="off" hidden>
     <div class="modal-actions">
       <button class="btn ghost" id="modal-cancel" data-i18n="common.cancel">取消</button>
       <button class="btn danger" id="modal-ok" data-i18n="common.confirm">确定</button>

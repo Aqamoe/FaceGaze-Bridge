@@ -33,6 +33,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace fgb::params {
 
@@ -139,6 +140,14 @@ inline bool operator!=(const CalibrationProfile& a, const CalibrationProfile& b)
 bool save_profile(const std::string& path, const CalibrationProfile& profile);
 bool load_profile(const std::string& path, CalibrationProfile& profile);
 
+// 路径重载：命名存档的名字可以带中文，而 Windows 上 std::filesystem::path(std::string)
+// 按 ANSI 代码页解释会抛异常（ADR-0027 踩过）。存/读存档一律走这两个。
+// name 非空时额外写 `[profile] name=`（存档的展示名）；读时通过 name 回填。
+bool save_profile(const std::filesystem::path& path, const CalibrationProfile& profile,
+                  std::string_view name = {});
+bool load_profile(const std::filesystem::path& path, CalibrationProfile& profile,
+                  std::string* name = nullptr);
+
 // 界面保存用的路径：%LOCALAPPDATA%\FaceGazeBridge\calibration.ini。
 // --calibration 显式指定的档案优先于它（见 ADR-0021 §"默认路径与优先级"）。
 std::filesystem::path default_calibration_path();
@@ -147,6 +156,33 @@ std::filesystem::path default_calibration_path();
 // 直接覆写有个很难看的失败模式：写到一半断电/被杀，档案变成半截，下次启动校准全丢。
 bool save_profile_atomic(const std::string& path, const CalibrationProfile& profile,
                          std::string& error);
+bool save_profile_atomic(const std::filesystem::path& path, const CalibrationProfile& profile,
+                         std::string& error, std::string_view name = {});
+
+// ---- 命名存档（roadmap 校准 → 多套校准切换）----
+//
+// 与命名输出预设同构（ADR-0027）：一个存档一个 ini，放在独立目录，内容与
+// calibration.ini 相同，外加 `[profile] name=` 作为展示名。多套校准共用目录而不是
+// 往 calibration.ini 里塞多节：清单/删除/备份都是文件操作，坏掉一份也不影响当前档案。
+//
+// "当前生效"仍然只有 calibration.ini 一份：应用存档 = 把存档内容写成当前档案并热加载。
+struct CalibrationArchive {
+    std::string name;
+    std::filesystem::path path;
+};
+
+std::filesystem::path default_calibration_archive_dir();
+
+// 目录不存在时返回 true + 空列表（还没存过档不是错误）。读不出来的文件跳过。
+bool list_calibration_archives(const std::filesystem::path& dir,
+                               std::vector<CalibrationArchive>& out, std::string& error);
+// 同名覆盖（旧内容留 .bak），没有同名就新建。
+bool save_calibration_archive(const std::filesystem::path& dir, std::string_view name,
+                              const CalibrationProfile& profile, std::string& error);
+bool load_calibration_archive(const std::filesystem::path& file, CalibrationProfile& out,
+                              std::string& name, std::string& error);
+bool delete_calibration_archive(const std::filesystem::path& dir, std::string_view name,
+                                std::string& error);
 
 // 从两份抓包推导。失败时 error 非空。
 bool derive_profile(const std::string& neutral_capture, const std::string& express_capture,

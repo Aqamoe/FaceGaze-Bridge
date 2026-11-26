@@ -249,6 +249,9 @@ python tools/probe_sinks_stress.py --seconds 5
 # 输出预设：自己拉起临时引擎，走保存/应用/删除（会写临时 outputs.ini）
 python tools/probe_output_profiles.py
 
+# 校准存档：临时引擎上改形状 → 存存档 → 恢复默认 → 应用 → /api/calibration 回读 → 删除
+python tools/probe_calibration_profiles.py
+
 # 崩溃捕获：故意空指针子进程，检查 dmp/说明文件
 python tools/probe_crash.py
 
@@ -361,7 +364,7 @@ src/config/    INI 与输出设置（outputs.ini + outputs-profiles/ 命名预�
 src/vrcft/     VRCFT 协议、沙箱、模块进程托管、模块仓（module_registry）、
                VRCFT 模块库（module_library）、原生模块库（native_library，fgb-registry）
 src/vmc/       VMC blendshape 名字表（输入/输出共用，只有这一份）
-src/params/    参数目录、v2/v1 派生、地址路由、OSCQuery 头像发现、校准（含预览取样 preview_tap）
+src/params/    参数目录、v2/v1 派生、地址路由、OSCQuery 头像发现、校准（含预览取样 preview_tap、命名存档）
 src/sources/   输入（VMC / VRCFT 模块 / 原生 C ABI 模块 / 抓包回放）
 src/sinks/     输出（VRChat OSC / VMC / 共享内存 / WebSocket JSON / UDP 二进制；SinkThrottle）
 src/engine/    合并、快照发布、扇出
@@ -390,6 +393,7 @@ docs/          方案、ADR、路线图、用户手册；SDK 集成文档在 sdk
 | →UI | `params`（数值数组，顺序同 `catalog`） | 10 Hz |
 | →UI | `gaze`（方向/俯仰偏航/聚散/置信度/fixation/saccade/head_pose） | 30 Hz |
 | →UI | `calibration`（88 个形状的 lo/hi/active + 视线 + 路径 + 未保存标记） | 连接时 / 任何校准改动后 |
+| →UI | `calibration_profiles`（命名校准存档名 + 文件路径 + 目录） | 连接时 / 存/删存档后 |
 | →UI | `preview`（校准前 `raw[88]` + 校准后 `out[88]` + 视线 + seq） | 30 Hz，**只在校准页订阅时** |
 | →UI | `steamvr`（状态/原因/路径/registered/autolaunch/busy） | 连接时快照；每次检测/开关/移除完成后 |
 | →UI | `outputs_profiles`（预设名列表/active/dir） | 连接时 / 任何预设或保存值变更后 |
@@ -402,6 +406,7 @@ docs/          方案、ADR、路线图、用户手册；SDK 集成文档在 sdk
 | UI→ | `refresh_library` / `install_library` / `restart_engine` | VRCFT 模块库与重启（退出码 3） |
 | UI→ | `refresh_native_library` / `install_native_library`（`id` + 可选 `version`） | 原生模块库（install 会先校验 sha256 与包内清单） |
 | UI→ | `set_preview` / `set_calibration_shape` / `set_calibration_eye` / `capture_calibration` / `save_calibration` / `reload_calibration` / `reset_calibration` | 校准（实时生效，显式保存） |
+| UI→ | `save_calibration`（可选 `profile` 名）/ `create_calibration_profile`（`source=default/current`）/ `apply_calibration_profile` / `delete_calibration_profile` / `save_calibration_profile` | 命名校准存档：保存写选中存档 + `calibration.ini`；应用/新建会热加载，不重启引擎 |
 | UI→ | `refresh_steamvr` / `set_steamvr_autolaunch` / `remove_steamvr_manifest` | SteamVR（后台线程执行，完成后推 `steamvr`） |
 | UI→ | `save_output_profile` / `apply_output_profile` / `delete_output_profile` | 命名输出预设（应用会写 outputs.ini，界面随后重启引擎） |
 | UI→ | `export_diagnostics`（可选 `out` 路径） | 后台导出诊断包，完成后推 `diagnostics` |

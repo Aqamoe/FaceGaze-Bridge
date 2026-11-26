@@ -29,12 +29,15 @@ function show_toast(text, kind) {
 }
 
 let modal_resolve = null;
+let modal_prompt = false; // 当前这层弹窗是不是"要一段文字"，决定 close_modal 的返回值
 function ask_confirm({ title, message, confirmText, danger = true }) {
   return new Promise((resolve) => {
     if (modal_resolve) {
       modal_resolve(false); // 连续触发时先取消上一个，避免 Promise 悬空
     }
     modal_resolve = resolve;
+    modal_prompt = false;
+    $("modal-input").hidden = true;
     $("modal-title").textContent = title || t("common.confirm");
     $("modal-message").textContent = message || "";
     $("modal-ok").textContent = confirmText || t("common.confirm");
@@ -45,7 +48,37 @@ function ask_confirm({ title, message, confirmText, danger = true }) {
   });
 }
 
+// 需要输入一段文字时用这个（例如给新存档命名）：取消返回 null，确认返回去掉首尾空白的文本。
+// 为什么不做成浏览器 prompt：项目规则禁止 window.prompt，而且它挡不住"输入为空"这种状态，
+// 这里把空输入也交回调用方，由它决定提示什么。
+function ask_prompt({ title, message, placeholder = "", value = "" }) {
+  return new Promise((resolve) => {
+    if (modal_resolve) {
+      modal_resolve(false);
+    }
+    modal_resolve = resolve;
+    modal_prompt = true;
+    const input = $("modal-input");
+    input.hidden = false;
+    input.value = value;
+    input.placeholder = placeholder;
+    $("modal-title").textContent = title || t("common.confirm");
+    $("modal-message").textContent = message || "";
+    $("modal-ok").textContent = t("common.confirm");
+    $("modal-cancel").textContent = t("common.cancel");
+    $("modal-ok").className = "btn";
+    $("modal").hidden = false;
+    requestAnimationFrame(() => {
+      input.focus();
+      input.select();
+    });
+  });
+}
+
 function close_modal(result) {
+  const wants_text = modal_prompt;
+  modal_prompt = false;
+  $("modal-input").hidden = true;
   if (!modal_resolve) {
     $("modal").hidden = true;
     return;
@@ -53,7 +86,7 @@ function close_modal(result) {
   $("modal").hidden = true;
   const resolve = modal_resolve;
   modal_resolve = null;
-  resolve(result);
+  resolve(wants_text ? (result === true ? ($("modal-input").value || "").trim() : null) : result);
 }
 
 let restart_timer = null;
@@ -143,6 +176,8 @@ function apply_l10n() {
   if (state.output_profiles) {
     render_output_profiles();
   }
+  // 存档下拉的选项文案（当前档案/新建/删除）是动态生成的，切语言要重建一次
+  render_cal_archive();
   // 开关状态上挂着翻译文案（默认开启/已关闭），切语言时即使没连引擎也要刷新
   sync_output_form();
   if (state.view === "modules" && state.modules) {
@@ -243,6 +278,10 @@ const state = {
   pending_vrss_run: false,
   output_profiles: { profiles: [], active: "", dir: "" },
   profile_pending: null, // {action, name}：ack 回来时用本地化文案提示
+  calibration_profiles: { profiles: [], paths: [], dir: "", available: false },
+  cal_selected: "",          // 当前编辑的存档名；空串 = 当前档案（calibration.ini）
+  cal_selected_prev: "",     // 切换/应用失败时退回上一个选择
+  cal_profile_pending: null, // {action, name}：存档操作 ack 回来时提示
   update_info: null,
   update: null,              // 最近一次 update 快照（引擎是唯一事实来源）
   update_manual: false,      // 这次检查是用户点的：失败要说话，自动检查失败就安静
@@ -412,6 +451,15 @@ function handle(message) {
         render_calibration();
       }
       break;
+    case "calibration_profiles":
+      state.calibration_profiles = {
+        profiles: message.profiles || [],
+        paths: message.paths || [],
+        dir: message.dir || "",
+        available: !!message.available,
+      };
+      render_cal_archive();
+      break;
     case "preview":
       state.preview = message;
       if (state.view === "calibration") {
@@ -483,6 +531,12 @@ function handle(message) {
           $("u-check").disabled = false;
         }
         state.profile_pending = null;
+        state.cal_profile_pending = null;
+        if (message.command === "apply_calibration_profile") {
+          // 应用失败时页面里的校准没变：下拉要跟着退回上一个存档，不能停在失败的那个
+          state.cal_selected = state.cal_selected_prev || "";
+          render_cal_archive();
+        }
       } else if (message.command === "set_outputs") {
         set_outputs_dirty(false);
         show_toast(t("output.saved"));
@@ -522,6 +576,31 @@ function handle(message) {
         const pending = state.profile_pending;
         state.profile_pending = null;
         show_toast(t("output.profile.deleted", { name: pending ? pending.name : "" }));
+      } else if (message.command === "save_calibration") {
+        const pending = state.cal_profile_pending;
+        state.cal_profile_pending = null;
+        show_toast(pending && pending.name
+          ? t("calibration.saved_to", { name: pending.name })
+          : t("calibration.saved"));
+      } else if (message.command === "create_calibration_profile") {
+        const pending = state.cal_profile_pending;
+        state.cal_profile_pending = null;
+        if (pending) {
+          state.cal_selected = pending.name; // 新建即选中：列表广播随后到
+        }
+        show_toast(t("calibration.archive.created", { name: pending ? pending.name : "" }));
+        render_cal_archive();
+      } else if (message.command === "apply_calibration_profile") {
+        const pending = state.cal_profile_pending;
+        state.cal_profile_pending = null;
+        show_toast(t("calibration.archive.applied", { name: pending ? pending.name : "" }));
+        render_cal_archive();
+      } else if (message.command === "delete_calibration_profile") {
+        const pending = state.cal_profile_pending;
+        state.cal_profile_pending = null;
+        state.cal_selected = "";
+        show_toast(t("calibration.archive.deleted", { name: pending ? pending.name : "" }));
+        render_cal_archive();
       } else if (message.ok && message.message) {
         show_toast(message.message);
         if (message.command === "import_modules") {
@@ -4157,6 +4236,188 @@ function sync_slider(id, value, digits) {
   }
 }
 
+// 校准存档：下拉就是"现在在编辑哪一份档案"。
+//  - 「当前档案」= calibration.ini（启动档案），保存写它；
+//  - 命名存档 = 选中即应用（同时写成启动档案），保存写回那份文件；
+//  - 下拉底部的动作项负责新建（默认参数 / 复制当前）与删除。
+// 服务端不推 active：88 条滑杆每改一次都会让"当前等于哪份存档"失效；
+// 选中的存档已经写入启动档案，重启后仍是这一套，不需要靠高亮来确认。
+const CAL_ARCHIVE_NEW_DEFAULT = "__new_default";
+const CAL_ARCHIVE_NEW_CURRENT = "__new_current";
+const CAL_ARCHIVE_DELETE = "__delete";
+
+function cal_archive_selected_path() {
+  const data = state.calibration_profiles;
+  const index = (data.profiles || []).indexOf(state.cal_selected || "");
+  if (index >= 0 && data.paths && data.paths[index]) {
+    return data.paths[index];
+  }
+  return state.calibration ? (state.calibration.path || "") : "";
+}
+
+function refresh_cal_archive_path() {
+  const path = cal_archive_selected_path();
+  // 工具条只放文件名：完整路径太长，会把按钮挤到第二行；tooltip 里留全路径
+  const name = path ? path.split(/[\\/]/).pop() : "";
+  $("cal-path").textContent = name || "—";
+  $("cal-path").title = path || "";
+}
+
+function render_cal_archive() {
+  const select = $("cal-archive");
+  if (!select) {
+    return;
+  }
+  const data = state.calibration_profiles;
+  const profiles = data.profiles || [];
+  // 存档被删/被外部移走后不能停在一个不存在的选项上
+  if (state.cal_selected && !profiles.includes(state.cal_selected)) {
+    state.cal_selected = "";
+  }
+
+  // 校准每次改动都会重发 calibration，进而走到这里；选项没变就不要重建，
+  // 否则用户正开着原生下拉时会被整个换掉
+  const usable = !!(state.calibration && state.calibration.available) && data.available;
+  const signature = `${lang}|${profiles.join("\n")}|${state.cal_selected}|${usable}`;
+  if (select.dataset.signature !== signature) {
+    select.innerHTML = "";
+    const append = (value, text, disabled = false) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      option.disabled = disabled;
+      select.appendChild(option);
+    };
+    append("", t("calibration.archive.current"));
+    for (const name of profiles) {
+      append(name, name);
+    }
+    append("", "────────", true); // 分隔项：disabled，不会被选中
+    append(CAL_ARCHIVE_NEW_DEFAULT, t("calibration.archive.new_default"));
+    append(CAL_ARCHIVE_NEW_CURRENT, t("calibration.archive.new_current"));
+    append(CAL_ARCHIVE_DELETE, t("calibration.archive.delete"), !state.cal_selected);
+    select.dataset.signature = signature;
+  }
+
+  select.value = state.cal_selected || "";
+  select.title = t("calibration.archive.title");
+  select.setAttribute("aria-label", t("calibration.archive.title"));
+  // 存档功能要同时有"校准可用"和"存档目录可用"；少了任何一个，下拉和保存都别装成能用
+  select.disabled = !usable;
+  refresh_cal_archive_path();
+}
+
+async function on_cal_archive_change() {
+  const select = $("cal-archive");
+  const value = select.value;
+  const previous = state.cal_selected || "";
+
+  if (value === CAL_ARCHIVE_NEW_DEFAULT || value === CAL_ARCHIVE_NEW_CURRENT) {
+    select.value = previous;
+    await create_cal_archive(value === CAL_ARCHIVE_NEW_DEFAULT ? "default" : "current");
+    return;
+  }
+  if (value === CAL_ARCHIVE_DELETE) {
+    select.value = previous;
+    await delete_selected_cal_archive();
+    return;
+  }
+  if (value === previous) {
+    return;
+  }
+
+  const dirty = !!(state.calibration && state.calibration.dirty);
+  if (dirty && !(await ask_confirm({
+    title: t("calibration.archive.switch"),
+    message: t("calibration.archive.switch_confirm", {
+      name: value || t("calibration.archive.current"),
+    }),
+    danger: true,
+  }))) {
+    render_cal_archive(); // 取消：下拉退回原来的选择
+    return;
+  }
+
+  state.cal_selected_prev = previous;
+  state.cal_selected = value;
+  if (!value) {
+    send({ type: "reload_calibration" });
+  } else {
+    state.cal_profile_pending = { action: "apply", name: value };
+    send({ type: "apply_calibration_profile", name: value });
+  }
+  render_cal_archive();
+}
+
+async function create_cal_archive(source) {
+  if (!(state.calibration && state.calibration.available) ||
+      !state.calibration_profiles.available) {
+    return;
+  }
+  const name = await ask_prompt({
+    title: t("calibration.archive.new_title"),
+    message: source === "default"
+      ? t("calibration.archive.new_default_message")
+      : t("calibration.archive.new_current_message"),
+    placeholder: t("calibration.archive.name"),
+  });
+  if (name === null) {
+    return;
+  }
+  if (!name) {
+    show_toast(t("calibration.archive.name_required"), "error");
+    return;
+  }
+  state.cal_profile_pending = { action: "create", name };
+  send({ type: "create_calibration_profile", name, source });
+}
+
+async function delete_selected_cal_archive() {
+  const name = state.cal_selected || "";
+  if (!name) {
+    show_toast(t("calibration.archive.pick_for_delete"), "error");
+    return;
+  }
+  if (!(await ask_confirm({
+    title: t("calibration.archive.delete"),
+    message: t("calibration.archive.delete_confirm", { name }),
+    danger: true,
+  }))) {
+    return;
+  }
+  state.cal_profile_pending = { action: "delete", name };
+  send({ type: "delete_calibration_profile", name });
+}
+
+function save_calibration_page() {
+  if (!(state.calibration && state.calibration.available)) {
+    return;
+  }
+  const name = state.cal_selected || "";
+  state.cal_profile_pending = { action: "save", name };
+  // 选中命名存档时让保存写回那份文件；「当前档案」仍是原来的 save_calibration
+  send(name ? { type: "save_calibration", profile: name } : { type: "save_calibration" });
+}
+
+async function reload_calibration_page() {
+  const dirty = state.calibration && state.calibration.dirty;
+  if (dirty && !(await ask_confirm({
+    title: t("calibration.reload"),
+    message: t("calibration.reload_confirm"),
+    danger: true,
+  }))) {
+    return;
+  }
+  const name = state.cal_selected || "";
+  if (name) {
+    // 命名存档没有单独的"重读"命令：应用就是把它读出来并写成启动档案
+    state.cal_profile_pending = { action: "reload", name };
+    send({ type: "apply_calibration_profile", name });
+  } else {
+    send({ type: "reload_calibration" });
+  }
+}
+
 function render_calibration() {
   const data = state.calibration;
   if (!data) {
@@ -4169,9 +4430,7 @@ function render_calibration() {
     "cal-eye-capture", "cal-eye-reset"]) {
     $(id).disabled = !available;
   }
-
-  $("cal-path").textContent = data.path || "—";
-  $("cal-path").title = data.loaded ? t("calibration.loaded") : t("calibration.not_saved");
+  render_cal_archive();
   $("cal-dirty").hidden = !data.dirty;
 
   const shapes = data.shapes || [];
@@ -5217,20 +5476,8 @@ function wire() {
     });
   });
 
-  $("cal-save").addEventListener("click", () => {
-    send({ type: "save_calibration" });
-  });
-  $("cal-reload").addEventListener("click", async () => {
-    const dirty = state.calibration && state.calibration.dirty;
-    if (dirty && !(await ask_confirm({
-      title: t("calibration.reload"),
-      message: t("calibration.reload_confirm"),
-      danger: true,
-    }))) {
-      return;
-    }
-    send({ type: "reload_calibration" });
-  });
+  $("cal-save").addEventListener("click", save_calibration_page);
+  $("cal-reload").addEventListener("click", reload_calibration_page);
   $("cal-reset").addEventListener("click", async () => {
     if (await ask_confirm({
       title: t("calibration.reset"),
@@ -5240,6 +5487,7 @@ function wire() {
       send({ type: "reset_calibration" });
     }
   });
+  $("cal-archive").addEventListener("change", on_cal_archive_change);
 
   for (const id of ["cal-eye-gain-x", "cal-eye-gain-y", "cal-eye-center-x", "cal-eye-center-y",
     "cal-eyelid-gain", "cal-eyelid-lo", "cal-eyelid-sep"]) {

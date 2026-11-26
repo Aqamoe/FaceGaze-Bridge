@@ -14,6 +14,7 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 using namespace fgb;
 using namespace fgb::params;
@@ -309,6 +310,89 @@ FGB_TEST(calibration_atomic_save_keeps_previous_as_backup) {
 
     // 临时文件不能留在磁盘上
     FGB_CHECK(!std::filesystem::exists(path + ".tmp"));
+}
+
+// ---------------------------------------------------------------------------
+// 命名存档
+// ---------------------------------------------------------------------------
+
+FGB_TEST(calibration_archive_roundtrip_lists_and_overwrites) {
+    const std::filesystem::path dir = temp_path("archive-dir");
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+
+    CalibrationProfile stored;
+    stored.shapes[index_of(Shape::JawOpen)].lo     = 0.12f;
+    stored.shapes[index_of(Shape::JawOpen)].hi     = 0.88f;
+    stored.shapes[index_of(Shape::JawOpen)].active = true;
+    stored.eyelid_gain                             = 1.4f;
+    stored.has_eye                                 = true;
+    stored.eye_gain_x                              = 1.6f;
+
+    // 中文名：Windows 上路径必须按 UTF-8 转宽字符，否则这里会抛 std::filesystem_error
+    const std::string name = "夜间 直播";
+    std::string error;
+    FGB_CHECK(save_calibration_archive(dir, name, stored, error));
+    FGB_CHECK(error.empty());
+
+    std::vector<CalibrationArchive> archives;
+    FGB_CHECK(list_calibration_archives(dir, archives, error));
+    FGB_CHECK(archives.size() == 1);
+    if (archives.size() == 1) {
+        FGB_CHECK(archives[0].name == name);
+        CalibrationProfile loaded;
+        std::string loaded_name;
+        FGB_CHECK(load_calibration_archive(archives[0].path, loaded, loaded_name, error));
+        FGB_CHECK(loaded_name == name);
+        FGB_CHECK(loaded == stored);
+    }
+
+    // 同名覆盖：列表不新增，内容换成新的一套，旧内容进 .bak
+    CalibrationProfile updated = stored;
+    updated.shapes[index_of(Shape::JawOpen)].hi = 0.70f;
+    FGB_CHECK(save_calibration_archive(dir, name, updated, error));
+    FGB_CHECK(list_calibration_archives(dir, archives, error));
+    FGB_CHECK(archives.size() == 1);
+    if (archives.size() == 1) {
+        CalibrationProfile loaded;
+        std::string loaded_name;
+        FGB_CHECK(load_calibration_archive(archives[0].path, loaded, loaded_name, error));
+        FGB_CHECK_NEAR(loaded.shapes[index_of(Shape::JawOpen)].hi, 0.70f, 1e-3f);
+        FGB_CHECK(std::filesystem::exists(archives[0].path.string() + ".bak"));
+    }
+
+    FGB_CHECK(delete_calibration_archive(dir, name, error));
+    FGB_CHECK(list_calibration_archives(dir, archives, error));
+    FGB_CHECK(archives.empty());
+}
+
+FGB_TEST(calibration_archive_rejects_bad_name_and_skips_broken_files) {
+    const std::filesystem::path dir = temp_path("archive-bad-name");
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+
+    std::string error;
+    FGB_CHECK(!save_calibration_archive(dir, "a/b", CalibrationProfile{}, error));
+    FGB_CHECK(!error.empty());
+
+    // 手改坏的文件不该让整个存档列表消失，也不该被当成一份可用存档
+    {
+        std::FILE* file = std::fopen((dir / "broken.ini").string().c_str(), "wb");
+        if (file != nullptr) {
+            std::fputs("[eye\nactive = maybe\n", file);
+            std::fclose(file);
+        }
+    }
+    std::vector<CalibrationArchive> archives;
+    FGB_CHECK(list_calibration_archives(dir, archives, error) || !error.empty());
+    FGB_CHECK(archives.empty());
+
+    // 没存过档的目录不是错误
+    std::filesystem::remove_all(dir, ec);
+    FGB_CHECK(list_calibration_archives(dir, archives, error));
+    FGB_CHECK(error.empty());
+    FGB_CHECK(archives.empty());
 }
 
 // ---------------------------------------------------------------------------
